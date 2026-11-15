@@ -1,6 +1,24 @@
 {
-  "name": "Mon Codespace Weston",
-  "image": "://microsoft.com",
-  "features": {},
-  "postCreateCommand": "sudo apt update && sudo apt install -y weston"
+  "name": "MboloChat",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "forwardPorts": [3001, 5432, 8081],
+  "portsAttributes": {
+    "3001": { "label": "API MboloChat", "onAutoForward": "notify" },
+    "5432": { "label": "PostgreSQL", "onAutoForward": "silent" },
+    "8081": { "label": "Expo Metro", "onAutoForward": "silent" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-azuretools.vscode-docker",
+        "rust-lang.rust-analyzer"
+      ]
+    }
+  }
 }
