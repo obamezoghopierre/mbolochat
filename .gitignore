@@ -17,3 +17,4 @@ __pycache__/
 
 # Captures d'écran de debug (Waydroid / audit)
 tmp-shots/
+.zcode/
