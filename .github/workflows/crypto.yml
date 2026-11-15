@@ -1,6 +1,7 @@
 name: crypto
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'crypto/**'
