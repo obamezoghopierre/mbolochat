@@ -512,3 +512,32 @@ export interface CommentPage {
   items: PublicationComment[];
   nextCursor: string | null;
 }
+
+export type SocialNotificationType =
+  | 'like'
+  | 'comment'
+  | 'reply'
+  | 'mention'
+  | 'repost'
+  | 'follow'
+  | 'follow_request'
+  | 'follow_accepted'
+  | 'story_reply'
+  | 'moderation';
+
+export interface SocialNotification {
+  id: string;
+  type: SocialNotificationType;
+  publicationId: string | null;
+  commentId: string | null;
+  storyId: string | null;
+  readAt: string | null;
+  createdAt: string;
+  actor: SocialAuthor | null;
+}
+
+export interface SocialNotificationPage {
+  items: SocialNotification[];
+  unreadCount: number;
+  nextCursor: string | null;
+}

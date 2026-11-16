@@ -28,6 +28,7 @@ import type {
   PublicationComment,
   PresenceSnapshot,
   ResetPasswordResult,
+  SocialNotificationPage,
   SocialReaction,
   FeedPost,
   UploadResult,
@@ -191,6 +192,21 @@ export const api = {
       method: 'POST',
       token,
       body: { body, clientId, parentId },
+    });
+  },
+
+  /** Activité : notifications sociales, du plus récent au plus ancien. */
+  notifications(token: string, cursor?: string) {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    return request<SocialNotificationPage>(`/social/notifications${query}`, { token });
+  },
+
+  /** Marque tout comme lu, ou seulement les identifiants fournis. */
+  markNotificationsRead(token: string, ids?: string[]) {
+    return request<{ updated: number }>('/social/notifications/read', {
+      method: 'POST',
+      token,
+      body: ids ? { ids } : {},
     });
   },
 
