@@ -1,10 +1,12 @@
+import { router } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
-import { Compass, Home, MessageCircle, SquarePlus, User } from 'lucide-react-native';
-import { StyleSheet } from 'react-native';
+import { Compass, Home, MessageCircle, Settings, SquarePlus, User } from 'lucide-react-native';
+import { Pressable, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
-import { Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 /**
@@ -17,6 +19,7 @@ import { useTheme } from '@/hooks/use-theme';
  */
 export default function TabsLayout() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
@@ -28,9 +31,13 @@ export default function TabsLayout() {
           backgroundColor: theme.backgroundElement,
           borderTopColor: theme.border,
           borderTopWidth: StyleSheet.hairlineWidth,
+          // Hauteur explicite : la barre par défaut (49 px) rogne le libellé
+          // sous l'icône de 22 px sur les écrans à petit insigne de navigation.
+          height: TAB_BAR_HEIGHT + insets.bottom,
+          paddingBottom: insets.bottom + Spacing.one,
+          paddingTop: Spacing.two,
         },
         tabBarLabelStyle: styles.label,
-        tabBarItemStyle: styles.item,
       }}>
       <Tabs.Screen
         name="index"
@@ -64,6 +71,21 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: fr.tabs.profile,
+          // L'en-tête vit ici : un `Stack.Screen` rendu dans l'onglet serait
+          // ignoré, et le bouton Paramètres disparaîtrait.
+          headerShown: true,
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: theme.background },
+          headerTitleStyle: { color: theme.text },
+          headerRight: () => (
+            <Pressable
+              onPress={() => router.push('/settings')}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={fr.tabs.settings}>
+              <Icon icon={Settings} size={22} color={theme.text} />
+            </Pressable>
+          ),
           tabBarIcon: ({ color }) => <Icon icon={User} size={22} color={color} />,
         }}
       />
@@ -71,12 +93,15 @@ export default function TabsLayout() {
   );
 }
 
+/** Hauteur utile de la barre, hors inset système. */
+const TAB_BAR_HEIGHT = 58;
+
 const styles = StyleSheet.create({
+  // `lineHeight` explicite : à 11 px, la valeur par défaut dépasse la hauteur
+  // allouée au libellé et la dernière ligne se fait rogner.
   label: {
     fontSize: 11,
+    lineHeight: 14,
     fontWeight: '500',
-  },
-  item: {
-    paddingTop: Spacing.one,
   },
 });

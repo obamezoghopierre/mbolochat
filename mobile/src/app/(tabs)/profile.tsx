@@ -1,7 +1,6 @@
-import { Redirect, Stack, useFocusEffect, useRouter } from 'expo-router';
-import { Settings } from 'lucide-react-native';
+import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProfileAction, ProfileHeader } from '@/components/profile-view';
@@ -75,20 +74,6 @@ export default function ProfileScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <Stack.Screen
-        options={{
-          title: 'Profil',
-          headerRight: () => (
-            <Pressable
-              onPress={() => router.push('/settings')}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Paramètres">
-              <Settings size={22} color={theme.text} />
-            </Pressable>
-          ),
-        }}
-      />
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}
         keyboardShouldPersistTaps="handled">

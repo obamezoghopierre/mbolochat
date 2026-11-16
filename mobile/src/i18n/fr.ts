@@ -622,6 +622,7 @@ export const fr = {
     create: 'Créer',
     chats: 'Messages',
     profile: 'Profil',
+    settings: 'Paramètres',
   },
   social: {
     feedTitle: 'Ton fil est vide pour le moment',
