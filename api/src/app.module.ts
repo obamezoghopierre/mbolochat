@@ -13,6 +13,7 @@ import { FeedModule } from './feed/feed.module.js';
 import { FollowsModule } from './follows/follows.module.js';
 import { InvitesModule } from './invites/invites.module.js';
 import { MediaModule } from './media/media.module.js';
+import { ModerationModule } from './moderation/moderation.module.js';
 import { PresenceModule } from './presence/presence.module.js';
 import { PublicationsModule } from './publications/publications.module.js';
 import { SearchModule } from './search/search.module.js';
@@ -48,6 +49,7 @@ import { UsersModule } from './users/users.module.js';
     InvitesModule,
     UploadsModule,
     MediaModule,
+    ModerationModule,
     PresenceModule,
     PublicationsModule,
     SocialMediaModule,

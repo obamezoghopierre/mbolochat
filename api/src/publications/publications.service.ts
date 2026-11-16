@@ -17,6 +17,7 @@ import {
   users,
 } from '../db/schema.js';
 import { FollowsService } from '../follows/follows.service.js';
+import { ModerationService } from '../moderation/moderation.service.js';
 import { SocialNotificationsService } from '../social-notifications/social-notifications.service.js';
 import { canInteract, canViewPublication, type SocialViewer } from '../users/visibility.js';
 import type { CreateCommentDto, ReactDto } from './dto/interactions.dto.js';
@@ -90,6 +91,7 @@ export class PublicationsService {
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly follows: FollowsService,
     private readonly notifications: SocialNotificationsService,
+    private readonly moderation: ModerationService,
   ) {}
 
   async create(authorId: string, dto: CreatePublicationDto): Promise<PublicationView> {
@@ -98,6 +100,9 @@ export class PublicationsService {
       throw new BadRequestException('La légende ne peut pas être vide.');
     }
     const kind = dto.kind ?? 'post';
+    // Auto-flag : un contenu qui contient un mot bloqué part en revue humaine
+    // au lieu d'être publié directement.
+    const flagged = await this.moderation.hasBlockedWord(caption);
 
     const inserted = await this.db.transaction(async (tx) => {
       const now = new Date();
@@ -109,6 +114,7 @@ export class PublicationsService {
           format: dto.format ?? 'text',
           caption,
           visibility: dto.visibility ?? 'public',
+          moderationStatus: flagged ? 'flagged' : 'pending',
           clientId: dto.clientId,
           createdAt: now,
           // Score matérialisé dès la création : le feed pagine dessus.
