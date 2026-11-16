@@ -19,15 +19,23 @@ import { useTheme } from '@/hooks/use-theme';
 export function PostCard({
   post,
   onToggleLike,
+  onPress,
 }: {
   post: FeedPost;
   onToggleLike: (post: FeedPost) => void;
+  /** Ouvre le détail de la publication. */
+  onPress?: () => void;
 }) {
   const theme = useTheme();
   const reacted = post.viewer.reaction !== null;
 
   return (
-    <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={onPress ? `Ouvrir la publication de ${post.author.displayName}` : undefined}
+      style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
       <View style={styles.header}>
         <Avatar
           name={post.author.displayName}
@@ -89,7 +97,7 @@ export function PostCard({
           </ThemedText>
         </View>
       </View>
-    </View>
+    </Pressable>
   );
 }
 

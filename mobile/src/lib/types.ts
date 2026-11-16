@@ -470,3 +470,19 @@ export interface FeedPage {
 }
 
 export type FeedTab = 'for-you' | 'following' | 'local';
+
+/** Commentaire ou réponse à une publication. */
+export interface PublicationComment {
+  id: string;
+  publicationId: string;
+  parentId: string | null;
+  body: string;
+  createdAt: string;
+  author: SocialAuthor;
+  likeCount: number;
+}
+
+export interface CommentPage {
+  items: PublicationComment[];
+  nextCursor: string | null;
+}

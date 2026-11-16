@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { Home, MapPin, Users } from 'lucide-react-native';
 import {
   ActivityIndicator,
@@ -79,7 +80,11 @@ function FeedList({ tab }: { tab: FeedTab }) {
   const feed = useFeed(tab);
 
   const renderItem = ({ item }: { item: FeedPost }) => (
-    <PostCard post={item} onToggleLike={feed.toggleLike} />
+    <PostCard
+      post={item}
+      onToggleLike={feed.toggleLike}
+      onPress={() => router.push(`/post/${item.id}`)}
+    />
   );
 
   const empty = () => {

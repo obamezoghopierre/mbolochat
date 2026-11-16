@@ -1,6 +1,7 @@
 import { ApiError, api } from './api';
 import type { Socket } from 'socket.io-client';
 
+import { newClientId } from './client-id';
 import { getStore, type OutboxItem, type OutboxStatus } from './store';
 import { ensureSocket } from './socket';
 import type { GifSendPayload, Message, MessageAttachment, StickerSendPayload } from './types';
@@ -64,13 +65,6 @@ function notify(): void {
   for (const listener of listeners) {
     listener();
   }
-}
-
-/** Identifiant unique à cet appareil ; le serveur le traite comme une opacité. */
-let sequence = 0;
-function newClientId(): string {
-  sequence += 1;
-  return `${Date.now().toString(36)}-${sequence.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 /** Deux fichiers choisis ensemble doivent garder un ordre strict. */

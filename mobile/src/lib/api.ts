@@ -6,6 +6,7 @@ import { API_URL } from './config';
 import { refreshAccessToken } from './token-refresh';
 import type {
   AuthResult,
+  CommentPage,
   ConversationLinkItem,
   ConversationMediaItem,
   ConversationSearchHit,
@@ -23,9 +24,11 @@ import type {
   Message,
   MessageReceipt,
   PresenceSettings,
+  PublicationComment,
   PresenceSnapshot,
   ResetPasswordResult,
   SocialReaction,
+  FeedPost,
   UploadResult,
   User,
   UserProfile,
@@ -151,6 +154,32 @@ export const api = {
       method: 'POST',
       body,
       headers: deviceHeaders(),
+    });
+  },
+
+  /** Détail d'une publication (visibilité vérifiée par le serveur). */
+  publication(token: string, publicationId: string) {
+    return request<FeedPost>(`/publications/${publicationId}`, { token });
+  },
+
+  /** Commentaires d'une publication, du plus ancien au plus récent. */
+  comments(token: string, publicationId: string, cursor?: string) {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    return request<CommentPage>(`/publications/${publicationId}/comments${query}`, { token });
+  },
+
+  /** Ajout d'un commentaire, idempotent par `clientId`. */
+  addComment(
+    token: string,
+    publicationId: string,
+    body: string,
+    clientId: string,
+    parentId?: string,
+  ) {
+    return request<PublicationComment>(`/publications/${publicationId}/comments`, {
+      method: 'POST',
+      token,
+      body: { body, clientId, parentId },
     });
   },
 
