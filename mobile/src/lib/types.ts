@@ -541,3 +541,38 @@ export interface SocialNotificationPage {
   unreadCount: number;
   nextCursor: string | null;
 }
+
+export interface SearchUser {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  verified: boolean;
+  privateAccount: boolean;
+}
+
+export interface SearchPublication {
+  id: string;
+  kind: 'post' | 'reel';
+  caption: string | null;
+  createdAt: string;
+  author: SocialAuthor;
+}
+
+export interface SearchHashtag {
+  id: string;
+  tag: string;
+  usageCount: number;
+  trendScore: number;
+}
+
+export interface SearchBlock<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+export interface SearchResult {
+  users: SearchBlock<SearchUser>;
+  publications: SearchBlock<SearchPublication>;
+  hashtags: SearchBlock<SearchHashtag>;
+}

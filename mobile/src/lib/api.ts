@@ -28,6 +28,8 @@ import type {
   PublicationComment,
   PresenceSnapshot,
   ResetPasswordResult,
+  SearchHashtag,
+  SearchResult,
   SocialNotificationPage,
   SocialReaction,
   FeedPost,
@@ -193,6 +195,17 @@ export const api = {
       token,
       body: { body, clientId, parentId },
     });
+  },
+
+  /** Recherche unifiée : comptes, publications et hashtags. */
+  search(token: string, query: string, type: 'all' | 'users' | 'publications' | 'hashtags' = 'all') {
+    const params = new URLSearchParams({ q: query, type, limit: '10' });
+    return request<SearchResult>(`/search?${params.toString()}`, { token });
+  },
+
+  /** Hashtags les plus utilisés, pour l'écran Découvrir. */
+  trendingHashtags(token: string) {
+    return request<SearchHashtag[]>('/hashtags/trending?limit=20', { token });
   },
 
   /** Activité : notifications sociales, du plus récent au plus ancien. */
