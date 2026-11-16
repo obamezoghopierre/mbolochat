@@ -31,7 +31,7 @@ sans dégrader les garanties E2EE existantes.
 | Plateformes V1 | **Android d'abord**, web en consultation, iOS ensuite |
 | Langues V1 | **Français seul**, centralisé dans `mobile/src/i18n/fr.ts` |
 | Modération | **Back-office web minimal** obligatoire avant ouverture publique |
-| Navigation | Tabs **Feed / Découvrir / Créer / Messages / Profil** |
+| Navigation | Tabs **Fil / Découvrir / Activité / Messages / Profil** ; Créer passe en action hors barre (phase 3) — décision du 16 nov. 2026 |
 | Modèle social | **Publications unifiées** (posts + reels) |
 | Pseudo | **Pseudo public modifiable**, unique, avec cooldown |
 | Feed local | **Ville** en V1, geohash/rayon ensuite |

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
-import { Compass, Home, MessageCircle, Settings, SquarePlus, User } from 'lucide-react-native';
+import { Bell, Compass, Home, MessageCircle, Settings, User } from 'lucide-react-native';
 import { Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -54,12 +54,18 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="create"
+        name="notifications"
         options={{
-          title: fr.tabs.create,
-          tabBarIcon: ({ color }) => <Icon icon={SquarePlus} size={22} color={color} />,
+          title: fr.tabs.notifications,
+          tabBarIcon: ({ color }) => <Icon icon={Bell} size={22} color={color} />,
         }}
       />
+      {/*
+        Créer n'est pas un onglet : sa place est prise par les notifications.
+        La route reste disponible (`router.push('/create')`) pour le studio de la
+        phase 3, sans encombrer la barre.
+      */}
+      <Tabs.Screen name="create" options={{ href: null, title: fr.tabs.create }} />
       <Tabs.Screen
         name="chats"
         options={{

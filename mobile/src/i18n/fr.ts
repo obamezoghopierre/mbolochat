@@ -620,6 +620,7 @@ export const fr = {
     feed: 'Fil',
     discover: 'Découvrir',
     create: 'Créer',
+    notifications: 'Activité',
     chats: 'Messages',
     profile: 'Profil',
     settings: 'Paramètres',
@@ -631,5 +632,8 @@ export const fr = {
     discoverBody: 'La recherche, les hashtags et les tendances arrivent bientôt.',
     createTitle: 'Partage un moment',
     createBody: 'La création de photos, de carrousels et de reels arrive bientôt.',
+    notificationsTitle: 'Aucune notification',
+    notificationsBody:
+      'Les réactions, les commentaires et les nouveaux abonnés apparaîtront ici.',
   },
 } as const;
