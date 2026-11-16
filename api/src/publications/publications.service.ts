@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.js';
+import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   comments,
@@ -94,6 +95,7 @@ export class PublicationsService {
     const kind = dto.kind ?? 'post';
 
     const inserted = await this.db.transaction(async (tx) => {
+      const now = new Date();
       const [row] = await tx
         .insert(publications)
         .values({
@@ -103,6 +105,9 @@ export class PublicationsService {
           caption,
           visibility: dto.visibility ?? 'public',
           clientId: dto.clientId,
+          createdAt: now,
+          // Score matérialisé dès la création : le feed pagine dessus.
+          hotScore: computeHotScore({ likes: 0, comments: 0, reposts: 0, saves: 0 }, now, now),
         })
         .onConflictDoNothing()
         .returning();
@@ -205,6 +210,7 @@ export class PublicationsService {
         .update(users)
         .set({ likeReceivedCount: sql`${users.likeReceivedCount} + 1` })
         .where(eq(users.id, row.authorId));
+      await this.refreshHotScore(tx, publicationId);
     });
 
     return { reaction: kind, likeCount: await this.likeCount(publicationId) };
@@ -236,6 +242,7 @@ export class PublicationsService {
         .update(users)
         .set({ likeReceivedCount: sql`greatest(${users.likeReceivedCount} - 1, 0)` })
         .where(eq(users.id, row.authorId));
+      await this.refreshHotScore(tx, publicationId);
     });
 
     return { reaction: null, likeCount: await this.likeCount(publicationId) };
@@ -297,6 +304,7 @@ export class PublicationsService {
           .set({ replyCount: sql`${comments.replyCount} + 1` })
           .where(eq(comments.id, comment.parentId));
       }
+      await this.refreshHotScore(tx, publicationId);
       return comment;
     });
 
@@ -400,6 +408,7 @@ export class PublicationsService {
           .set({ replyCount: sql`greatest(${comments.replyCount} - 1, 0)` })
           .where(eq(comments.id, row.parentId));
       }
+      await this.refreshHotScore(tx, row.publicationId);
     });
     return { deleted: true };
   }
@@ -495,6 +504,21 @@ export class PublicationsService {
       author: row.author,
       likeCount: row.comment.likeCount,
     };
+  }
+
+  /**
+   * Recalcule le score après une interaction. Deuxième instruction de la même
+   * transaction : PostgreSQL évalue les `SET` sur l'ancienne ligne, donc un
+   * update unique lirait des compteurs périmés.
+   */
+  private async refreshHotScore(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    publicationId: string,
+  ): Promise<void> {
+    await tx
+      .update(publications)
+      .set({ hotScore: hotScoreSql() })
+      .where(eq(publications.id, publicationId));
   }
 
   private authorFields() {
