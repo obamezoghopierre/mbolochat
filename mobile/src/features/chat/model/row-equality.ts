@@ -25,6 +25,7 @@ export function sameChatMessageRow(
     return (
       previous.row.message === next.row.message &&
       previous.row.continuation === next.row.continuation &&
+      previous.row.group === next.row.group &&
       previous.pinnedMessageIds === next.pinnedMessageIds
     );
   }
@@ -32,6 +33,7 @@ export function sameChatMessageRow(
     return (
       sameMessages(previous.row.messages, next.row.messages) &&
       previous.row.continuation === next.row.continuation &&
+      previous.row.group === next.row.group &&
       previous.pinnedMessageIds === next.pinnedMessageIds
     );
   }
@@ -51,7 +53,9 @@ export function reuseChatRow(previous: Map<string, ChatRow>, candidate: ChatRow)
   const old = previous.get(candidate.key);
   if (!old || old.type !== candidate.type) return candidate;
   if (old.type === 'message' && candidate.type === 'message') {
-    return old.message === candidate.message && old.continuation === candidate.continuation
+    return old.message === candidate.message &&
+      old.continuation === candidate.continuation &&
+      old.group === candidate.group
       ? old
       : candidate;
   }
@@ -59,7 +63,9 @@ export function reuseChatRow(previous: Map<string, ChatRow>, candidate: ChatRow)
     const same =
       old.messages.length === candidate.messages.length &&
       old.messages.every((message, index) => message === candidate.messages[index]);
-    return same && old.continuation === candidate.continuation ? old : candidate;
+    return same && old.continuation === candidate.continuation && old.group === candidate.group
+      ? old
+      : candidate;
   }
   return old;
 }

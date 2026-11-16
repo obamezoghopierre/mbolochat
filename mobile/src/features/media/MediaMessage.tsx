@@ -8,8 +8,9 @@ import {
 import { memo, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { useChatColors } from '@/constants/chat-theme';
-import { Spacing, Radii } from '@/constants/theme';
+import { ChatMetrics, useChatColors } from '@/constants/chat-theme';
+import { Spacing, Radii, Type } from '@/constants/theme';
+import { fr } from '@/i18n/fr';
 
 import {
   documentTypeLabel,
@@ -49,7 +50,7 @@ export const ImageMessageBubble = memo(function ImageMessageBubble({
       onLongPress={onLongPress}
       delayLongPress={320}
       accessibilityRole="button"
-      accessibilityLabel={failed ? 'Réessayer l’envoi de cette photo' : 'Ouvrir la photo'}
+      accessibilityLabel={failed ? fr.media.retryPhoto : fr.media.openPhoto}
       style={[styles.mediaFrame, { width, height }]}>
       <Image
         source={{ uri }}
@@ -82,6 +83,29 @@ interface VideoBubbleProps {
   onLongPress: () => void;
 }
 
+const THUMBNAIL_CONCURRENCY = 2;
+let thumbnailActive = 0;
+const thumbnailQueue: (() => void)[] = [];
+
+function acquireThumbnailSlot(): Promise<void> {
+  if (thumbnailActive < THUMBNAIL_CONCURRENCY) {
+    thumbnailActive++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    thumbnailQueue.push(() => {
+      thumbnailActive++;
+      resolve();
+    });
+  });
+}
+
+function releaseThumbnailSlot() {
+  thumbnailActive--;
+  const next = thumbnailQueue.shift();
+  if (next) next();
+}
+
 function useVideoThumbnail(uri: string): VideoThumbnail | null {
   const [result, setResult] = useState<{ uri: string; thumbnail: VideoThumbnail } | null>(null);
 
@@ -112,6 +136,11 @@ function useVideoThumbnail(uri: string): VideoThumbnail | null {
       });
 
     const generate = async () => {
+      await acquireThumbnailSlot();
+      if (!active) {
+        releaseThumbnailSlot();
+        return;
+      }
       try {
         player = createVideoPlayer(uri);
         await waitForPlayer();
@@ -128,6 +157,7 @@ function useVideoThumbnail(uri: string): VideoThumbnail | null {
         subscription = null;
         player?.release();
         player = null;
+        releaseThumbnailSlot();
       }
     };
 
@@ -173,7 +203,7 @@ export const VideoMessageBubble = memo(function VideoMessageBubble({
       onLongPress={onLongPress}
       delayLongPress={320}
       accessibilityRole="button"
-      accessibilityLabel={failed ? 'Réessayer l’envoi de cette vidéo' : 'Lire la vidéo'}
+      accessibilityLabel={failed ? fr.media.retryVideo : fr.media.playVideo}
       style={[styles.mediaFrame, styles.videoFrame, { width, height }]}>
       {thumbnail ? (
         <Image source={thumbnail} style={StyleSheet.absoluteFill} contentFit="cover" />
@@ -247,7 +277,7 @@ export const DocumentMessageBubble = memo(function DocumentMessageBubble({
       onLongPress={onLongPress}
       delayLongPress={320}
       accessibilityRole="button"
-      accessibilityLabel={`Ouvrir le document ${name}`}
+      accessibilityLabel={fr.media.openDocument(name)}
       style={[
         styles.documentCard,
         { width, backgroundColor: mine ? chat.mineBubble : chat.theirBubble },
@@ -268,8 +298,8 @@ export const DocumentMessageBubble = memo(function DocumentMessageBubble({
           onPress={onRetry}
           hitSlop={8}
           accessibilityRole="button"
-          accessibilityLabel="Réessayer l’envoi de ce document"
-          style={[styles.documentIcon, styles.documentFailedIcon]}>
+          accessibilityLabel={fr.media.retryDocument}
+          style={[styles.documentIcon, styles.documentFailedIcon, { backgroundColor: chat.error }]}>
           <Ionicons name="refresh" size={22} color="#ffffff" />
         </Pressable>
       ) : (
@@ -293,7 +323,7 @@ export const DocumentMessageBubble = memo(function DocumentMessageBubble({
 
 const styles = StyleSheet.create({
   mediaFrame: {
-    borderRadius: Radii.lg,
+    borderRadius: ChatMetrics.mediaRadius,
     overflow: 'hidden',
     backgroundColor: 'rgba(0,0,0,0.08)',
   },
@@ -321,20 +351,19 @@ const styles = StyleSheet.create({
   },
   durationText: {
     color: '#ffffff',
-    fontSize: 11,
-    lineHeight: 15,
+    ...Type.micro,
     fontVariant: ['tabular-nums'],
   },
   documentCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
-    borderRadius: Radii.sm,
+    borderRadius: ChatMetrics.bubbleRadius,
     padding: Spacing.two,
   },
   documentIcon: {
-    width: 44,
-    height: 44,
+    width: ChatMetrics.touchTargetMin,
+    height: ChatMetrics.touchTargetMin,
     borderRadius: Radii.sm,
     alignItems: 'center',
     justifyContent: 'center',
@@ -349,12 +378,10 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   documentName: {
-    fontSize: 14,
-    lineHeight: 18,
+    ...Type.caption,
     fontWeight: '500',
   },
   documentSize: {
-    fontSize: 12,
-    lineHeight: 16,
+    ...Type.sender,
   },
 });

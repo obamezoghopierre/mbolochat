@@ -20,11 +20,14 @@ export function PostCard({
   post,
   onToggleLike,
   onPress,
+  onPressAuthor,
 }: {
   post: FeedPost;
   onToggleLike: (post: FeedPost) => void;
   /** Ouvre le détail de la publication. */
   onPress?: () => void;
+  /** Ouvre le profil de l'auteur. */
+  onPressAuthor?: () => void;
 }) {
   const theme = useTheme();
   const reacted = post.viewer.reaction !== null;
@@ -36,7 +39,14 @@ export function PostCard({
       accessibilityRole={onPress ? 'button' : undefined}
       accessibilityLabel={onPress ? `Ouvrir la publication de ${post.author.displayName}` : undefined}
       style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
-      <View style={styles.header}>
+      <Pressable
+        onPress={onPressAuthor}
+        disabled={!onPressAuthor}
+        accessibilityRole={onPressAuthor ? 'button' : undefined}
+        accessibilityLabel={
+          onPressAuthor ? `Voir le profil de ${post.author.displayName}` : undefined
+        }
+        style={styles.header}>
         <Avatar
           name={post.author.displayName}
           uri={post.author.avatarUrl}
@@ -57,7 +67,7 @@ export function PostCard({
             @{post.author.username} · {formatListTimestamp(post.createdAt)}
           </ThemedText>
         </View>
-      </View>
+      </Pressable>
 
       {post.caption ? (
         <ThemedText style={styles.caption}>{post.caption}</ThemedText>

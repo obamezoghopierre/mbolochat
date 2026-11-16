@@ -1,6 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentRef,
+  type ReactNode,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -49,9 +56,22 @@ interface Props {
   /** Ouvre le clair déchiffré ; l'écran choisit la visionneuse selon le type. */
   onOpen: (uri: string, media: EncryptedMedia) => void;
   onLongPress?: () => void;
+  /** Heure et accusé d'un vocal, rendus dans sa bulle. */
+  footer?: ReactNode;
+  /** Queue de bulle d'un vocal, masquée au milieu d'une suite. */
+  tail?: boolean;
 }
 
-export function SecureMediaMessage({ token, media, mine, caption, onOpen, onLongPress }: Props) {
+export function SecureMediaMessage({
+  token,
+  media,
+  mine,
+  caption,
+  onOpen,
+  onLongPress,
+  footer,
+  tail = true,
+}: Props) {
   const chat = useChatColors();
   const { width: windowWidth } = useWindowDimensions();
   const [wifi] = useAppPreference('mediaAutoDownloadWifi');
@@ -124,7 +144,14 @@ export function SecureMediaMessage({ token, media, mine, caption, onOpen, onLong
     // toucher, la lecture n'ouvre aucune autre application.
     return (
       <>
-        <SecureVoicePlayer token={token} media={media} mine={mine} onLongPress={onLongPress} />
+        <SecureVoicePlayer
+          token={token}
+          media={media}
+          mine={mine}
+          onLongPress={onLongPress}
+          footer={footer}
+          tail={tail}
+        />
         {captionBlock}
       </>
     );

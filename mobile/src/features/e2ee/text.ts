@@ -1,6 +1,13 @@
 import type { SQLiteDatabase } from 'expo-sqlite';
 
 import { MboloCrypto } from '../../../modules/mbolo-crypto/src';
+import {
+  accountUserId,
+  createInboundSession,
+  createOutboundSession,
+  decryptWithSession,
+  encryptWithAccount,
+} from './keys';
 import { api } from '@/lib/api';
 import { ensureSocket } from '@/lib/socket';
 import type { ConversationSummary, Message } from '@/lib/types';
@@ -229,7 +236,8 @@ export async function encryptEnvelope(input: {
           ? await loadSession(input.db, peer.id, peerDeviceId)
           : null;
         if (!session) throw bundleFailure;
-        const sealed = await MboloCrypto.secureEncrypt(
+        const sealed = await encryptWithAccount(
+          accountUserId(input.account),
           session.session_pickle,
           input.plaintext,
         );
@@ -299,10 +307,11 @@ export async function encryptEnvelope(input: {
         return { kind: 'prekey', clear: rotated };
       }
 
-      const sealed = await MboloCrypto.secureEncrypt(
-        session.session_pickle,
-        input.plaintext,
-      );
+      const sealed = await encryptWithAccount(
+          accountUserId(input.account),
+          session.session_pickle,
+          input.plaintext,
+        );
       const envelope: OutgoingEnvelope = {
         payload: sealed.message,
         payloadType: sealed.message_type as OutgoingEnvelope['payloadType'],
@@ -355,17 +364,19 @@ export async function encryptEnvelope(input: {
         if (session && !clear) {
           // Une autre tâche a ouvert la session entre les deux phases : son S0
           // fait foi. La prekey déjà consommée est perdue, jamais réutilisée.
-          const sealed = await MboloCrypto.secureEncrypt(
-            session.session_pickle,
-            input.plaintext,
-          );
+          const sealed = await encryptWithAccount(
+          accountUserId(input.account),
+          session.session_pickle,
+          input.plaintext,
+        );
           nextPickle = sealed.session_pickle;
           envelope = {
             payload: sealed.message,
             payloadType: sealed.message_type as OutgoingEnvelope['payloadType'],
           };
         } else {
-          const outbound = await MboloCrypto.secureCreateOutbound(
+          const outbound = await createOutboundSession(
+            accountUserId(input.account),
             input.account.account_pickle,
             bundle.identityKey,
             prekey.key,
@@ -739,7 +750,8 @@ async function attemptInbound(input: InboundInput, deviceId: string): Promise<In
     return { kind: 'needs_bundle' };
   }
   try {
-    const decrypted = await MboloCrypto.secureDecrypt(
+    const decrypted = await decryptWithSession(
+      accountUserId(input.account),
       session.session_pickle,
       input.message.payloadType ?? 'normal',
       input.message.payload!,
@@ -785,7 +797,8 @@ async function openWithBundle(
   );
   // Consomme la prekey : le pickle de compte avance, il doit donc être
   // persisté en même temps que la session et le message.
-  const inbound = await MboloCrypto.secureCreateInbound(
+  const inbound = await createInboundSession(
+    accountUserId(input.account),
     input.account.account_pickle,
     bundle.identityKey,
     input.message.payload!,

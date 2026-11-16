@@ -110,13 +110,16 @@ export const Radii = {
   full: 999,
 } as const;
 
-/** Échelle typographique unique (5 tailles, 2 graisses). */
+/** Échelle typographique unique. */
 export const Type = {
   screenTitle: { fontSize: 22, lineHeight: 28, fontWeight: '600' },
   sectionTitle: { fontSize: 17, lineHeight: 22, fontWeight: '600' },
+  message: { fontSize: 16, lineHeight: 21 },
   body: { fontSize: 15, lineHeight: 21 },
   caption: { fontSize: 13, lineHeight: 18 },
+  sender: { fontSize: 12, lineHeight: 16 },
   micro: { fontSize: 11, lineHeight: 15 },
+  meta: { fontSize: 10, lineHeight: 12 },
 } satisfies Record<string, TextStyle>;
 
 /** Durées courtes : jamais d'animation linéaire. */

@@ -74,8 +74,8 @@ function props(row: ChatRow) {
 describe('sameChatMessageRow', () => {
   it('égale deux rangées recréées qui portent le même message', () => {
     const view = message('m1');
-    const first: ChatRow = { key: 'm1', type: 'message', message: view, continuation: false };
-    const second: ChatRow = { key: 'm1', type: 'message', message: view, continuation: false };
+    const first: ChatRow = { key: 'm1', type: 'message', message: view, continuation: false, group: 'single' };
+    const second: ChatRow = { key: 'm1', type: 'message', message: view, continuation: false, group: 'single' };
     expect(first).not.toBe(second);
     expect(sameChatMessageRow(props(first), props(second))).toBe(true);
   });
@@ -85,14 +85,14 @@ describe('sameChatMessageRow', () => {
     const b = message('m1');
     expect(
       sameChatMessageRow(
-        props({ key: 'm1', type: 'message', message: a, continuation: false }),
-        props({ key: 'm1', type: 'message', message: b, continuation: false }),
+        props({ key: 'm1', type: 'message', message: a, continuation: false, group: 'single' }),
+        props({ key: 'm1', type: 'message', message: b, continuation: false, group: 'single' }),
       ),
     ).toBe(false);
     expect(
       sameChatMessageRow(
-        props({ key: 'm1', type: 'message', message: a, continuation: false }),
-        props({ key: 'm1', type: 'message', message: a, continuation: true }),
+        props({ key: 'm1', type: 'message', message: a, continuation: false, group: 'single' }),
+        props({ key: 'm1', type: 'message', message: a, continuation: true, group: 'single' }),
       ),
     ).toBe(false);
   });
@@ -102,21 +102,21 @@ describe('sameChatMessageRow', () => {
     const b = message('b');
     expect(
       sameChatMessageRow(
-        props({ key: 'album', type: 'album', messages: [a, b], continuation: false }),
-        props({ key: 'album', type: 'album', messages: [a, b], continuation: false }),
+        props({ key: 'album', type: 'album', messages: [a, b], continuation: false, group: 'single' }),
+        props({ key: 'album', type: 'album', messages: [a, b], continuation: false, group: 'single' }),
       ),
     ).toBe(true);
     expect(
       sameChatMessageRow(
-        props({ key: 'album', type: 'album', messages: [a, b], continuation: false }),
-        props({ key: 'album', type: 'album', messages: [a, message('b')], continuation: false }),
+        props({ key: 'album', type: 'album', messages: [a, b], continuation: false, group: 'single' }),
+        props({ key: 'album', type: 'album', messages: [a, message('b')], continuation: false, group: 'single' }),
       ),
     ).toBe(false);
   });
 
   it('re-rend une ligne quand son état épinglé change', () => {
     const view = message('m1');
-    const row: ChatRow = { key: 'm1', type: 'message', message: view, continuation: false };
+    const row: ChatRow = { key: 'm1', type: 'message', message: view, continuation: false, group: 'single' };
     expect(
       sameChatMessageRow(props(row), {
         ...props(row),

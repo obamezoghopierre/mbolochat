@@ -1,5 +1,10 @@
 import { bootstrapE2ee, type BootstrapResult } from './bootstrap';
-import { beginE2eeInit, classifyE2eeFailure, setE2eeInitState } from './initState';
+import {
+  beginE2eeInit,
+  classifyE2eeFailure,
+  getE2eeInitState,
+  setE2eeInitState,
+} from './initState';
 
 /**
  * Exécute l'initialisation E2EE une seule fois à la fois.
@@ -25,7 +30,13 @@ export function runE2eeInit(
   if (inFlight?.token === token && !options?.force) return inFlight.promise;
   const generation = beginE2eeInit();
   const promise = (async (): Promise<BootstrapResult | null> => {
-    setE2eeInitState({ status: 'pending' }, generation);
+    // Une vérification de retour d'application ne doit pas faire disparaître
+    // l'interface : si le chiffrement était déjà prêt, il le reste pendant la
+    // republication des clés. Sans cela, chaque reprise passait par `pending`
+    // et démontait le compositeur — donc l'enregistreur vocal en cours de
+    // capture. Un échec, lui, publie bien `degraded`/`failed`.
+    const wasReady = getE2eeInitState().status === 'ready';
+    if (!wasReady) setE2eeInitState({ status: 'pending' }, generation);
     try {
       const result = await bootstrapE2ee(token, userId);
       if (result.disabled) {

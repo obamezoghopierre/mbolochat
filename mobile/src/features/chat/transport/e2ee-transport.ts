@@ -25,6 +25,12 @@ const LOCAL_PAGE_SIZE = 50;
 const TYPING_REFRESH_MS = 2_500;
 const TYPING_EXPIRY_MS = 4_000;
 const EXPIRY_SWEEP_MS = 30_000;
+/**
+ * Nom d'affichage d'une note vocale. Le serveur ne déduit jamais la nature d'un
+ * fichier chiffré : l'enveloppe la porte. Un média sans nom s'affiche mal dans
+ * l'historique des fichiers, d'où ce nom stable plutôt qu'un chemin de cache.
+ */
+const VOICE_FILE_NAME = 'vocal.m4a';
 
 function newClientId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -472,7 +478,7 @@ export class E2eeTransport implements ChatTransport {
         uri: note.uri,
         kind: 'audio',
         mime: note.mimeType,
-        name: null,
+        name: VOICE_FILE_NAME,
         size: null,
         width: null,
         height: null,

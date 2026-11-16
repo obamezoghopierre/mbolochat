@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { FlatList, StyleSheet } from 'react-native';
 
+import { ChatMetrics } from '@/constants/chat-theme';
 import type { ChatRow } from '../model/rows';
 import { ChatMessageRow, type ChatMessageRowProps } from './chat-message-row';
 
@@ -139,7 +140,7 @@ export function ChatMessageList({
       onEndReachedThreshold={0.3}
       initialNumToRender={15}
       maxToRenderPerBatch={10}
-      windowSize={5}
+      windowSize={9}
       updateCellsBatchingPeriod={50}
       removeClippedSubviews
       keyboardShouldPersistTaps="handled"
@@ -154,8 +155,8 @@ export function ChatMessageList({
 
 const styles = StyleSheet.create({
   content: {
-    paddingHorizontal: 8,
-    paddingVertical: 8,
+    paddingHorizontal: ChatMetrics.listPadding,
+    paddingVertical: ChatMetrics.listPadding,
     flexGrow: 1,
   },
 });

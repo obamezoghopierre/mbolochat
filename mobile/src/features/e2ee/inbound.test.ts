@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setActiveE2eeUser } from './activeUser';
 
 import { MboloCrypto } from '../../../modules/mbolo-crypto/src';
 import { api } from '@/lib/api';
@@ -106,6 +107,7 @@ function openDb(): Fixture {
 
 const account: E2eeAccountRow = {
   account_pickle: 'account-pickle',
+  user_id: 'user-a',
   device_id: 'local-device',
   identity_key: 'local-identity',
   signing_key: 'local-signing',
@@ -231,6 +233,7 @@ const decrypt = (fixture: Fixture, message: Message) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setActiveE2eeUser('user-a');
   apiMock.getE2eeKeyBundle.mockResolvedValue({
     deviceId: 'dev-1',
     identityKey: 'peer-ident',
@@ -407,8 +410,8 @@ describe('déchiffrement entrant — persistance atomique', () => {
     // par la copie périmée que porte l'appelant.
     await fixture.handle.runAsync(
       `INSERT INTO e2ee_account
-         (id, account_pickle, device_id, identity_key, signing_key, created_at)
-       VALUES (1, 'account-avance', 'local-device', 'local-identity', 'local-signing',
+         (id, account_pickle, device_id, user_id, identity_key, signing_key, created_at)
+       VALUES (1, 'account-avance', 'local-device', 'user-a', 'local-identity', 'local-signing',
                '2026-01-01T00:00:00Z')`,
     );
     cryptoMock.secureDecrypt.mockResolvedValue(decrypted('S1') as never);
@@ -657,8 +660,8 @@ describe('déchiffrement entrant — pickle global du compte', () => {
     const fixture = await seeded([]);
     await fixture.handle.runAsync(
       `INSERT INTO e2ee_account
-         (id, account_pickle, device_id, identity_key, signing_key, created_at)
-       VALUES (1, 'A0', 'local-device', 'local-identity', 'local-signing',
+         (id, account_pickle, device_id, user_id, identity_key, signing_key, created_at)
+       VALUES (1, 'A0', 'local-device', 'user-a', 'local-identity', 'local-signing',
                '2026-01-01T00:00:00Z')`,
     );
     accountAppending();
@@ -693,8 +696,8 @@ describe('déchiffrement entrant — pickle global du compte', () => {
     const fixture = await seeded([]);
     await fixture.handle.runAsync(
       `INSERT INTO e2ee_account
-         (id, account_pickle, device_id, identity_key, signing_key, created_at)
-       VALUES (1, 'A-plus-recent', 'local-device', 'local-identity', 'local-signing',
+         (id, account_pickle, device_id, user_id, identity_key, signing_key, created_at)
+       VALUES (1, 'A-plus-recent', 'local-device', 'user-a', 'local-identity', 'local-signing',
                '2026-01-01T00:00:00Z')`,
     );
     accountAppending();

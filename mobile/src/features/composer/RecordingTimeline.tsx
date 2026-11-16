@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import Animated, {
   Easing,
@@ -9,22 +9,34 @@ import Animated, {
   useSharedValue,
   withRepeat,
   withTiming,
-  ZoomIn,
 } from 'react-native-reanimated';
 
-import { Radii, Type } from '@/constants/theme';
+import { ChatMetrics } from '@/constants/chat-theme';
+import { Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 
 import type { VoiceGestureZone } from './voice-gesture';
 
+type IconName = ComponentProps<typeof MaterialCommunityIcons>['name'];
+
 type Props = {
   levels: number[];
   elapsedMs: number;
-  /** Zone de glissement active : teinte l'onde et remplace les indices. */
+  /** Zone de glissement active : teinte l'onde et met en avant le bon geste. */
   zone: VoiceGestureZone;
   /** Indices masqués une fois l'enregistrement verrouillé (doigt relevé). */
   showHints: boolean;
-  colors: { bar: string; cancel: string; text: string; dot: string; hint: string };
+  /** Enregistrement en mains libres : commandes d'annulation et d'arrêt. */
+  locked?: boolean;
+  onCancel?: () => void;
+  colors: {
+    bar: string;
+    cancel: string;
+    text: string;
+    dot: string;
+    hint: string;
+    lock: string;
+  };
 };
 
 function formatDuration(ms: number): string {
@@ -32,43 +44,48 @@ function formatDuration(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
 
-/** Point d'enregistrement : pulsation douce en boucle. */
+/** Point d'enregistrement : pulsation courte, sans attirer tout l'écran. */
 function PulseDot({ color }: { color: string }) {
   const pulse = useSharedValue(1);
   useEffect(() => {
     pulse.value = withRepeat(
-      withTiming(0.35, { duration: 620, easing: Easing.inOut(Easing.ease) }),
+      withTiming(0, { duration: 700, easing: Easing.inOut(Easing.ease) }),
       -1,
       true,
     );
   }, [pulse]);
-  const style = useAnimatedStyle(() => ({ opacity: pulse.value }));
+  const style = useAnimatedStyle(() => ({
+    opacity: 0.45 + 0.55 * pulse.value,
+    transform: [{ scale: 0.85 + 0.25 * pulse.value }],
+  }));
   return <Animated.View style={[styles.dot, { backgroundColor: color }, style]} />;
 }
 
 type BarProps = {
   level: number;
-  index: number;
-  count: number;
   cancelling: boolean;
   barColor: string;
   cancelColor: string;
 };
 
-/** Barre d'onde : hauteur lissée entre deux mesures, couleur animée à l'annulation. */
-function LiveBar({ level, index, count, cancelling, barColor, cancelColor }: BarProps) {
-  const height = useSharedValue(5);
+/** Barre de l'onde : hauteur lissée et teinte d'annulation. */
+function LiveBar({ level, cancelling, barColor, cancelColor }: BarProps) {
+  const height = useSharedValue<number>(ChatMetrics.voiceBarMinHeight);
   const cancel = useSharedValue(0);
 
   useEffect(() => {
-    height.value = withTiming(3 + level * 15, {
-      duration: 120,
+    const target =
+      ChatMetrics.voiceBarMinHeight +
+      Math.min(1, Math.max(0, level)) *
+        (ChatMetrics.voiceBarMaxHeight - ChatMetrics.voiceBarMinHeight);
+    height.value = withTiming(target, {
+      duration: 110,
       easing: Easing.out(Easing.cubic),
     });
   }, [level, height]);
 
   useEffect(() => {
-    cancel.value = withTiming(cancelling ? 1 : 0, { duration: 140 });
+    cancel.value = withTiming(cancelling ? 1 : 0, { duration: 130 });
   }, [cancelling, cancel]);
 
   const style = useAnimatedStyle(() => ({
@@ -76,85 +93,149 @@ function LiveBar({ level, index, count, cancelling, barColor, cancelColor }: Bar
     backgroundColor: interpolateColor(cancel.value, [0, 1], [barColor, cancelColor]),
   }));
 
-  // Les barres anciennes s'estompent : effet « timeline ».
-  const fade = 0.4 + (index / Math.max(1, count - 1)) * 0.6;
-
-  return <Animated.View style={[styles.bar, style, { opacity: fade }]} />;
+  return <Animated.View style={[styles.bar, style]} />;
 }
 
-/** Ligne d'indices : les deux gestes de glissement, ou le message de zone. */
-function HintLine({
-  zone,
-  showHints,
-  colors,
+/** Pastille de geste : icône seule sur écran étroit, libellé court sinon. */
+function GestureHint({
+  icon,
+  upward = false,
+  label,
+  accessibilityLabel,
+  active,
+  activeColor,
+  idleColor,
+  compact,
 }: {
-  zone: VoiceGestureZone;
-  showHints: boolean;
-  colors: { cancel: string; hint: string };
+  icon: IconName;
+  upward?: boolean;
+  label: string;
+  accessibilityLabel: string;
+  active: boolean;
+  activeColor: string;
+  idleColor: string;
+  compact: boolean;
 }) {
-  if (zone === 'cancel') {
-    return (
-      <Animated.View entering={ZoomIn.duration(140)} style={styles.hintLine}>
-        <MaterialCommunityIcons
-          name="trash-can-outline"
-          size={13}
-          color={colors.cancel}
-        />
-        <Text style={[styles.hint, { color: colors.cancel }]}>
-          {fr.chat.voiceRecord.releaseToCancel}
-        </Text>
-      </Animated.View>
-    );
-  }
-  if (zone === 'lock') {
-    return (
-      <Animated.View entering={ZoomIn.duration(140)} style={styles.hintLine}>
-        <MaterialCommunityIcons
-          name="lock-outline"
-          size={12}
-          color={colors.hint}
-        />
-        <Text style={[styles.hint, { color: colors.hint }]}>
-          {fr.chat.voiceRecord.releaseToLock}
-        </Text>
-      </Animated.View>
-    );
-  }
-  if (!showHints) return <View style={styles.hintLine} />;
+  const progress = useSharedValue(active ? 1 : 0);
+  useEffect(() => {
+    progress.value = withTiming(active ? 1 : 0, { duration: 140 });
+  }, [active, progress]);
+  const style = useAnimatedStyle(() => ({
+    opacity: 0.55 + 0.45 * progress.value,
+    transform: [{ scale: 1 + 0.04 * progress.value }],
+  }));
+  const color = active ? activeColor : idleColor;
   return (
-    <View style={styles.hintLine}>
-      <Text numberOfLines={1} style={[styles.hint, styles.hintLeft, { color: colors.hint }]}>
-        {fr.chat.voiceRecord.hintCancel}
-      </Text>
-      <Text numberOfLines={1} style={[styles.hint, styles.hintRight, { color: colors.hint }]}>
-        {fr.chat.voiceRecord.hintLock}
-      </Text>
-    </View>
+    <Animated.View
+      accessible
+      accessibilityLabel={accessibilityLabel}
+      style={[styles.hint, style]}>
+      <MaterialCommunityIcons name={icon} size={13} color={color} />
+      {upward ? (
+        <MaterialCommunityIcons name="chevron-up" size={12} color={color} />
+      ) : null}
+      {compact ? null : (
+        <Text numberOfLines={1} style={[styles.hintLabel, { color }]}>
+          {active ? fr.chat.voiceRecord.releaseShort : label}
+        </Text>
+      )}
+    </Animated.View>
   );
 }
 
-/** Vue d'enregistrement : chrono, onde live et indices de glissement. */
-export function RecordingTimeline({ levels, elapsedMs, zone, showHints, colors }: Props) {
+/** Vue d'enregistrement : une ligne compacte, compteur lisible, onde centrale. */
+export function RecordingTimeline({
+  levels,
+  elapsedMs,
+  zone,
+  showHints,
+  locked = false,
+  onCancel,
+  colors,
+}: Props) {
+  const [rowWidth, setRowWidth] = useState(0);
+  const [waveWidth, setWaveWidth] = useState(0);
+
+  // Assez de place pour les libellés ? Sur écran étroit, seules les icônes
+  // restent : jamais de texte tronqué ni d'onde comprimée.
+  const compact = rowWidth > 0 && rowWidth < 280;
+
+  const bars = useMemo(() => {
+    const slot = ChatMetrics.voiceBarWidth + ChatMetrics.voiceBarGap;
+    const count =
+      waveWidth > 0
+        ? Math.max(6, Math.floor((waveWidth + ChatMetrics.voiceBarGap) / slot))
+        : 12;
+    return levels.slice(-Math.min(count, levels.length));
+  }, [levels, waveWidth]);
+
   return (
-    <Animated.View entering={FadeIn.duration(120)} style={styles.container}>
-      <View style={styles.track}>
+    <Animated.View
+      entering={FadeIn.duration(120)}
+      style={styles.container}
+      onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}>
+      {locked && onCancel ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={fr.chat.voiceRecord.deleteRecording}
+          hitSlop={6}
+          onPress={onCancel}
+          style={({ pressed }) => [styles.cancelButton, pressed && styles.pressed]}>
+          <MaterialCommunityIcons name="trash-can-outline" size={17} color={colors.cancel} />
+        </Pressable>
+      ) : null}
+
+      <View style={styles.header}>
         <PulseDot color={colors.dot} />
-        <Text style={[styles.time, { color: colors.text }]}>{formatDuration(elapsedMs)}</Text>
-        <View style={styles.bars}>
-          {levels.map((level, index) => (
-            <LiveBar
-              key={index}
-              level={level}
-              index={index}
-              count={levels.length}
-              cancelling={zone === 'cancel'}
-              barColor={colors.bar}
-              cancelColor={colors.cancel}
-            />
-          ))}
-        </View>
+        <Text style={[styles.timer, { color: colors.text }]}>{formatDuration(elapsedMs)}</Text>
       </View>
-      <HintLine zone={zone} showHints={showHints} colors={colors} />
+
+      <View
+        style={styles.waveform}
+        onLayout={(event) => setWaveWidth(event.nativeEvent.layout.width)}>
+        {bars.map((level, index) => (
+          <LiveBar
+            key={index}
+            level={level}
+            cancelling={zone === 'cancel'}
+            barColor={colors.bar}
+            cancelColor={colors.cancel}
+          />
+        ))}
+      </View>
+
+      {locked ? (
+        <View accessible accessibilityLabel={fr.chat.voiceRecord.locked} style={styles.locked}>
+          <MaterialCommunityIcons name="lock-outline" size={13} color={colors.lock} />
+          {compact ? null : (
+            <Text style={[styles.hintLabel, { color: colors.lock }]}>
+              {fr.chat.voiceRecord.locked}
+            </Text>
+          )}
+        </View>
+      ) : showHints ? (
+        <View style={styles.hints}>
+          <GestureHint
+            icon="trash-can-outline"
+            label={fr.chat.voiceRecord.hintCancel}
+            accessibilityLabel={fr.chat.voiceRecord.releaseToCancel}
+            active={zone === 'cancel'}
+            activeColor={colors.cancel}
+            idleColor={colors.hint}
+            compact={compact}
+          />
+          <GestureHint
+            icon="lock-outline"
+            upward
+            label={fr.chat.voiceRecord.hintLock}
+            accessibilityLabel={fr.chat.voiceRecord.releaseToLock}
+            active={zone === 'lock'}
+            activeColor={colors.lock}
+            idleColor={colors.hint}
+            compact={compact}
+          />
+        </View>
+      ) : null}
     </Animated.View>
   );
 }
@@ -162,35 +243,72 @@ export function RecordingTimeline({ levels, elapsedMs, zone, showHints, colors }
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: 'center',
-    gap: 1,
-    paddingLeft: 10,
-    height: 40,
-  },
-  track: {
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: Spacing.two,
+    height: ChatMetrics.composerRecordingHeight,
+    paddingHorizontal: Spacing.one,
   },
-  dot: { width: 8, height: 8, borderRadius: Radii.full },
-  time: { fontSize: 13, fontVariant: ['tabular-nums'], minWidth: 42 },
-  bars: {
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one + Spacing.half,
+    flexShrink: 0,
+  },
+  dot: {
+    width: ChatMetrics.composerRecordingDotSize,
+    height: ChatMetrics.composerRecordingDotSize,
+    borderRadius: Radii.full,
+  },
+  timer: {
+    ...Type.body,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    minWidth: 38,
+  },
+  waveform: {
     flex: 1,
+    minWidth: 0,
+    height: ChatMetrics.composerRecordingWaveHeight,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    height: 22,
+    gap: ChatMetrics.voiceBarGap,
     overflow: 'hidden',
   },
-  bar: { width: 2.5, borderRadius: Radii.full },
-  hintLine: {
+  bar: {
+    width: ChatMetrics.voiceBarWidth,
+    borderRadius: Radii.full,
+    flexShrink: 0,
+  },
+  hints: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    height: 15,
-    paddingHorizontal: 2,
+    gap: Spacing.two,
+    flexShrink: 0,
   },
-  hint: { flexShrink: 1, ...Type.micro, fontVariant: ['tabular-nums'] },
-  hintLeft: { textAlign: 'left' },
-  hintRight: { marginLeft: 'auto', textAlign: 'right' },
+  hint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.half,
+  },
+  hintLabel: {
+    ...Type.micro,
+    fontWeight: '600',
+  },
+  locked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.half,
+    flexShrink: 0,
+  },
+  cancelButton: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  pressed: { opacity: 0.7 },
 });

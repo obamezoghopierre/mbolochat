@@ -117,6 +117,28 @@ describe('runE2eeInit — l’échec n’est jamais silencieux', () => {
     expect(vi.mocked(bootstrapE2ee)).toHaveBeenCalledTimes(1);
   });
 
+  it('ne repasse pas par pending quand l’état est déjà prêt', async () => {
+    const { bootstrapE2ee } = await import('./bootstrap');
+    let finish: (() => void) | null = null;
+    vi.mocked(bootstrapE2ee).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ disabled: false, recovered: false, registered: true });
+        }),
+    );
+    const { runE2eeInit } = await import('./initRunner');
+    setE2eeInitState({ status: 'ready' });
+
+    const rerun = runE2eeInit('t', 'user-a');
+    // Une reprise d'application ne doit pas démonter l'interface (compositeur,
+    // enregistreur vocal) le temps de republier les clés.
+    expect(getE2eeInitState()).toEqual({ status: 'ready' });
+
+    finish!();
+    await rerun;
+    expect(getE2eeInitState()).toEqual({ status: 'ready' });
+  });
+
   it('ignore le résultat d’un compte précédent après changement de jeton', async () => {
     const { bootstrapE2ee } = await import('./bootstrap');
     let finishFirst: (() => void) | null = null;

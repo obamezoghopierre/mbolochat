@@ -13,7 +13,8 @@ import { memo, type ReactNode } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { ChatPalette } from '@/constants/chat-theme';
-import { Radii, Spacing } from '@/constants/theme';
+import { ChatMetrics } from '@/constants/chat-theme';
+import { Radii, Spacing, Type } from '@/constants/theme';
 import { decodeMediaMeta } from '@/features/e2ee/payload';
 import { SecureMediaMessage } from '@/features/e2ee/SecureMediaMessage';
 import { SingleEmojiMessage } from '@/features/emoji/AnimatedEmoji';
@@ -128,15 +129,23 @@ function MessageMeta({
   message,
   capabilities,
   chat,
+  alongsideReactions = false,
 }: {
   message: ChatMessageView;
   capabilities: ChatCapabilities;
   chat: ChatPalette;
+  /** Quand des réactions occupent la droite, on laisse la place au pastille. */
+  alongsideReactions?: boolean;
 }) {
   const scheduled =
     message.state === 'pending' && message.scheduledAt ? message.scheduledAt : null;
   return (
-    <View style={styles.metaRow}>
+    <View
+      style={[
+        styles.metaRow,
+        message.mine ? styles.metaRowMine : styles.metaRowTheirs,
+        alongsideReactions ? styles.metaRowBesideReactions : null,
+      ]}>
       {scheduled ? (
         <View accessible accessibilityLabel={fr.chat.sendOptions.schedule}>
           <CalendarClock size={12} strokeWidth={2.4} color={chat.secondaryText} />
@@ -209,14 +218,20 @@ function RetryActions({
 function ReactionChips({
   message,
   onToggle,
+  align = 'start',
 }: {
   message: ChatMessageView;
   onToggle: (message: ChatMessageView, reaction: string) => void;
+  align?: 'start' | 'end';
 }) {
   const theme = useTheme();
   if (message.reactions.length === 0) return null;
   return (
-    <View style={[styles.reactions, message.mine ? styles.reactionsMine : styles.reactionsTheirs]}>
+    <View
+      style={[
+        styles.reactions,
+        align === 'end' ? styles.reactionsEnd : styles.reactionsStart,
+      ]}>
       {message.reactions.map((reaction) => {
         const presentation = reactionPresentation(reaction.reaction);
         if (!presentation) return null;
@@ -259,6 +274,8 @@ function MessageBody({
   onOpenMedia,
   onOpenViewOnce,
   token,
+  reactionsInline = false,
+  tail = true,
 }: {
   message: ChatMessageView;
   quote: MessageQuote | null;
@@ -272,6 +289,10 @@ function MessageBody({
   onOpenMedia: (request: MediaOpenRequest) => void;
   onOpenViewOnce: (message: ChatMessageView) => void;
   token: string;
+  /** La pastille de réactions occupe la ligne sous la bulle, à droite. */
+  reactionsInline?: boolean;
+  /** Queue de bulle : masquée dans une suite pour laisser le fil continu. */
+  tail?: boolean;
 }) {
   const textScale = useTextScale();
   const waiting = message.state === 'pending';
@@ -280,7 +301,14 @@ function MessageBody({
   const accessibleLabel = failed
     ? fr.chat.retrySend
     : fr.chat.unified.messageOptions;
-  const meta = <MessageMeta message={message} capabilities={capabilities} chat={chat} />;
+  const meta = (
+    <MessageMeta
+      message={message}
+      capabilities={capabilities}
+      chat={chat}
+      alongsideReactions={reactionsInline}
+    />
+  );
 
   const swipe = (content: ReactNode) => (
     <SwipeableBubble
@@ -351,6 +379,8 @@ function MessageBody({
             media={media}
             mine={message.mine}
             caption={message.body || undefined}
+            footer={media.type === 'AUDIO' ? meta : undefined}
+            tail={tail}
             onLongPress={() => onLongPress(message)}
             onOpen={(uri, opened) =>
               onOpenMedia({
@@ -371,7 +401,7 @@ function MessageBody({
               })
             }
           />
-          {meta}
+          {media.type === 'AUDIO' ? null : meta}
         </View>,
       );
     }
@@ -381,22 +411,18 @@ function MessageBody({
     const uri = mediaUrl(attachment.url);
     return swipe(
       <View style={[styles.mediaBlock, message.mine ? styles.alignEnd : null]}>
+        {/* L'heure et l'accusé vivent dans la bulle, comme sur une bulle de texte. */}
         <VoiceMessageBubble
           id={message.id}
           uri={uri}
           durationMs={attachment.durationMs ?? 0}
           isMine={message.mine}
-          accentColor={chat.mineBubble}
-          receivedColor={chat.theirBubble}
-          foregroundColor={chat.primaryText}
-          barOffColor={chat.voiceBarOff}
-          barOnColor={chat.voiceBarOn}
           speedControl
+          footer={meta}
         />
         {failed ? (
           <RetryActions message={message} chat={chat} onRetry={onRetry} onDiscard={onDiscard} />
         ) : null}
-        {meta}
       </View>,
     );
   }
@@ -552,7 +578,7 @@ function MessageBody({
   }
 
   return swipe(
-    <ChatBubble mine={message.mine}>
+    <ChatBubble mine={message.mine} tail={tail}>
       {quote ? <QuoteBlock quote={quote} mine={message.mine} /> : null}
       {!capabilities.encrypted || message.preview ? (
         <LinkPreviewInText text={message.body} preview={message.preview} />
@@ -618,6 +644,7 @@ function ChatMessageRowComponent(props: ChatMessageRowProps) {
       <ChatRowLayout
         mine={mine}
         continuation={row.continuation}
+        group={row.group}
         avatarName={mine ? currentUser.displayName : first.sender.displayName}
         avatarUri={mine ? currentUser.avatarUrl : first.sender.avatarUrl}
         gender={mine ? currentUser.gender : first.sender.gender}
@@ -670,6 +697,7 @@ function ChatMessageRowComponent(props: ChatMessageRowProps) {
       <ChatRowLayout
         mine={message.mine}
         continuation={row.continuation}
+        group={row.group}
         avatarName={message.mine ? currentUser.displayName : message.sender.displayName}
         avatarUri={message.mine ? currentUser.avatarUrl : message.sender.avatarUrl}
         gender={message.mine ? currentUser.gender : message.sender.gender}>
@@ -692,6 +720,7 @@ function ChatMessageRowComponent(props: ChatMessageRowProps) {
     <ChatRowLayout
       mine={message.mine}
       continuation={row.continuation}
+      group={row.group}
       avatarName={message.mine ? currentUser.displayName : message.sender.displayName}
       avatarUri={message.mine ? currentUser.avatarUrl : message.sender.avatarUrl}
       gender={message.mine ? currentUser.gender : message.sender.gender}
@@ -712,6 +741,7 @@ function ChatMessageRowComponent(props: ChatMessageRowProps) {
           style={[
             styles.messageStack,
             message.reactions.length > 0 ? styles.messageStackWithReactions : null,
+            !message.mine && message.reactions.length > 0 ? styles.messageStackReceived : null,
           ]}>
           {pinned ? (
             <View
@@ -738,9 +768,15 @@ function ChatMessageRowComponent(props: ChatMessageRowProps) {
             onOpenMedia={props.onOpenMedia}
             onOpenViewOnce={props.onOpenViewOnce}
             token={token}
+            reactionsInline={!message.mine}
+            tail={row.group === 'single' || row.group === 'last'}
           />
           {capabilities.reactions && !message.viewOnce ? (
-            <ReactionChips message={message} onToggle={props.onToggleReaction} />
+            <ReactionChips
+              message={message}
+              onToggle={props.onToggleReaction}
+              align={message.mine ? 'start' : 'end'}
+            />
           ) : null}
         </View>
         {message.mine && isGroup && (props.seenByCountFor?.(message) ?? 0) > 0 ? (
@@ -766,14 +802,14 @@ function ChatMessageRowComponent(props: ChatMessageRowProps) {
 export const ChatMessageRow = memo(ChatMessageRowComponent, sameChatMessageRow);
 
 const styles = StyleSheet.create({
-  stickerBlock: { gap: 4, maxWidth: 160 },
+  stickerBlock: { gap: Spacing.one, maxWidth: ChatMetrics.stickerMaxWidth },
   alignEnd: { alignItems: 'flex-end' },
   quoteBlock: { width: '100%', borderRadius: Radii.sm, padding: Spacing.one },
   mediaBlock: { gap: Spacing.one, maxWidth: '100%' },
-  caption: { fontSize: 15, lineHeight: 20 },
-  emojiBlock: { maxWidth: 180, gap: 4 },
+  caption: { ...Type.body },
+  emojiBlock: { maxWidth: ChatMetrics.emojiMaxWidth, gap: Spacing.one },
   emojiText: { textAlign: 'center' },
-  viewOnceBlock: { gap: 4, maxWidth: '100%' },
+  viewOnceBlock: { gap: Spacing.one, maxWidth: '100%' },
   viewOnceButton: {
     minHeight: 48,
     flexDirection: 'row',
@@ -784,69 +820,79 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
-  text: { fontSize: 16, lineHeight: 21 },
+  text: { ...Type.message },
   unreadable: { fontStyle: 'italic', opacity: 0.8 },
   failedBlock: { gap: Spacing.half, maxWidth: '100%' },
-  failedText: { fontSize: 11, lineHeight: 14 },
+  failedText: { ...Type.micro },
   failedActions: { flexDirection: 'row', gap: Spacing.three },
   messageStack: { position: 'relative', maxWidth: '100%' },
   pinBadge: {
     position: 'absolute',
-    left: 4,
-    top: -10,
-    width: 18,
-    height: 18,
+    left: Spacing.one,
+    top: ChatMetrics.pinBadgeTop,
+    width: ChatMetrics.pinBadgeSize,
+    height: ChatMetrics.pinBadgeSize,
     borderRadius: Radii.full,
     borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 3,
   },
-  messageStackWithReactions: { marginBottom: Spacing.threeHalf },
+  messageStackWithReactions: { marginBottom: ChatMetrics.reactionStackMargin },
+  /** Bulle reçue : la pastille de réactions se cale à droite de l’heure. */
+  messageStackReceived: { alignSelf: 'flex-start' },
   reactions: {
     position: 'absolute',
-    bottom: -9,
+    bottom: ChatMetrics.reactionBottomOffset,
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Spacing.one,
     zIndex: 2,
+    maxWidth: '100%',
   },
-  reactionsTheirs: { right: 6, justifyContent: 'flex-end' },
-  reactionsMine: { left: 6 },
+  reactionsStart: { left: 6 },
+  reactionsEnd: { right: 6 },
   reactionChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    minHeight: 24,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
+    gap: ChatMetrics.reactionGap,
+    minHeight: ChatMetrics.reactionChipMinHeight,
+    paddingHorizontal: ChatMetrics.reactionChipPaddingH,
+    paddingVertical: 2,
     borderRadius: Radii.full,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  reactionEmoji: { fontSize: 14, lineHeight: 18 },
+  reactionEmoji: { fontSize: ChatMetrics.reactionEmojiSize, lineHeight: 18 },
   deletedBubble: {
     maxWidth: '100%',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: Radii.sm,
+    paddingHorizontal: ChatMetrics.bubblePaddingH,
+    paddingVertical: ChatMetrics.bubblePaddingV,
+    borderRadius: ChatMetrics.bubbleRadius,
     borderWidth: StyleSheet.hairlineWidth,
   },
   deletedText: { fontStyle: 'italic' },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-end',
-    gap: 3,
+    gap: ChatMetrics.metaGap,
     marginTop: Spacing.half,
   },
-  metaTime: { fontSize: 10, lineHeight: 12, opacity: 0.66 },
+  /** Bulle reçue : l’heure se range à gauche. */
+  metaRowTheirs: { alignSelf: 'flex-start' },
+  /** Bulle envoyée : comportement historique, l’heure reste à droite. */
+  metaRowMine: { alignSelf: 'flex-end' },
+  metaRowBesideReactions: {
+    marginRight: ChatMetrics.metaBesideReactions,
+    alignSelf: 'flex-start',
+  },
+  metaTime: { ...Type.meta, opacity: 0.78 },
   seenBy: { alignSelf: 'flex-end' },
-  senderName: { fontSize: 12, lineHeight: 16 },
+  senderName: { ...Type.sender },
   systemRow: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'center',
-    gap: 5,
+    gap: Spacing.one,
     marginVertical: Spacing.two,
     paddingHorizontal: Spacing.three,
   },

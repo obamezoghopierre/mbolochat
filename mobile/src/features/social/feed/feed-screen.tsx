@@ -84,6 +84,7 @@ function FeedList({ tab }: { tab: FeedTab }) {
       post={item}
       onToggleLike={feed.toggleLike}
       onPress={() => router.push(`/post/${item.id}`)}
+      onPressAuthor={() => router.push(`/user/${item.author.id}`)}
     />
   );
 

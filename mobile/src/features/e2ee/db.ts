@@ -7,6 +7,8 @@ import {
 
 import { MboloCrypto } from '../../../modules/mbolo-crypto/src';
 import type { ReactionSummary } from '@/lib/types';
+import { assertActiveE2eeUser, waitForActiveE2eeUser } from './activeUser';
+import { e2eeSqlCipherKey, ensureE2eeKeys } from './keys';
 import { isReactionRef } from '../stickers/reactionRules';
 import { migrateE2eeSchema } from './schema';
 
@@ -23,6 +25,22 @@ export function e2eeDatabaseNameForUser(userId: string): string {
 
 /** Une ouverture réussie est mémorisée pour la vie du processus. */
 const databaseByUser = new Map<string, string>();
+
+/**
+ * Connexions ouvertes, par compte. Fermées explicitement à la déconnexion :
+ * un changement de compte ne doit laisser derrière lui aucune instance
+ * SQLCipher encore attachée à l'ancienne identité.
+ */
+const openHandles = new Set<SQLiteDatabase>();
+
+export async function closeAllE2eeDatabases(): Promise<void> {
+  const handles = [...openHandles];
+  openHandles.clear();
+  databaseByUser.clear();
+  for (const handle of handles) {
+    await handle.closeAsync().catch(() => undefined);
+  }
+}
 
 function databaseDirectoryUri(): string {
   const directory = String(defaultDatabaseDirectory).replace(/\/+$/, '');
@@ -107,8 +125,13 @@ export interface E2eeDatabase {
  */
 let openGate: Promise<unknown> = Promise.resolve();
 
-export function openE2eeDatabase(userId?: string): Promise<E2eeDatabase> {
-  const run = () => openE2eeDatabaseUnlocked(userId);
+export function openE2eeDatabase(userId: string): Promise<E2eeDatabase> {
+  const run = async () => {
+    // Laisse à la restauration de session le temps de poser son identité ;
+    // un autre compte ou une déconnexion échoue immédiatement.
+    await waitForActiveE2eeUser(userId, 'open_database');
+    return openE2eeDatabaseUnlocked(userId);
+  };
   const next = openGate.then(run, run);
   openGate = next.then(
     () => undefined,
@@ -126,47 +149,80 @@ export function openE2eeDatabase(userId?: string): Promise<E2eeDatabase> {
  * retrouve ainsi exactement la même identité, les mêmes sessions et le même
  * historique, même après un passage par un autre compte.
  */
-async function openE2eeDatabaseUnlocked(userId?: string): Promise<E2eeDatabase> {
-  const keys = await MboloCrypto.ensureKeys();
-  const { key } = await MboloCrypto.sqlCipherKey();
+async function openE2eeDatabaseUnlocked(userId: string): Promise<E2eeDatabase> {
+  const cached = databaseByUser.get(userId);
+  let databaseName: string;
+  let existingDatabase: boolean;
+  if (cached) {
+    databaseName = cached;
+    existingDatabase = true;
+  } else {
+    const scoped = e2eeDatabaseNameForUser(userId);
+    if (await databaseExists(scoped)) {
+      databaseName = scoped;
+      existingDatabase = true;
+    } else {
+      const legacyExists = await databaseExists(LEGACY_DATABASE_NAME);
+      // La clé historique ne sert qu'à lire le propriétaire de l'ancienne base
+      // et à adopter sa matérialisation pour ce compte. Aucune base existante
+      // n'est rouverte avec une clé d'un autre compte.
+      const legacyKey = legacyExists ? await readLegacyKey() : null;
+      const routing = await selectDatabaseForUser(userId, legacyKey, legacyExists);
+      databaseName = routing.name;
+      existingDatabase = routing.existing;
+    }
+  }
+  const keys = await ensureE2eeKeys(userId, existingDatabase);
+  const { key } = await e2eeSqlCipherKey(userId, existingDatabase);
   let sqlKey = key;
   try {
-    const databaseName = userId
-      ? databaseByUser.get(userId) ?? (await selectDatabaseForUser(userId, sqlKey))
-      : LEGACY_DATABASE_NAME;
     const opened = await openDatabase(databaseName, sqlKey, keys.recovered);
-    if (userId) databaseByUser.set(userId, databaseName);
+    databaseByUser.set(userId, databaseName);
     return opened;
   } finally {
     sqlKey = '';
   }
 }
 
-async function selectDatabaseForUser(userId: string, sqlKey: string): Promise<string> {
+/** Ancienne clé globale, lue uniquement pour la migration d'une base existante. */
+async function readLegacyKey(): Promise<string | null> {
+  try {
+    const { key } = await MboloCrypto.sqlCipherKey();
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+async function selectDatabaseForUser(
+  userId: string,
+  legacyKey: string | null,
+  legacyExists: boolean,
+): Promise<{ name: string; existing: boolean }> {
   const scoped = e2eeDatabaseNameForUser(userId);
-  if (await databaseExists(scoped)) return scoped;
-  if (!(await databaseExists(LEGACY_DATABASE_NAME))) return scoped;
+  const fresh = { name: scoped, existing: false };
+  if (!legacyExists || !legacyKey) return fresh;
 
   // Lecture seule du propriétaire de la base historique : aucun schéma ni
   // contenu n'est modifié ici.
   let legacy: SQLiteDatabase | null = null;
   try {
     legacy = await openDatabaseAsync(LEGACY_DATABASE_NAME);
-    await legacy.execAsync(`PRAGMA key = "x'${sqlKey}'"`);
+    await legacy.execAsync(`PRAGMA key = "x'${legacyKey}'"`);
     const table = await legacy.getFirstAsync<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'e2ee_account'",
     );
-    if (!table) return scoped;
+    if (!table) return fresh;
     const account = await legacy.getFirstAsync<{ user_id: string | null }>(
       'SELECT user_id FROM e2ee_account WHERE id = 1',
     );
     return account && (!account.user_id || account.user_id === userId)
-      ? LEGACY_DATABASE_NAME
-      : scoped;
+      ? { name: LEGACY_DATABASE_NAME, existing: true }
+      : fresh;
   } catch {
     // Une base historique illisible ne doit pas empêcher le compte courant
     // d'ouvrir sa propre base. Le diagnostic de la base historique suivra.
-    return scoped;
+    return fresh;
   } finally {
     await legacy?.closeAsync().catch(() => undefined);
   }
@@ -217,6 +273,7 @@ async function openDatabase(
     // Schéma versionné : création des tables historiques puis migrations
     // unitaires. Un second passage sur une base à jour n'écrit rien.
     await migrateE2eeSchema(db);
+    openHandles.add(db);
     return { db, recovered: keysRecovered, cipherVersion: version.cipher_version };
   } finally {
     // La clé ne vit que le temps de l'ouverture.
@@ -232,9 +289,14 @@ export async function loadE2eeAccount(db: SQLiteDatabase): Promise<E2eeAccountRo
 }
 
 /** Efface explicitement la base locale chiffrée d'un compte (jamais automatique). */
-export async function deleteE2eeDatabase(userId?: string): Promise<void> {
-  const name = userId ? e2eeDatabaseNameForUser(userId) : LEGACY_DATABASE_NAME;
-  databaseByUser.delete(userId ?? '');
+export async function deleteE2eeDatabase(userId: string): Promise<void> {
+  assertActiveE2eeUser(userId, 'delete_database');
+  const name = databaseByUser.get(userId) ?? e2eeDatabaseNameForUser(userId);
+  databaseByUser.delete(userId);
+  for (const handle of [...openHandles]) {
+    openHandles.delete(handle);
+    await handle.closeAsync().catch(() => undefined);
+  }
   await deleteDatabaseAsync(name);
 }
 

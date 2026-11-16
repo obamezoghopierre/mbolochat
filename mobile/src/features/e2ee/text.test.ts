@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setActiveE2eeUser } from './activeUser';
 
 import { MboloCrypto } from '../../../modules/mbolo-crypto/src';
 import { api } from '@/lib/api';
@@ -62,6 +63,7 @@ const persistMock = vi.mocked(persistIncoming);
 
 const account: E2eeAccountRow = {
   account_pickle: 'account-pickle',
+  user_id: 'user-a',
   device_id: 'dev-1',
   identity_key: 'ident',
   signing_key: 'sign',
@@ -110,6 +112,7 @@ const plaintextJson = (payload: unknown) => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setActiveE2eeUser('user-a');
   dbMock.loadE2eeAccount.mockResolvedValue(null);
   persistMock.mockResolvedValue({});
 });

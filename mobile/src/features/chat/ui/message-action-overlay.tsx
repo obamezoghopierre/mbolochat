@@ -271,6 +271,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
-  actionIcon: { width: 24 },
+  actionIcon: { width: Spacing.four },
   pressed: { opacity: 0.65 },
 });

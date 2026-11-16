@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { setActiveE2eeUser } from './activeUser';
 
 import { MboloCrypto } from '../../../modules/mbolo-crypto/src';
 import { api } from '@/lib/api';
@@ -101,6 +102,7 @@ function openDb(): Fixture {
 const account: E2eeAccountRow = {
   account_pickle: 'account-pickle',
   device_id: 'local-device',
+  user_id: 'user-a',
   identity_key: 'local-identity',
   signing_key: 'local-signing',
 };
@@ -162,6 +164,7 @@ const seal = (pickle: string, message: string) => ({
 });
 
 beforeEach(() => {
+  setActiveE2eeUser('user-a');
   vi.clearAllMocks();
   apiMock.getE2eeKeyBundle.mockResolvedValue({
     deviceId: 'dev-1',

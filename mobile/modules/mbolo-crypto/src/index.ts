@@ -98,6 +98,43 @@ declare class MboloCryptoModule extends NativeModule {
   ): Promise<string>;
   secureDecrypt(sessionPickle: string, messageType: string, messageB64: string): Promise<string>;
   simulateKeyLoss(): Promise<string>;
+  // Clés isolées par compte (builds récents). Absentes d'un build antérieur :
+  // `supportsPerUserKeys` permet de le détecter sans appeler une méthode absente.
+  supportsPerUserKeys?(): boolean;
+  ensureKeysForUser?(userId: string, existingDatabase: boolean): Promise<string>;
+  sqlCipherKeyForUser?(userId: string, existingDatabase: boolean): Promise<string>;
+  secureCreateAccountForUser?(userId: string): Promise<string>;
+  secureGenerateOneTimeKeysSignedForUser?(
+    userId: string,
+    accountPickle: string,
+    count: number,
+  ): Promise<string>;
+  secureGenerateFallbackKeyForUser?(userId: string, accountPickle: string): Promise<string>;
+  secureCreateOutboundForUser?(
+    userId: string,
+    accountPickle: string,
+    identityKey: string,
+    oneTimeKey: string,
+    plaintextB64: string,
+  ): Promise<string>;
+  secureEncryptForUser?(
+    userId: string,
+    sessionPickle: string,
+    plaintextB64: string,
+  ): Promise<string>;
+  secureCreateInboundForUser?(
+    userId: string,
+    accountPickle: string,
+    identityKey: string,
+    prekeyMessage: string,
+  ): Promise<string>;
+  secureDecryptForUser?(
+    userId: string,
+    sessionPickle: string,
+    messageType: string,
+    messageB64: string,
+  ): Promise<string>;
+  simulateKeyLossForUser?(userId: string): Promise<string>;
 }
 
 type NativeResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -181,6 +218,68 @@ export const MboloCrypto = {
   secureDecrypt: (sessionPickle: string, messageType: string, messageB64: string) =>
     invoke<PlaintextDecrypted>(native.secureDecrypt(sessionPickle, messageType, messageB64)),
   simulateKeyLoss: () => invoke<{ simulated: boolean }>(native.simulateKeyLoss()),
+  // Le support est lu une fois : un build sans clés par compte renvoie `false`
+  // et la couche JS refuse alors les opérations hors développement.
+  supportsPerUserKeys: (() => {
+    try {
+      return native.supportsPerUserKeys?.() === true;
+    } catch {
+      return false;
+    }
+  })(),
+  ensureKeysForUser: (userId: string, existingDatabase: boolean) =>
+    invoke<{ recovered: boolean }>(
+      native.ensureKeysForUser!(userId, existingDatabase),
+    ),
+  sqlCipherKeyForUser: (userId: string, existingDatabase: boolean) =>
+    invoke<{ key: string }>(native.sqlCipherKeyForUser!(userId, existingDatabase)),
+  secureCreateAccountForUser: (userId: string) =>
+    invoke<AccountCreated>(native.secureCreateAccountForUser!(userId)),
+  secureGenerateOneTimeKeysSignedForUser: (
+    userId: string,
+    accountPickle: string,
+    count: number,
+  ) => invoke<OneTimeKeysSigned>(native.secureGenerateOneTimeKeysSignedForUser!(userId, accountPickle, count)),
+  secureGenerateFallbackKeyForUser: (userId: string, accountPickle: string) =>
+    invoke<FallbackKeySigned>(native.secureGenerateFallbackKeyForUser!(userId, accountPickle)),
+  secureCreateOutboundForUser: (
+    userId: string,
+    accountPickle: string,
+    identityKey: string,
+    oneTimeKey: string,
+    plaintextB64: string,
+  ) =>
+    invoke<OutboundCreated>(
+      native.secureCreateOutboundForUser!(
+        userId,
+        accountPickle,
+        identityKey,
+        oneTimeKey,
+        plaintextB64,
+      ),
+    ),
+  secureEncryptForUser: (userId: string, sessionPickle: string, plaintextB64: string) =>
+    invoke<OlmEnvelope>(native.secureEncryptForUser!(userId, sessionPickle, plaintextB64)),
+  secureCreateInboundForUser: (
+    userId: string,
+    accountPickle: string,
+    identityKey: string,
+    prekeyMessage: string,
+  ) =>
+    invoke<InboundCreated>(
+      native.secureCreateInboundForUser!(userId, accountPickle, identityKey, prekeyMessage),
+    ),
+  secureDecryptForUser: (
+    userId: string,
+    sessionPickle: string,
+    messageType: string,
+    messageB64: string,
+  ) =>
+    invoke<PlaintextDecrypted>(
+      native.secureDecryptForUser!(userId, sessionPickle, messageType, messageB64),
+    ),
+  simulateKeyLossForUser: (userId: string) =>
+    invoke<{ simulated: boolean }>(native.simulateKeyLossForUser!(userId)),
 };
 
 export default MboloCrypto;

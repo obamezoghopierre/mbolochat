@@ -20,6 +20,9 @@ class MboloCryptoModule : Module() {
       native.nativeVersion()
     }
 
+    /** Les clés sont isolées par compte dans ce build. */
+    Function("supportsPerUserKeys") { true }
+
     // Fonctions brutes (écran spike, gated dev) : la clé de pickle arrive en
     // Uint8Array depuis JS et part en ByteArray vers le noyau Rust.
     AsyncFunction("createAccount") { pickleKey: ByteArray ->
@@ -139,6 +142,87 @@ class MboloCryptoModule : Module() {
 
     AsyncFunction("simulateKeyLoss") {
       keyStore.simulateKeyLossJson()
+    }
+
+    // ------------------------ Clés isolées par compte ------------------------
+
+    AsyncFunction("ensureKeysForUser") { userId: String, existingDatabase: Boolean ->
+      keyStore.ensureKeysForUserJson(userId, existingDatabase)
+    }
+
+    AsyncFunction("sqlCipherKeyForUser") { userId: String, existingDatabase: Boolean ->
+      keyStore.sqlCipherKeyForUserJson(userId, existingDatabase)
+    }
+
+    AsyncFunction("secureCreateAccountForUser") { userId: String ->
+      keyStore.createAccountForUserJson(native, userId)
+    }
+
+    AsyncFunction("secureGenerateOneTimeKeysForUser") {
+      userId: String,
+      accountPickle: String,
+      count: Int,
+      ->
+      keyStore.generateOneTimeKeysForUserJson(native, userId, accountPickle, count)
+    }
+
+    AsyncFunction("secureGenerateOneTimeKeysSignedForUser") {
+      userId: String,
+      accountPickle: String,
+      count: Int,
+      ->
+      keyStore.generateOneTimeKeysSignedForUserJson(native, userId, accountPickle, count)
+    }
+
+    AsyncFunction("secureGenerateFallbackKeyForUser") { userId: String, accountPickle: String ->
+      keyStore.generateFallbackKeyForUserJson(native, userId, accountPickle)
+    }
+
+    AsyncFunction("secureCreateOutboundForUser") {
+      userId: String,
+      accountPickle: String,
+      identityKey: String,
+      oneTimeKey: String,
+      plaintextB64: String,
+      ->
+      keyStore.createOutboundForUserJson(
+        native,
+        userId,
+        accountPickle,
+        identityKey,
+        oneTimeKey,
+        plaintextB64,
+      )
+    }
+
+    AsyncFunction("secureEncryptForUser") {
+      userId: String,
+      sessionPickle: String,
+      plaintextB64: String,
+      ->
+      keyStore.encryptForUserJson(native, userId, sessionPickle, plaintextB64)
+    }
+
+    AsyncFunction("secureCreateInboundForUser") {
+      userId: String,
+      accountPickle: String,
+      identityKey: String,
+      prekeyMessage: String,
+      ->
+      keyStore.createInboundForUserJson(native, userId, accountPickle, identityKey, prekeyMessage)
+    }
+
+    AsyncFunction("secureDecryptForUser") {
+      userId: String,
+      sessionPickle: String,
+      messageType: String,
+      messageB64: String,
+      ->
+      keyStore.decryptForUserJson(native, userId, sessionPickle, messageType, messageB64)
+    }
+
+    AsyncFunction("simulateKeyLossForUser") { userId: String ->
+      keyStore.simulateKeyLossForUserJson(userId)
     }
   }
 }

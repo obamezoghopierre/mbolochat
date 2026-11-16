@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio';
 
-import { loadVoiceSpeed, type VoiceSpeed } from './voiceSpeed';
+import { DEFAULT_VOICE_SPEED, type VoiceSpeed } from './voiceSpeed';
 
 /**
  * Lecture des notes vocales.
@@ -19,6 +19,9 @@ export type PlaybackState = {
 };
 
 const IDLE: PlaybackState = { id: null, playing: false, positionMs: 0, durationMs: 0 };
+
+/** Options de chargement d'une note : bouton de vitesse et vitesse propre à la bulle. */
+export type VoiceLoadOptions = { speedControl?: boolean; speed?: VoiceSpeed };
 
 let state: PlaybackState = IDLE;
 let player: AudioPlayer | null = null;
@@ -59,17 +62,21 @@ async function loadVoicePlayer(
   id: string,
   uri: string,
   durationHintMs: number,
-  options: { speedControl?: boolean } = {},
+  options: VoiceLoadOptions = {},
 ): Promise<AudioPlayer> {
   await stopVoicePlayback();
   await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
 
   speedControlEnabled = options.speedControl === true;
-  const speed = speedControlEnabled ? await loadVoiceSpeed() : 1;
+  // La vitesse est propre à chaque bulle : une note démarre toujours à 1x,
+  // quelles que soient les vitesses choisies sur les autres messages.
+  const speed = speedControlEnabled ? (options.speed ?? DEFAULT_VOICE_SPEED) : 1;
 
   const next = createAudioPlayer({ uri }, { updateInterval: 100 });
   player = next;
   if (speedControlEnabled) {
+    // Ordre important : la correction de hauteur doit être posée AVANT la
+    // vitesse, sinon le lecteur peut démarrer à 1x et ignorer le réglage.
     // Conserve la hauteur naturelle de la voix à toutes les vitesses.
     next.shouldCorrectPitch = true;
     next.setPlaybackRate(speed, 'high');
@@ -102,7 +109,7 @@ export async function toggleVoicePlayback(
   id: string,
   uri: string,
   durationHintMs: number,
-  options: { speedControl?: boolean } = {},
+  options: VoiceLoadOptions = {},
 ): Promise<boolean> {
   // Même note : pause / reprise / relecture depuis le début.
   if (state.id === id && player) {
@@ -124,11 +131,36 @@ export async function toggleVoicePlayback(
   return true;
 }
 
-/** Applique une vitesse au lecteur courant sans pause ni changement de position. */
-export function setVoicePlaybackSpeed(speed: VoiceSpeed): void {
+/**
+ * Applique une vitesse au lecteur courant sans pause ni changement de position.
+ * Sans effet si la note active n'est pas celle de la bulle appelante
+ * (`id`), ce qui empêche une pastille de modifier un autre message.
+ */
+export function setVoicePlaybackSpeed(speed: VoiceSpeed, id?: string): void {
   if (!player || !speedControlEnabled) return;
+  if (id !== undefined && state.id !== id) return;
+  // Ordre fixe : correction de hauteur puis vitesse, comme au chargement.
+  // `playbackRate` est en lecture seule dans expo-audio : seule l'API compte.
   player.shouldCorrectPitch = true;
   player.setPlaybackRate(speed, 'high');
+}
+
+/** Pause si elle joue, reprise sinon. Aucun effet sur une note qui n'est pas chargée. */
+export function pauseOrResumeVoicePlayback(id: string): void {
+  if (!player || state.id !== id) return;
+  if (player.playing) player.pause();
+  else player.play();
+}
+
+/** Charge une note reçue en pause (scrubbing avant toute lecture), puis la fait jouer. */
+export async function startVoicePlayback(
+  id: string,
+  uri: string,
+  durationHintMs: number,
+  options: VoiceLoadOptions = {},
+): Promise<void> {
+  await loadVoicePlayer(id, uri, durationHintMs, options);
+  player?.play();
 }
 
 /** Attend le chargement du fichier avant un seek (sinon le seek est ignoré). */
@@ -164,7 +196,7 @@ export async function seekVoicePlayback(
   uri: string,
   durationHintMs: number,
   ratio: number,
-  options: { speedControl?: boolean } = {},
+  options: VoiceLoadOptions = {},
 ): Promise<void> {
   const r = Math.min(1, Math.max(0, ratio));
   const wasActive = state.id === id && !!player;

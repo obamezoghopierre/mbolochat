@@ -1,26 +1,31 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useSyncExternalStore } from 'react';
-
 export const VOICE_SPEEDS = [1, 1.5, 2] as const;
 export type VoiceSpeed = (typeof VOICE_SPEEDS)[number];
 
+/**
+ * Vitesse de lecture des notes vocales.
+ *
+ * La vitesse est volontairement **locale à chaque bulle** : le module ne garde
+ * aucun état partagé et ne persiste rien. Changer « 1x » sur un message ne doit
+ * ni toucher les autres bulles ni rejouer une préférence sur une note ancienne.
+ * Le lecteur natif, lui, est unique (`voicePlayback.ts`) : chaque note démarre
+ * à 1x et reçoit la vitesse de sa propre pastille.
+ */
+
 const STORAGE_KEY = 'mbolo.voice.playback-speed.v1';
 
-let current: VoiceSpeed = 1;
-let loaded = false;
-let opening: Promise<VoiceSpeed> | null = null;
-const listeners = new Set<() => void>();
+/** Vitesse de démarrage de toute note vocale. */
+export const DEFAULT_VOICE_SPEED: VoiceSpeed = 1;
 
 function isVoiceSpeed(value: unknown): value is VoiceSpeed {
   return typeof value === 'number' && VOICE_SPEEDS.includes(value as VoiceSpeed);
 }
 
-/** Valeur mémorisée normalisée ; toute valeur absente ou invalide retombe à 1x. */
+/** Valeur normalisée ; toute valeur absente ou invalide retombe à 1x. */
 export function parseVoiceSpeed(value: unknown): VoiceSpeed {
   if (isVoiceSpeed(value)) return value;
-  if (typeof value !== 'string') return 1;
+  if (typeof value !== 'string') return DEFAULT_VOICE_SPEED;
   const parsed = Number(value.trim().replace(',', '.'));
-  return isVoiceSpeed(parsed) ? parsed : 1;
+  return isVoiceSpeed(parsed) ? parsed : DEFAULT_VOICE_SPEED;
 }
 
 /** Vitesse suivante dans la boucle 1x → 1,5x → 2x → 1x. */
@@ -29,51 +34,9 @@ export function nextVoiceSpeed(speed: VoiceSpeed): VoiceSpeed {
   return VOICE_SPEEDS[(index + 1) % VOICE_SPEEDS.length];
 }
 
-export function getVoiceSpeed(): VoiceSpeed {
-  return current;
-}
-
-function notify(): void {
-  listeners.forEach((listener) => listener());
-}
-
-export async function loadVoiceSpeed(): Promise<VoiceSpeed> {
-  if (loaded) return current;
-  if (opening) return opening;
-  opening = (async () => {
-    try {
-      current = parseVoiceSpeed(await AsyncStorage.getItem(STORAGE_KEY));
-    } catch {
-      current = 1;
-    } finally {
-      loaded = true;
-      opening = null;
-    }
-    notify();
-    return current;
-  })();
-  return opening;
-}
-
-export async function setVoiceSpeed(speed: VoiceSpeed): Promise<void> {
-  loaded = true;
-  current = speed;
-  notify();
-  try {
-    await AsyncStorage.setItem(STORAGE_KEY, String(speed));
-  } catch {
-    // La préférence reste valable pour la session.
-  }
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-/** Seule la pastille de la bulle active lit ce store : pas de rendu de liste. */
-export function useVoiceSpeed(): VoiceSpeed {
-  return useSyncExternalStore(subscribe, getVoiceSpeed, () => 1);
-}
+/**
+ * Ancienne préférence globale (clé `mbolo.voice.playback-speed.v1`).
+ * Conservée uniquement pour effacer la valeur laissée par les versions qui
+ * partageaient la vitesse entre tous les messages.
+ */
+export const LEGACY_SPEED_STORAGE_KEY = STORAGE_KEY;

@@ -3,7 +3,7 @@
  *
  * Seuls les messages reçus portent l'avatar de leur expéditeur :
  *
- * - reçu  : avatar rond à gauche, bulle à droite de l'avatar (alignée à gauche) ;
+ * - reçu  : avatar carré à coins arrondis à gauche, aligné en haut de la bulle ;
  * - envoyé : bulle seule, alignée à droite, sans avatar de l'utilisateur ;
  * - messages consécutifs du même expéditeur : l'avatar n'est pas répété, mais
  *   sa place est **réservée** pour que les bulles reçues restent alignées.

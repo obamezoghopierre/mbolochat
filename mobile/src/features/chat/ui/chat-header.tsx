@@ -5,7 +5,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Glass } from '@/components/glass';
 import { ThemedText } from '@/components/themed-text';
 import { useChatColors } from '@/constants/chat-theme';
-import { Spacing } from '@/constants/theme';
+import { Spacing, Type } from '@/constants/theme';
 import { PresenceSubtitle } from '@/features/presence/PresenceSubtitle';
 
 /**
@@ -136,12 +136,11 @@ const styles = StyleSheet.create({
   },
   headerTitleText: { flex: 1, alignItems: 'flex-start', minWidth: 0 },
   headerName: {
-    fontSize: 17,
-    lineHeight: 22,
+    ...Type.sectionTitle,
     fontWeight: '500',
     textAlign: 'left',
   },
-  headerSubtitle: { fontSize: 11, lineHeight: 14, textAlign: 'left' },
+  headerSubtitle: { ...Type.micro, textAlign: 'left' },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',

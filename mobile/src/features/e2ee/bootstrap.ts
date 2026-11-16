@@ -1,5 +1,10 @@
-import { MboloCrypto } from '../../../modules/mbolo-crypto/src';
 import { ApiError, api } from '@/lib/api';
+import { setActiveE2eeUser } from './activeUser';
+import {
+  createE2eeAccount,
+  generateFallbackKey,
+  generateSignedOneTimeKeys,
+} from './keys';
 import { isE2eeEnabled } from './policy';
 import { claimLegacyOutboxEnvelopes } from './atomic';
 import {
@@ -49,6 +54,9 @@ async function bootstrapE2eeUnlocked(token: string, userId: string): Promise<Boo
   // d'une écriture interrompue le sont. Le balayage s'abstient de lui-même si
   // une écriture est en cours dans ce processus.
   sweepDurablePartials();
+  // Toute opération de clé ou de base qui suit est liée à ce compte : le
+  // registre d'identité active est posé avant la première ouverture.
+  setActiveE2eeUser(userId);
   const { db, recovered } = await openE2eeDatabase(userId);
   try {
     // L'échéance peut avoir expiré pendant que l'application était fermée.
@@ -63,9 +71,9 @@ async function bootstrapE2eeUnlocked(token: string, userId: string): Promise<Boo
     let createdNow = false;
     if (!account) {
       createdNow = true;
-      const identity = await MboloCrypto.secureCreateAccount();
-      const signedKeys = await MboloCrypto.secureGenerateOneTimeKeysSigned(identity.account_pickle, 5);
-      const fallback = await MboloCrypto.secureGenerateFallbackKey(signedKeys.account_pickle);
+      const identity = await createE2eeAccount(userId);
+      const signedKeys = await generateSignedOneTimeKeys(userId, identity.account_pickle, 5);
+      const fallback = await generateFallbackKey(userId, signedKeys.account_pickle);
       account = {
         account_pickle: fallback.account_pickle,
         device_id: null,
@@ -134,7 +142,7 @@ async function bootstrapE2eeUnlocked(token: string, userId: string): Promise<Boo
                 keyId: current.fallback_key_id,
                 account_pickle: current.account_pickle,
               }
-            : await MboloCrypto.secureGenerateFallbackKey(current.account_pickle).then(
+            : await generateFallbackKey(userId, current.account_pickle).then(
                 (generated) => ({
                   key: generated.key,
                   signature: generated.signature,
@@ -142,7 +150,8 @@ async function bootstrapE2eeUnlocked(token: string, userId: string): Promise<Boo
                   account_pickle: generated.account_pickle,
                 }),
               );
-        const signedKeys = await MboloCrypto.secureGenerateOneTimeKeysSigned(
+        const signedKeys = await generateSignedOneTimeKeys(
+          userId,
           fallback.account_pickle,
           5,
         );
@@ -181,7 +190,8 @@ async function bootstrapE2eeUnlocked(token: string, userId: string): Promise<Boo
     } else if ((status?.prekeysRemaining ?? 0) < 5) {
       const prepared = await withAccountLock(base.identity_key, async () => {
         const current: E2eeAccountRow = (await loadE2eeAccount(db)) ?? base;
-        const signedKeys = await MboloCrypto.secureGenerateOneTimeKeysSigned(
+        const signedKeys = await generateSignedOneTimeKeys(
+          userId,
           current.account_pickle,
           5,
         );

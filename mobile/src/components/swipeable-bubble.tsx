@@ -9,6 +9,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
 
 import { Spacing, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -89,6 +90,7 @@ function useSwipeToReply(onReply: () => void, enabled: boolean) {
           const triggered = finalDx >= TRIGGER;
           if (triggered) {
             offset.setValue(MAX_OFFSET);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
           }
           reset();
           if (triggered) {
@@ -143,7 +145,7 @@ export function SwipeableBubble({
           pointerEvents="none"
           style={[
             styles.hint,
-            styles.hintLeft,
+            mine ? styles.hintRight : styles.hintLeft,
             { opacity: hintOpacity, transform: [{ scale: hintScale }] },
           ]}>
           <View style={[styles.hintBadge, { backgroundColor: theme.backgroundElement }]}>
@@ -184,6 +186,9 @@ const styles = StyleSheet.create({
   },
   hintLeft: {
     left: 12,
+  },
+  hintRight: {
+    right: 12,
   },
   hintBadge: {
     width: 30,

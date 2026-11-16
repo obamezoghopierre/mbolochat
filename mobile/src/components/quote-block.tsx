@@ -2,37 +2,38 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { useChatColors } from '@/constants/chat-theme';
-import { Radii, Spacing } from '@/constants/theme';
+import { ChatMetrics, useChatColors } from '@/constants/chat-theme';
+import { Radii, Spacing, Type } from '@/constants/theme';
 import { EmojiText } from '@/features/emoji/EmojiText';
+import { fr } from '@/i18n/fr';
 import type { MessageQuote } from '@/lib/types';
 
 /** Aperçu d'un message cité : texte, ou libellé de la pièce jointe. */
 export function quoteText(quote: MessageQuote): string {
   if (quote.deleted) {
-    return 'Message supprimé';
+    return fr.chat.quote.deleted;
   }
   if (quote.type === 'sticker') {
-    return 'Sticker';
+    return fr.chat.quote.sticker;
   }
   if (quote.content) {
     return quote.content;
   }
   switch (quote.attachmentType) {
     case 'AUDIO':
-      return 'Message vocal';
+      return fr.chat.quote.voice;
     case 'VIDEO':
-      return 'Vidéo';
+      return fr.chat.quote.video;
     case 'IMAGE':
-      return 'Photo';
+      return fr.chat.quote.photo;
     case 'GIF':
-      return 'GIF';
+      return fr.chat.quote.gif;
     case 'STICKER':
-      return 'Sticker';
+      return fr.chat.quote.sticker;
     case 'FILE':
-      return 'Document';
+      return fr.chat.quote.document;
     default:
-      return 'Pièce jointe';
+      return fr.chat.quote.attachment;
   }
 }
 
@@ -80,18 +81,16 @@ export function QuoteBlock({
       onPress={onPress}
       hitSlop={4}
       accessibilityRole="button"
-      accessibilityLabel="Aller au message cité">
+      accessibilityLabel={fr.chat.quote.goToMessage}>
       {body}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  /** Citation : barre colorée et aperçu sur une ligne, dans la bulle de la réponse. */
   quote: {
     flexDirection: 'row',
     alignSelf: 'stretch',
-    minWidth: 190,
     maxWidth: '100%',
     gap: Spacing.two,
     borderRadius: Radii.xs,
@@ -100,13 +99,12 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   quoteBar: {
-    width: 4,
-    minHeight: 34,
+    width: ChatMetrics.quoteBarWidth,
+    minHeight: ChatMetrics.quoteBarMinHeight,
     borderRadius: Radii.full,
   },
   quotePreviewText: {
-    fontSize: 14,
-    lineHeight: 20,
+    ...Type.caption,
     fontWeight: '500',
   },
   quoteBody: {

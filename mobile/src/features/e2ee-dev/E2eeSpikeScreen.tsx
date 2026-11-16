@@ -2,6 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import { defaultDatabaseDirectory } from 'expo-sqlite';
 
 import { openE2eeDatabase } from '@/features/e2ee/db';
+import { ensureE2eeKeys, simulateKeyLoss } from '@/features/e2ee/keys';
 import { bootstrapE2ee, type BootstrapResult } from '@/features/e2ee/bootstrap';
 import { sweepSecureMedia } from '@/features/e2ee/mediaStore';
 import { useAuth } from '@/lib/auth-context';
@@ -59,12 +60,12 @@ export function E2eeSpikeScreen() {
   };
 
   const runStorage = async () => {
-    if (storageRunning) return;
+    if (storageRunning || !user) return;
     setStorageRunning(true);
     setStorageError(null);
     setStorage(null);
     try {
-      const opened = await openE2eeDatabase(user?.id);
+      const opened = await openE2eeDatabase(user.id);
       const rawPath = opened.db.databasePath;
       const directory = String(defaultDatabaseDirectory).replace(/\/+$/, '');
       const path = rawPath.startsWith('file://')
@@ -99,12 +100,12 @@ export function E2eeSpikeScreen() {
   };
 
   const runKeyLoss = async () => {
-    if (keyLossRunning) return;
+    if (keyLossRunning || !user) return;
     setKeyLossRunning(true);
     setKeyLoss(null);
     try {
-      const simulated = await MboloCrypto.simulateKeyLoss();
-      const ensured = await MboloCrypto.ensureKeys();
+      const simulated = await simulateKeyLoss(user.id);
+      const ensured = await ensureE2eeKeys(user.id, true);
       // Identité perdue : les clés des médias temporaires le sont aussi, rien ne
       // doit rester déchiffrable sur le disque.
       sweepSecureMedia();

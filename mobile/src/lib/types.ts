@@ -51,6 +51,32 @@ export interface UserProfile extends User {
     /** Nombre de discussions partagées avec le visiteur. */
     conversations: number;
   };
+  /**
+   * Identité sociale (ADR-0001). Absent d'un profil mis en cache avant
+   * l'ajout du social, d'où le `?`.
+   */
+  social?: SocialProfileSummary;
+}
+
+export interface SocialProfileSummary {
+  verified: boolean;
+  privateAccount: boolean;
+  followerCount: number;
+  followingCount: number;
+  publicationCount: number;
+  reelCount: number;
+  /** Relation du visiteur : aucune, demande envoyée, ou abonné. */
+  followStatus: 'none' | 'pending' | 'accepted';
+  /** Ce compte suit le visiteur. */
+  followsViewer: boolean;
+  /** Le contenu social est-il visible pour le visiteur ? */
+  contentVisible: boolean;
+  canInteract: boolean;
+}
+
+export interface FollowState {
+  status: 'none' | 'pending' | 'accepted';
+  followerCount: number;
 }
 
 /** Qui peut voir ou faire quoi. */

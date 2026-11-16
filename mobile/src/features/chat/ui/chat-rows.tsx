@@ -4,11 +4,12 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { useChatColors } from '@/constants/chat-theme';
-import { Radii, Spacing } from '@/constants/theme';
+import { ChatMetrics, useChatColors } from '@/constants/chat-theme';
+import { Radii, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { Gender } from '@/lib/types';
 import { messageRowLayout, ROW_AVATAR_SIZE } from '@/features/chat/row-layout';
+import type { ChatGroup } from '../model/rows';
 
 /**
  * Lignes communes aux deux conversations : séparateurs de date et d'heure,
@@ -46,6 +47,7 @@ export function ChatTimeSeparator({ label }: { label: string }) {
 export function ChatMessageRow({
   mine,
   continuation,
+  group = 'single',
   avatarName,
   avatarUri,
   gender,
@@ -55,6 +57,8 @@ export function ChatMessageRow({
   mine: boolean;
   /** Message consécutif du même expéditeur : l'avatar n'est pas répété. */
   continuation?: boolean;
+  /** Position dans la suite : le fil court sur le bord de la bulle. */
+  group?: ChatGroup;
   avatarName: string;
   avatarUri?: string | null;
   gender?: Gender | null;
@@ -66,6 +70,7 @@ export function ChatMessageRow({
   // à gauche pour les messages reçus, à droite pour les messages envoyés — et
   // la bulle est alignée du même côté. La logique de placement est pure et
   // testée à part (features/chat/row-layout.ts).
+  const chat = useChatColors();
   const layout = messageRowLayout(mine, Boolean(continuation));
   const avatar =
     layout.avatar === 'none' ? (
@@ -84,21 +89,33 @@ export function ChatMessageRow({
           uri={avatarUri ?? undefined}
           size={ROW_AVATAR_SIZE}
           gender={gender}
-          shape="circle"
+          shape="rounded"
         />
       </Pressable>
     );
   const column = (
     <View style={[styles.bubbleColumn, { alignItems: layout.align }]}>{children}</View>
   );
+  const connect = group === 'middle' || group === 'last';
   return (
-    <View
-      style={[
-        styles.messageRow,
-        continuation ? styles.messageRowContinuation : styles.messageRowNewGroup,
-      ]}>
-      {layout.bubbleFirst ? column : avatar}
-      {layout.bubbleFirst ? avatar : column}
+    <View style={continuation ? styles.groupContinuation : styles.groupNew}>
+      {connect ? (
+        // Enfant flex de l'espacement : sa hauteur suit exactement l'écart
+        // entre les deux bulles, sans position absolue ni débordement.
+        <View style={styles.connectorSlot} pointerEvents="none">
+          <View
+            style={[
+              styles.connectorLine,
+              { backgroundColor: chat.border },
+              mine ? styles.connectorRight : styles.connectorLeft,
+            ]}
+          />
+        </View>
+      ) : null}
+      <View style={styles.messageRow}>
+        {layout.bubbleFirst ? column : avatar}
+        {layout.bubbleFirst ? avatar : column}
+      </View>
     </View>
   );
 }
@@ -111,18 +128,36 @@ export const chatRowStyles = StyleSheet.create({
     borderRadius: Radii.full,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  dateText: { fontSize: 11, lineHeight: 14 },
+  dateText: { ...Type.micro },
   timeRow: { alignItems: 'center', paddingVertical: Spacing.one },
-  timeText: { fontSize: 11, lineHeight: 14 },
+  timeText: { ...Type.micro },
   messageRow: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     gap: Spacing.two,
   },
-  messageRowContinuation: { marginTop: Spacing.one },
-  messageRowNewGroup: { marginTop: Spacing.threeHalf },
+  /**
+   * Conteneur flexbox d'une suite : chaque bulle est précédée, sauf la
+   * première, d'un emplacement d'écart uniforme qui porte le connecteur.
+   */
+  groupNew: { marginTop: Spacing.threeHalf, flexDirection: 'column' },
+  groupContinuation: { flexDirection: 'column' },
+  connectorSlot: {
+    height: Spacing.one,
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+  },
+  connectorLine: {
+    width: ChatMetrics.threadWidth,
+    height: '100%',
+    borderRadius: ChatMetrics.threadWidth / 2,
+  },
+  /** Bord gauche de la bulle reçue (après l'avatar). */
+  connectorLeft: { marginLeft: ROW_AVATAR_SIZE + Spacing.two },
+  /** Bord droit de la bulle envoyée. */
+  connectorRight: { marginLeft: 'auto' },
   bubbleColumn: { flex: 1, minWidth: 0 },
-  /** Réserve la place de l'avatar rond des messages reçus consécutifs. */
+  /** Réserve la place de l'avatar carré des messages reçus consécutifs. */
   avatarSpacer: { width: ROW_AVATAR_SIZE },
 });
 

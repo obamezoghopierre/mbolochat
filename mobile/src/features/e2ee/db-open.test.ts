@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { deleteDatabaseAsync, openDatabaseAsync } from 'expo-sqlite';
 
 import { MboloCrypto } from '../../../modules/mbolo-crypto/src';
+import { setActiveE2eeUser, resetActiveE2eeUserForTests } from './activeUser';
 import { e2eeDatabaseNameForUser, openE2eeDatabase } from './db';
 import { migrateE2eeSchema } from './schema';
 
@@ -62,6 +63,9 @@ vi.mock('expo-file-system', () => ({
 
 vi.mock('../../../modules/mbolo-crypto/src', () => ({
   MboloCrypto: {
+    supportsPerUserKeys: true,
+    ensureKeysForUser: vi.fn(async () => ({ recovered: false })),
+    sqlCipherKeyForUser: vi.fn(async () => ({ key: 'ab'.repeat(32) })),
     ensureKeys: vi.fn(async () => ({ recovered: false })),
     sqlCipherKey: vi.fn(async () => ({ key: 'ab'.repeat(32) })),
   },
@@ -92,6 +96,7 @@ function legacyOwner(userId: string) {
 describe('openE2eeDatabase — routage par compte', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetActiveE2eeUserForTests();
     files.existing.clear();
     files.moves.length = 0;
     files.directories.length = 0;
@@ -107,6 +112,7 @@ describe('openE2eeDatabase — routage par compte', () => {
   });
 
   it('un utilisateur sans base historique reçoit une base à son nom', async () => {
+    setActiveE2eeUser('route-new-user');
     await openE2eeDatabase('route-new-user');
 
     expect(vi.mocked(openDatabaseAsync).mock.calls.at(-1)?.[0]).toBe(
@@ -120,6 +126,7 @@ describe('openE2eeDatabase — routage par compte', () => {
 
   it('le propriétaire de la base historique garde exactement cette base', async () => {
     legacyOwner('route-owner-a');
+    setActiveE2eeUser('route-owner-a');
 
     await openE2eeDatabase('route-owner-a');
 
@@ -129,6 +136,7 @@ describe('openE2eeDatabase — routage par compte', () => {
 
   it('un autre compte reçoit une base dédiée sans toucher à la base historique', async () => {
     legacyOwner('route-owner-a');
+    setActiveE2eeUser('route-owner-b');
 
     await openE2eeDatabase('route-owner-b');
 
@@ -144,7 +152,8 @@ describe('openE2eeDatabase — routage par compte', () => {
     const uri = `file:///mock/SQLite/${name}`;
     files.existing.add(uri);
     files.existing.add(`${uri}-wal`);
-    vi.mocked(MboloCrypto.ensureKeys).mockResolvedValueOnce({ recovered: true } as never);
+    vi.mocked(MboloCrypto.ensureKeysForUser).mockResolvedValueOnce({ recovered: true } as never);
+    setActiveE2eeUser('route-recovered');
 
     await openE2eeDatabase('route-recovered');
 
@@ -167,6 +176,7 @@ describe('openE2eeDatabase — routage par compte', () => {
     vi.mocked(openDatabaseAsync)
       .mockRejectedValueOnce(new Error('file is not a database'))
       .mockResolvedValue(handle as never);
+    setActiveE2eeUser('route-unreadable');
 
     await openE2eeDatabase('route-unreadable');
 
@@ -180,6 +190,7 @@ describe('openE2eeDatabase — routage par compte', () => {
 describe('openE2eeDatabase — une seule migration à la fois', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetActiveE2eeUserForTests();
     files.existing.clear();
     files.moves.length = 0;
     files.directories.length = 0;
@@ -205,7 +216,11 @@ describe('openE2eeDatabase — une seule migration à la fois', () => {
       return 13;
     });
 
-    await Promise.all([openE2eeDatabase(), openE2eeDatabase()]);
+    setActiveE2eeUser('route-concurrent');
+    await Promise.all([
+      openE2eeDatabase('route-concurrent'),
+      openE2eeDatabase('route-concurrent'),
+    ]);
 
     expect(maxActive).toBe(1);
     expect(vi.mocked(migrateE2eeSchema)).toHaveBeenCalledTimes(2);

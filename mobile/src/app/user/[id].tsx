@@ -1,16 +1,21 @@
 import { Redirect, Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { Lock } from 'lucide-react-native';
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProfileAction, ProfileHeader } from '@/components/profile-view';
+import { Icon } from '@/components/icon';
 import { useCalls } from '@/features/calls/CallProvider';
+import { followAction, followLabelKey } from '@/features/social/follow/follow-state';
+import { useTheme } from '@/hooks/use-theme';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { cache } from '@/lib/cache';
+import { fr } from '@/i18n/fr';
 import type { Gender, UserProfile } from '@/lib/types';
 
 export default function UserProfileScreen() {
@@ -31,6 +36,7 @@ export default function UserProfileScreen() {
   const calls = useCalls();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const theme = useTheme();
 
   const [profile, setProfile] = useState<UserProfile | null>(() => {
     if (!id) {
@@ -66,6 +72,7 @@ export default function UserProfileScreen() {
   const [starting, setStarting] = useState(false);
   const [calling, setCalling] = useState(false);
   const [blocked, setBlocked] = useState(false);
+  const [following, setFollowing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -143,6 +150,45 @@ export default function UserProfileScreen() {
     }
   };
 
+  const social = profile?.social;
+  const followStatus = social?.followStatus ?? 'none';
+  const followKey = followLabelKey(followStatus);
+
+  const toggleFollow = async () => {
+    if (!token || !profile || !social || following) {
+      return;
+    }
+    const action = followAction(social.followStatus);
+    setFollowing(true);
+    setError(null);
+    try {
+      const result =
+        action === 'follow'
+          ? await api.followUser(token, profile.id)
+          : await api.unfollowUser(token, profile.id);
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              social: {
+                ...(current.social ?? social),
+                followStatus: result.status,
+                followerCount: result.followerCount,
+              },
+            }
+          : current,
+      );
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 403
+          ? fr.social.followError
+          : 'Action impossible. Réessaie.',
+      );
+    } finally {
+      setFollowing(false);
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <Stack.Screen options={{ title: profile?.displayName ?? name ?? 'Profil' }} />
@@ -166,6 +212,14 @@ export default function UserProfileScreen() {
                 />
               ) : (
                 <>
+                  {social ? (
+                    <ProfileAction
+                      label={fr.social[followKey]}
+                      onPress={() => void toggleFollow()}
+                      loading={following}
+                      primary={followStatus === 'none'}
+                    />
+                  ) : null}
                   <ProfileAction
                     label="Écrire"
                     onPress={() => void startConversation()}
@@ -188,6 +242,26 @@ export default function UserProfileScreen() {
           />
         ) : null}
 
+        {social ? (
+          <View style={styles.stats} accessibilityRole="summary">
+            <Stat label={fr.social.followers} value={social.followerCount} />
+            <Stat label={fr.social.following} value={social.followingCount} />
+            <Stat label={fr.social.publications} value={social.publicationCount} />
+          </View>
+        ) : null}
+
+        {social && social.privateAccount && !social.contentVisible && !profile?.isMe ? (
+          <View style={[styles.privateBox, { borderColor: theme.border }]}>
+            <Icon icon={Lock} size={20} color={theme.textSecondary} />
+            <View style={styles.privateText}>
+              <ThemedText style={styles.privateTitle}>{fr.social.privateTitle}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {fr.social.privateBody}
+              </ThemedText>
+            </View>
+          </View>
+        ) : null}
+
         {error ? (
           <ThemedText type="small" themeColor="danger">
             {error}
@@ -196,6 +270,17 @@ export default function UserProfileScreen() {
 
       </ScrollView>
     </ThemedView>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={styles.stat}>
+      <ThemedText style={styles.statValue}>{value}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+    </View>
   );
 }
 
@@ -220,5 +305,34 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     lineHeight: 22,
+  },
+  stats: {
+    flexDirection: 'row',
+    gap: Spacing.three,
+  },
+  stat: {
+    flex: 1,
+    alignItems: 'center',
+    gap: Spacing.half,
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  privateBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.threeHalf,
+    padding: Spacing.three,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  privateText: {
+    flex: 1,
+    gap: Spacing.half,
+  },
+  privateTitle: {
+    fontWeight: '600',
   },
 });

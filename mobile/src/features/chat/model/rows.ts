@@ -1,4 +1,4 @@
-import { formatClock, formatDateLabel } from '@/lib/format';
+import { formatDateLabel } from '@/lib/format';
 import type { ChatMessageView } from '@/features/chat/transport/types';
 import { reuseChatRow } from './row-equality';
 
@@ -10,12 +10,30 @@ import { reuseChatRow } from './row-equality';
  * chronologique en entrée ; la sortie est **du plus récent au plus ancien**
  * pour la liste inversée (index 0 = dernier message).
  */
+/**
+ * Position d'une bulle dans une suite du même expéditeur. `single` : bulle
+ * isolée. Les autres valeurs dessinent le fil vertical de liaison.
+ */
+export type ChatGroup = 'single' | 'first' | 'middle' | 'last';
+
 export type ChatRow =
   | { key: string; type: 'date'; label: string }
   | { key: string; type: 'time'; label: string }
   | { key: string; type: 'unread'; count: number }
-  | { key: string; type: 'message'; message: ChatMessageView; continuation: boolean }
-  | { key: string; type: 'album'; messages: ChatMessageView[]; continuation: boolean };
+  | {
+      key: string;
+      type: 'message';
+      message: ChatMessageView;
+      continuation: boolean;
+      group: ChatGroup;
+    }
+  | {
+      key: string;
+      type: 'album';
+      messages: ChatMessageView[];
+      continuation: boolean;
+      group: ChatGroup;
+    };
 
 export const DEFAULT_ALBUM_GAP_MS = 15_000;
 export const DEFAULT_ALBUM_MAX_TILES = 9;
@@ -107,45 +125,71 @@ export function buildChatRows({
   let lastLabel = '';
   let lastMs: number | null = null;
   let lastSenderId: string | null = null;
-  let unreadPlaced = !unreadFrom;
 
-  for (const cluster of clusters) {
+  // Premier passage : date et continuation de chaque groupe. Le second passe
+  // ensuite avec la position dans le fil, qui dépend du groupe suivant.
+  const infos = clusters.map((cluster) => {
     const first = cluster[0];
-    const firstMs = atMs(first.createdAt);
-    const lastAt = atMs(cluster[cluster.length - 1].createdAt);
     const label = formatDateLabel(first.createdAt);
+    const newDay = label !== lastLabel;
+    if (newDay) {
+      lastMs = null;
+      lastSenderId = null;
+    }
+    const firstMs = atMs(first.createdAt);
     const continuation =
       lastSenderId === first.sender.id &&
       lastMs !== null &&
       firstMs - lastMs <= timeGapMs;
+    lastMs = atMs(cluster[cluster.length - 1].createdAt);
+    lastSenderId = first.sender.id;
+    lastLabel = label;
+    return { label, newDay, continuation };
+  });
 
-    if (label !== lastLabel) {
-      push({ key: `date-${first.id}`, type: 'date', label });
-      lastLabel = label;
-      lastMs = null;
-      lastSenderId = null;
-    } else if (lastMs !== null && firstMs - lastMs > timeGapMs) {
-      push({ key: `time-${first.id}`, type: 'time', label: formatClock(first.createdAt) });
+  let unreadPlaced = !unreadFrom;
+  for (let index = 0; index < clusters.length; index += 1) {
+    const cluster = clusters[index];
+    const info = infos[index];
+    const first = cluster[0];
+
+    if (info.newDay) {
+      push({ key: `date-${first.id}`, type: 'date', label: info.label });
     }
+    // Pas de séparateur d’heure entre les bulles : chaque bulle affiche déjà la
+    // sienne, en dupliquer une au milieu de la conversation n’aiderait pas.
 
     if (!unreadPlaced && unreadFrom && cluster.some((message) => message.id === unreadFrom.id)) {
       push({ key: 'unread', type: 'unread', count: unreadFrom.count });
       unreadPlaced = true;
     }
 
+    const nextContinuation = infos[index + 1]?.continuation ?? false;
+    const group: ChatGroup = !info.continuation
+      ? nextContinuation
+        ? 'first'
+        : 'single'
+      : nextContinuation
+        ? 'middle'
+        : 'last';
+
     if (cluster.length > 1) {
       push({
         key: `album-${first.id}-${cluster[cluster.length - 1].id}`,
         type: 'album',
         messages: cluster,
-        continuation,
+        continuation: info.continuation,
+        group,
       });
     } else {
-      push({ key: first.id, type: 'message', message: first, continuation });
+      push({
+        key: first.id,
+        type: 'message',
+        message: first,
+        continuation: info.continuation,
+        group,
+      });
     }
-
-    lastMs = lastAt;
-    lastSenderId = first.sender.id;
   }
 
   return rows.reverse();

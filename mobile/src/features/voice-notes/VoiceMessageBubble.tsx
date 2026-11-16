@@ -1,5 +1,13 @@
 /* eslint-disable react-hooks/refs -- les refs ne sont lues que par les callbacks du geste */
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import {
   Pressable,
   StyleProp,
@@ -12,15 +20,24 @@ import {
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { lockSwipe, unlockSwipe } from '@/lib/swipe-lock';
-import { MAX_DURATION_MS, toWaveform } from './useVoiceRecorder';
+import { toWaveform } from './useVoiceRecorder';
 import {
+  voiceBarCount as layoutBarCount,
+  voiceBubbleLayoutWidth as layoutBubbleWidth,
+  voiceTrailingWidth as layoutTrailingWidth,
+  type VoiceLayoutMetrics,
+} from './voiceBubbleLayout';
+import {
+  pauseOrResumeVoicePlayback,
   seekVoicePlayback,
   setVoicePlaybackSpeed,
-  toggleVoicePlayback,
+  startVoicePlayback,
   useVoicePlayback,
 } from './voicePlayback';
-import { nextVoiceSpeed, setVoiceSpeed, useVoiceSpeed } from './voiceSpeed';
-import { Radii } from '@/constants/theme';
+import { nextVoiceSpeed, DEFAULT_VOICE_SPEED, type VoiceSpeed } from './voiceSpeed';
+import { ChatBubble } from '@/features/chat/ui/chat-bubble';
+import { ChatMetrics, useChatColors } from '@/constants/chat-theme';
+import { Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 
 type Props = {
@@ -36,20 +53,25 @@ type Props = {
   unplayed?: boolean;
   /** Appelée une seule fois à la première lecture : à persister côté backend. */
   onFirstPlay?: (id: string) => void;
-  accentColor?: string;
-  /** Fond d'une note reçue (blanc clair, sombre en thème nuit). */
-  receivedColor?: string;
   /** Couleur de l'icône, de la durée et des barres actives. */
   foregroundColor?: string;
   barOffColor?: string;
   barOnColor?: string;
   /** Bouton de vitesse dans la bulle : 1x → 1,5x → 2x, mémorisé. */
   speedControl?: boolean;
+  /** Vitesse contrôlée par l'appelant (note chiffrée : le choix survit au
+   *  déchiffrement). Sans ces props, la bulle garde sa propre vitesse. */
+  speed?: VoiceSpeed;
+  onSpeedChange?: (next: VoiceSpeed) => void;
   /** Bouton « Aa » : la transcription n'existe que pour les notes reçues
    *  dont le moteur local est disponible et le clair déjà déchiffré. */
   transcribable?: boolean;
   /** Produit le texte transcrit (cache puis moteur) ; `null` si indisponible. */
   onTranscribe?: () => Promise<string | null>;
+  /** Heure et accusé, posés **dans** la bulle comme sur les bulles de texte. */
+  footer?: ReactNode;
+  /** Queue de bulle : masquée au milieu d'une suite. */
+  tail?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
@@ -60,12 +82,32 @@ function formatTime(ms: number) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-/** Largeur proportionnelle à la durée (comme WeChat), bornée. */
-export function voiceBubbleWidth(durationMs: number, screenW: number): number {
-  const minW = 118;
-  const maxW = Math.min(screenW * 0.7, 320);
-  const ratio = Math.sqrt(Math.min(1, durationMs / MAX_DURATION_MS));
-  return Math.round(minW + (maxW - minW) * ratio);
+/** Métriques du design system transmises à la géométrie pure de la bulle. */
+const LAYOUT_METRICS: VoiceLayoutMetrics = {
+  bubblePaddingH: ChatMetrics.bubblePaddingH,
+  playSize: ChatMetrics.voicePlaySize,
+  controlWidth: ChatMetrics.voiceControlWidth,
+  controlGap: ChatMetrics.voiceControlGap,
+  chipGap: ChatMetrics.voiceChipGap,
+  durationMinWidth: ChatMetrics.voiceDurationMinWidth,
+  barWidth: ChatMetrics.voiceBarWidth,
+  barGap: ChatMetrics.voiceBarGap,
+};
+
+/** Largeur de la bulle vocale : proportionnelle à la durée, sans écraser l'onde. */
+export function voiceBubbleWidth(
+  durationMs: number,
+  screenW: number,
+  speedControl = true,
+  transcribable = false,
+): number {
+  return layoutBubbleWidth(
+    LAYOUT_METRICS,
+    durationMs,
+    screenW,
+    speedControl,
+    transcribable,
+  );
 }
 
 /** Forme d'onde de secours, stable pour un même id. */
@@ -87,28 +129,37 @@ function VoiceMessageBubbleBase({
   isMine,
   unplayed,
   onFirstPlay,
-  accentColor = '#95EC69',
-  receivedColor = '#FFFFFF',
-  foregroundColor = '#1A1A1A',
+  foregroundColor,
   barOffColor,
   barOnColor,
   speedControl = false,
+  speed: controlledSpeed,
+  onSpeedChange,
   transcribable = false,
   onTranscribe,
+  footer,
+  tail = true,
   style,
 }: Props) {
   const { width: screenW } = useWindowDimensions();
+  const chat = useChatColors();
   const playback = useVoicePlayback(id);
+  // Vitesse propre à CETTE bulle : changer « 1x » ici ne touche aucun autre
+  // message, et la pastille affiche toujours ce que jouera ce message.
+  const [ownSpeed, setOwnSpeed] = useState<VoiceSpeed>(DEFAULT_VOICE_SPEED);
+  const speed = controlledSpeed ?? ownSpeed;
   const [scrub, setScrub] = useState<number | null>(null);
   const track = useRef({ x: 0, width: 1 });
   // Transcript : `null` = masqué, chaîne = affiché sous l'onde.
   const [transcript, setTranscript] = useState<string | null>(null);
   const [transcribing, setTranscribing] = useState(false);
 
-  // Largeur proportionnelle à la durée (comme WeChat), bornée.
-  const width = voiceBubbleWidth(durationMs, screenW);
+  // Largeur proportionnelle à la durée, mais jamais plus étroite que la ligne
+  // lecture + onde + durée + vitesse.
+  const width = voiceBubbleWidth(durationMs, screenW, speedControl, transcribable);
 
-  const barCount = Math.max(8, Math.floor((width - 140) / 5));
+  const trailing = layoutTrailingWidth(LAYOUT_METRICS, speedControl, transcribable);
+  const barCount = layoutBarCount(LAYOUT_METRICS, width, trailing);
   const bars = useMemo(
     () =>
       toWaveform(
@@ -131,12 +182,30 @@ function VoiceMessageBubbleBase({
 
   const onPress = useCallback(async () => {
     try {
-      const started = await toggleVoicePlayback(id, uri, durationMs, { speedControl });
-      if (started && unplayed) onFirstPlay?.(id);
+      // La vitesse de CETTE bulle : pause/reprise si c'est déjà la note active,
+      // sinon elle est chargée puis jouée à la vitesse choisie ici.
+      if (playback.id === id) {
+        pauseOrResumeVoicePlayback(id);
+        return;
+      }
+      await startVoicePlayback(id, uri, durationMs, { speedControl, speed });
+      if (unplayed) onFirstPlay?.(id);
     } catch (e) {
       console.warn('[VoiceMessageBubble] lecture impossible', e);
     }
-  }, [id, uri, durationMs, unplayed, onFirstPlay, speedControl]);
+  }, [id, uri, durationMs, unplayed, onFirstPlay, speedControl, speed, playback.id]);
+
+  /** Pastille de vitesse : met à jour la bulle, puis le lecteur si c'est SA note. */
+  const changeSpeed = useCallback(
+    (next: VoiceSpeed) => {
+      if (onSpeedChange) onSpeedChange(next);
+      else setOwnSpeed(next);
+      // `id` garantit que seule la note de cette bulle reçoit la vitesse ;
+      // une bulle non active la transmettra à son chargement.
+      setVoicePlaybackSpeed(next, id);
+    },
+    [id, onSpeedChange],
+  );
 
   const toggleTranscript = useCallback(async () => {
     if (transcript !== null) {
@@ -173,7 +242,7 @@ function VoiceMessageBubbleBase({
         // On garde le temps du doigt affiché tant que le lecteur n'est pas prêt :
         // le seek attend le chargement pour ne pas être ignoré.
         setScrub(ratio);
-        void seekVoicePlayback(id, uri, durationMs, ratio, { speedControl })
+        void seekVoicePlayback(id, uri, durationMs, ratio, { speedControl, speed })
           .catch(() => undefined)
           .finally(() => setScrub(null));
       })
@@ -183,154 +252,200 @@ function VoiceMessageBubbleBase({
       });
 
     return pan;
-  }, [id, uri, durationMs, ratioFromX, speedControl]);
+  }, [id, uri, durationMs, ratioFromX, speedControl, speed]);
 
   useEffect(() => () => unlockSwipe(), []);
 
-  const bg = isMine ? accentColor : receivedColor;
-  const barOff = barOffColor ?? (isMine ? 'rgba(0,0,0,0.25)' : '#D3D3D3');
-  const barOn = barOnColor ?? (isMine ? 'rgba(0,0,0,0.78)' : '#1A1A1A');
+  const ink = foregroundColor ?? chat.voiceBubbleText;
+  const barOff = barOffColor ?? chat.voiceBarInactive;
+  const barOn = barOnColor ?? chat.voiceBarOn;
+  const playing = active && playback.playing;
 
   return (
     <View style={[styles.row, isMine ? styles.rowMine : styles.rowOther, style]}>
-      <GestureDetector gesture={gesture}>
-        <View style={[styles.bubble, { width, backgroundColor: bg }]}>
-          <View
-            pointerEvents="none"
-            style={[
-              styles.tail,
-              isMine ? styles.tailRight : styles.tailLeft,
-              { backgroundColor: bg },
-            ]}
-          />
-          <View style={styles.contentRow}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                active && playback.playing
-                  ? 'Mettre en pause le message vocal'
-                  : `Lire le message vocal de ${formatTime(durationMs)}`
-              }
-              hitSlop={8}
-              onPress={() => void onPress()}
-              style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}>
-              <Ionicons
-                name={active && playback.playing ? 'pause' : 'play'}
-                size={20}
-                color={foregroundColor}
-                style={styles.icon}
-              />
-            </Pressable>
-            <View
-              style={styles.waveform}
-              onLayout={(e) => {
-                track.current = { x: e.nativeEvent.layout.x, width: e.nativeEvent.layout.width };
-              }}>
-              {bars.map((v, i) => (
-                <View
-                  key={i}
-                  style={[
-                    styles.bar,
-                    { height: 4 + v * 20, backgroundColor: i / bars.length < shownProgress ? barOn : barOff },
-                  ]}
-                />
-              ))}
-            </View>
-            <Text style={[styles.duration, { color: foregroundColor }]}>{label}</Text>
-            {transcribable ? (
+      <View style={styles.bubbleWrap}>
+        {/* Même chrome que les bulles de texte : rayon, encoche et queue identiques. */}
+        <ChatBubble mine={isMine} style={{ width }} tail={tail}>
+          <GestureDetector gesture={gesture}>
+            <View style={styles.contentRow}>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={
-                  transcript !== null
-                    ? fr.chat.voiceTranscript.hide
-                    : fr.chat.voiceTranscript.action
+                  playing ? fr.voicePlayback.pause : fr.voicePlayback.play(formatTime(durationMs))
                 }
-                hitSlop={6}
-                onPress={() => void toggleTranscript()}
-                style={({ pressed }) => [styles.chip, pressed && { opacity: 0.7 }]}>
-                <Text style={[styles.chipText, { color: foregroundColor }]}>Aa</Text>
+                hitSlop={8}
+                onPress={() => void onPress()}
+                style={({ pressed }) => [styles.playButton, pressed && styles.pressed]}>
+                <Ionicons
+                  name={playing ? 'pause' : 'play'}
+                  size={ChatMetrics.voicePlayIconSize}
+                  color={ink}
+                />
               </Pressable>
-            ) : null}
-            {speedControl ? <VoiceSpeedChip foreground={foregroundColor} /> : null}
-          </View>
+              <View
+                style={styles.waveform}
+                onLayout={(e) => {
+                  track.current = { x: e.nativeEvent.layout.x, width: e.nativeEvent.layout.width };
+                }}>
+                {bars.map((v, i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.bar,
+                      {
+                        height: Math.round(
+                          ChatMetrics.voiceBarMinHeight +
+                            v * (ChatMetrics.voiceBarMaxHeight - ChatMetrics.voiceBarMinHeight),
+                        ),
+                        backgroundColor:
+                          (i + 0.5) / bars.length <= shownProgress ? barOn : barOff,
+                      },
+                    ]}
+                  />
+                ))}
+              </View>
+              {transcribable ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    transcript !== null
+                      ? fr.chat.voiceTranscript.hide
+                      : fr.chat.voiceTranscript.action
+                  }
+                  hitSlop={6}
+                  onPress={() => void toggleTranscript()}
+                  style={({ pressed }) => [
+                    styles.chip,
+                    { backgroundColor: chat.voiceChipBackground },
+                    pressed && styles.pressed,
+                  ]}>
+                  <Text style={[styles.chipText, { color: ink }]}>Aa</Text>
+                </Pressable>
+              ) : null}
+              {/* Durée et vitesse forment un seul bloc, collé au bord droit. */}
+              <View style={styles.cluster}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.duration, { color: ink }]}>
+                  {label}
+                </Text>
+                {speedControl ? (
+                  <VoiceSpeedChip
+                    ink={ink}
+                    background={chat.voiceChipBackground}
+                    speed={speed}
+                    onPress={changeSpeed}
+                  />
+                ) : null}
+              </View>
+            </View>
+          </GestureDetector>
           {transcribing || transcript !== null ? (
-            <Text style={[styles.transcript, { color: foregroundColor }]} numberOfLines={8}>
+            <Text style={[styles.transcript, { color: ink }]} numberOfLines={8}>
               {transcribing ? fr.chat.voiceTranscript.running : transcript}
             </Text>
           ) : null}
-        </View>
-      </GestureDetector>
-      {!isMine && unplayed && <View style={styles.unplayedDot} />}
+          {footer}
+        </ChatBubble>
+        {/* Hors du GestureDetector : le détecteur de glissement ne doit pas
+            intercepter le tap de la pastille de vitesse. */}
+        {!isMine && unplayed ? <View style={styles.unplayedDot} /> : null}
+      </View>
     </View>
   );
 }
 
 export const VoiceMessageBubble = memo(VoiceMessageBubbleBase);
 
-/** Chip de vitesse dans la bulle : 1x par défaut, cycles 1x → 1,5x → 2x. */
-function VoiceSpeedChip({ foreground }: { foreground: string }) {
-  const speed = useVoiceSpeed();
+/**
+ * Pastille de vitesse, purement présentative : l'état vit dans la bulle qui
+ * possède la note, ce qui garantit qu'un message n'influence pas les autres.
+ */
+export function VoiceSpeedChip({
+  ink,
+  background,
+  speed,
+  onPress,
+}: {
+  ink: string;
+  background: string;
+  speed: VoiceSpeed;
+  onPress: (next: VoiceSpeed) => void;
+}) {
   const label = fr.voicePlayback.speedValue(speed);
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={fr.voicePlayback.speedAccessibilityLabel(label)}
-      onPress={() => {
-        const next = nextVoiceSpeed(speed);
-        setVoicePlaybackSpeed(next);
-        void setVoiceSpeed(next);
-      }}
-      style={({ pressed }) => [styles.chip, pressed && { opacity: 0.7 }]}>
-      <Text style={[styles.chipText, { color: foreground }]}>{label}</Text>
+      onPress={() => onPress(nextVoiceSpeed(speed))}
+      style={({ pressed }) => [
+        styles.chip,
+        { backgroundColor: background },
+        pressed && styles.pressed,
+      ]}>
+      <Text style={[styles.chipText, { color: ink }]}>{label}</Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', marginVertical: 2 },
+  row: { flexDirection: 'row', alignItems: 'center', marginTop: ChatMetrics.voiceTopMargin },
   rowMine: { alignSelf: 'flex-end' },
   rowOther: { alignSelf: 'flex-start' },
-  bubble: {
-    minHeight: 44,
-    borderRadius: Radii.lg,
-    flexDirection: 'column',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    gap: 4,
-  },
+  /** La bulle et son point « non écouté » ; les taps internes restent indépendants du geste. */
+  bubbleWrap: { flexDirection: 'row', alignItems: 'center' },
   contentRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    height: 32,
+    gap: ChatMetrics.voiceControlGap,
+    height: ChatMetrics.voiceControlHeight,
   },
-  tail: {
-    position: 'absolute',
-    width: 10,
-    height: 10,
-    borderRadius: Radii.xs,
-    top: 15,
-    transform: [{ rotate: '45deg' }],
-  },
-  tailLeft: { left: -5 },
-  tailRight: { right: -5 },
-  pressed: { opacity: 0.8 },
-  playButton: { alignItems: 'center', justifyContent: 'center' },
-  icon: { width: 20 },
-  waveform: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', height: 28 },
-  bar: { width: 2.5, borderRadius: Radii.full},
-  duration: { minWidth: 34, textAlign: 'right', fontSize: 13, fontVariant: ['tabular-nums'] },
-  chip: {
-    minWidth: 26,
-    height: 18,
-    borderRadius: Radii.full,
-    paddingHorizontal: 5,
+  pressed: { opacity: 0.75 },
+  playButton: {
+    width: ChatMetrics.voicePlaySize,
+    height: ChatMetrics.voiceControlHeight,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.10)',
   },
-  chipText: { fontSize: 11, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  transcript: { fontSize: 13, lineHeight: 17, flexShrink: 1 },
-  unplayedDot: { width: 8, height: 8, borderRadius: Radii.full, backgroundColor: '#FA5151', marginLeft: 6 },
+  waveform: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    height: ChatMetrics.voiceControlHeight,
+    gap: ChatMetrics.voiceBarGap,
+  },
+  bar: {
+    width: ChatMetrics.voiceBarWidth,
+    borderRadius: Radii.full,
+  },
+  cluster: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: ChatMetrics.voiceChipGap,
+    height: ChatMetrics.voiceControlHeight,
+  },
+  duration: {
+    width: ChatMetrics.voiceDurationMinWidth,
+    textAlign: 'right',
+    includeFontPadding: false,
+    ...Type.micro,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+  chip: {
+    width: ChatMetrics.voiceControlWidth,
+    height: ChatMetrics.voiceChipHeight,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chipText: {
+    includeFontPadding: false,
+    ...Type.micro,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  transcript: { ...Type.caption, flexShrink: 1 },
+  unplayedDot: { width: Spacing.two, height: Spacing.two, borderRadius: Radii.full, backgroundColor: '#FA5151', marginLeft: 6 },
 });

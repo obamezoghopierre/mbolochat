@@ -12,6 +12,7 @@ import {
 } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   AppState,
   KeyboardAvoidingView,
@@ -28,7 +29,7 @@ import { Avatar } from '@/components/avatar';
 import { BlurTarget } from '@/components/blur-target';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { CHAT_TIME_GAP_MS, useChatColors } from '@/constants/chat-theme';
+import { CHAT_TIME_GAP_MS, ChatMetrics, useChatColors } from '@/constants/chat-theme';
 import { Radii, Spacing } from '@/constants/theme';
 import { useCalls } from '@/features/calls/CallProvider';
 import { ChatEmptyState } from '@/features/chat/ui/chat-empty-state';
@@ -55,6 +56,7 @@ import {
   pickLibraryMedia,
   type PickedAttachment,
 } from '@/features/media/pickMedia';
+import { mediaSendErrorMessage } from '@/features/e2ee/mediaError';
 import { closeMedia } from '@/features/e2ee/mediaStore';
 import { isE2eeEnabled } from '@/features/e2ee/policy';
 import { useE2eeInitState } from '@/features/e2ee/useE2eeInitState';
@@ -75,7 +77,7 @@ import {
 } from '@/features/stickers/stickerLibrary';
 import { useStickerLibrary } from '@/features/stickers/useStickerLibrary';
 import { copyToClipboard } from '@/lib/clipboard';
-import { conversationTitle } from '@/lib/format';
+import { conversationTitle, formatClock, formatDateLabel } from '@/lib/format';
 import type { ConversationSummary, MessageQuote, MessageReceipt } from '@/lib/types';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { useTheme } from '@/hooks/use-theme';
@@ -88,6 +90,7 @@ import { useChatActions } from '../hooks/use-chat-actions';
 import { useChatTransport } from '../hooks/use-chat-transport';
 import { useChatMedia } from '../hooks/use-chat-media';
 import { identityOf } from '../model/message-view';
+import { bubbleMaxWidth } from '../row-layout';
 import {
   loadPinnedMessageIds,
   savePinnedMessageIds,
@@ -167,6 +170,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
   const [forwardFor, setForwardFor] = useState<ChatMessageView | null>(null);
   const [forwardTargets, setForwardTargets] = useState<ConversationSummary[]>([]);
   const [forwardLoading, setForwardLoading] = useState(false);
+  const [forwardError, setForwardError] = useState(false);
   const [viewOnceFor, setViewOnceFor] = useState<ChatMessageView | null>(null);
   const [cameraMode, setCameraMode] = useState<CameraCaptureMode | null>(null);
   const [mediaComposer, setMediaComposer] = useState<{
@@ -284,7 +288,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
   }, [messages, mode, transport, ready, focused, scroll.atBottomRef]);
   useChatSecurity(mode);
   const bubbleStyle = useMemo(
-    () => ({ maxWidth: Math.round(windowWidth * 0.7) }),
+    () => ({ maxWidth: bubbleMaxWidth({ windowWidth, horizontalPadding: ChatMetrics.listPadding }) }),
     [windowWidth],
   );
   const onEndReached = useCallback(() => {
@@ -495,6 +499,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
       setForwardFor(message);
       setForwardTargets([]);
       setForwardLoading(true);
+      setForwardError(false);
       void api
         .listConversations(token)
         .then((list) =>
@@ -507,7 +512,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
             ),
           ),
         )
-        .catch(() => setForwardTargets([]))
+        .catch(() => setForwardError(true))
         .finally(() => setForwardLoading(false));
     },
     [token, conversationId],
@@ -821,8 +826,8 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
             replyToId,
           );
         }
-      } catch {
-        Alert.alert(fr.e2eeChat.error, fr.e2eeChat.mediaSendFailed);
+      } catch (error) {
+        Alert.alert(fr.e2eeChat.error, mediaSendErrorMessage(error));
         return;
       }
       setReplyTo(null);
@@ -898,7 +903,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
           fr.e2eeChat.error,
           value.hd && error instanceof Error && error.message === 'media_too_large'
             ? fr.e2eeMedia.tooLargeHd
-            : fr.e2eeChat.mediaSendFailed,
+            : mediaSendErrorMessage(error),
         );
       } finally {
         setComposerSending(false);
@@ -1184,7 +1189,14 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
                   }
                   onSuggestion={(value) => sendText(value)}
                 />
-              ) : null
+              ) : (
+                <View style={styles.loadingState}>
+                  <ActivityIndicator size="small" color={theme.accent} />
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {fr.chat.unified.loadingMessages}
+                  </ThemedText>
+                </View>
+              )
             }
             viewabilityConfig={mode === 'e2ee' ? READ_VIEWABILITY_CONFIG : undefined}
             onViewableItemsChanged={mode === 'e2ee' ? onViewableItemsChanged : undefined}
@@ -1220,7 +1232,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
             onPress={scroll.jumpToBottom}
             accessibilityRole="button"
             accessibilityLabel={fr.chat.unified.jumpToLatest}
-            style={[styles.jump, { backgroundColor: theme.backgroundElement }]}>
+            style={[styles.jump, { backgroundColor: theme.backgroundElement, bottom: ChatMetrics.composerButtonSize + Spacing.four + (replyTo || editing ? 48 : 0) }]}>
             <ChevronDown size={24} color={theme.accent} />
           </Pressable>
         ) : null}
@@ -1280,7 +1292,7 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
             onSendVoice={(note) =>
               void transport
                 .sendVoice(note)
-                .catch(() => Alert.alert(fr.e2eeChat.error, fr.e2eeChat.mediaSendFailed))
+                .catch((error) => Alert.alert(fr.e2eeChat.error, mediaSendErrorMessage(error)))
             }
             onPickPhotos={pickPhotos}
             onPickCamera={pickCamera}
@@ -1288,7 +1300,14 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
             onVoicePermissionDenied={() =>
               Alert.alert(fr.chat.picker.micDeniedTitle, fr.chat.picker.micDeniedBody)
             }
-            onVoiceError={() => Alert.alert(fr.e2eeChat.error, fr.e2eeChat.mediaSendFailed)}
+            onVoiceError={(error) =>
+              Alert.alert(
+                fr.e2eeChat.error,
+                __DEV__ && error instanceof Error && error.message
+                  ? `${fr.chat.errors.voiceRecordFailed}\n\n${error.message}`
+                  : fr.chat.errors.voiceRecordFailed,
+              )
+            }
           />
         ) : null}
       </KeyboardAvoidingView>
@@ -1361,6 +1380,8 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
           <View>
             {forwardLoading ? (
               <ThemedText type="small">{fr.e2eeChat.forwardLoading}</ThemedText>
+            ) : forwardError ? (
+              <ThemedText type="small" style={{ color: theme.error }}>{fr.e2eeChat.forwardError}</ThemedText>
             ) : forwardTargets.length === 0 ? (
               <ThemedText type="small">{fr.e2eeChat.forwardNoTarget}</ThemedText>
             ) : (
@@ -1398,8 +1419,15 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
           infoFor ? (
             <View>
               <ThemedText type="small">{`${fr.e2eeChat.infoSender} : ${infoFor.sender.displayName}`}</ThemedText>
-              <ThemedText type="small">{`${fr.e2eeChat.infoSentAt} : ${infoFor.createdAt}`}</ThemedText>
-              <ThemedText type="small">{`${fr.e2eeChat.infoState} : ${infoFor.state}`}</ThemedText>
+              <ThemedText type="small">{`${fr.e2eeChat.infoSentAt} : ${formatDateLabel(infoFor.createdAt)} ${formatClock(infoFor.createdAt)}`}</ThemedText>
+              <ThemedText type="small">{`${fr.e2eeChat.infoState} : ${
+                infoFor.state === 'sent' ? fr.chat.unified.tickSent
+                : infoFor.state === 'delivered' ? fr.chat.unified.tickDelivered
+                : infoFor.state === 'read' ? fr.chat.unified.tickRead
+                : infoFor.state === 'pending' ? fr.chat.unified.tickPending
+                : infoFor.state === 'failed' ? fr.chat.unified.tickFailed
+                : fr.e2eeChat.infoStateNone
+              }`}</ThemedText>
             </View>
           ) : null
         }
@@ -1459,12 +1487,11 @@ const styles = StyleSheet.create({
   retryButton: {
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
-    borderRadius: 999,
+    borderRadius: Radii.full,
   },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.threeHalf },
   headerActionDisabled: { opacity: 0.45 },
   phoneFlipped: { transform: [{ rotate: '135deg' }] },
-  bubble: { maxWidth: 300 },
   banner: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.one },
   pinnedBar: {
     flexDirection: 'row',
@@ -1494,17 +1521,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   pinnedPressed: { opacity: 0.72 },
-  pinnedBody: { flex: 1, minWidth: 0, gap: 1 },
+  pinnedBody: { flex: 1, minWidth: 0, gap: Spacing.half },
   typing: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.one, fontStyle: 'italic' },
   jump: {
     position: 'absolute',
     right: Spacing.three,
-    bottom: 80,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: ChatMetrics.jumpButtonSize,
+    height: ChatMetrics.jumpButtonSize,
+    borderRadius: Radii.full,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  loadingState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    padding: Spacing.four,
   },
   seenRow: { paddingVertical: Spacing.two, paddingHorizontal: Spacing.one },
 });

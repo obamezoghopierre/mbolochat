@@ -97,6 +97,8 @@ export function useVoiceRecorder(options: Options) {
   const [levels, setLevels] = useState<number[]>(() => new Array(LIVE_BARS).fill(0));
 
   const statusRef = useRef<RecorderStatus>('idle');
+  /** Faux dès le démontage : l'enregistreur natif est alors déjà libéré. */
+  const aliveRef = useRef(true);
   const startedAtRef = useRef(0);
   const samplesRef = useRef<number[]>([]);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -124,7 +126,7 @@ export function useVoiceRecorder(options: Options) {
    * rien n'était en cours ou si le fichier est introuvable.
    */
   const capture = useCallback(async (): Promise<VoiceNote | null> => {
-    if (statusRef.current !== 'recording') return null;
+    if (!aliveRef.current || statusRef.current !== 'recording') return null;
     stopTick();
     setStatus('stopping');
 
@@ -186,7 +188,15 @@ export function useVoiceRecorder(options: Options) {
     setStatus('starting');
 
     try {
-      const permission = await AudioModule.requestRecordingPermissionsAsync();
+      // Vérifier d'abord : demander la permission sur Android ouvre une
+      // activité système même quand elle est déjà accordée, ce qui met l'app en
+      // pause au plein milieu du démarrage de la capture.
+      const current = await AudioModule.getRecordingPermissionsAsync();
+      if (!aliveRef.current) return;
+      const permission = current.granted
+        ? current
+        : await AudioModule.requestRecordingPermissionsAsync();
+      if (!aliveRef.current) return;
       if (!permission.granted) {
         setStatus('idle');
         optionsRef.current.onPermissionDenied?.();
@@ -194,7 +204,11 @@ export function useVoiceRecorder(options: Options) {
       }
 
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      // Un démontage pendant la demande de permission (écran quitté, compositeur
+      // remplacé) a libéré l'enregistreur natif : ne jamais l'appeler ensuite.
+      if (!aliveRef.current) return;
       await recorderRef.current.prepareToRecordAsync();
+      if (!aliveRef.current) return;
       recorderRef.current.record();
 
       samplesRef.current = [];
@@ -226,6 +240,7 @@ export function useVoiceRecorder(options: Options) {
     } catch (e) {
       stopTick();
       setStatus('idle');
+      if (!aliveRef.current) return;
       optionsRef.current.onError?.(e);
     }
   }, [capture, finish]);
@@ -283,9 +298,12 @@ export function useVoiceRecorder(options: Options) {
     };
   }, [release]);
 
-  // Démontage pendant l'enregistrement.
+  // Démontage : le recorder est libéré avec le composant. Toute préparation en
+  // vol doit s'arrêter là (voir `aliveRef` dans `start`).
   useEffect(() => {
+    aliveRef.current = true;
     return () => {
+      aliveRef.current = false;
       stopTick();
       if (statusRef.current === 'recording') {
         recorderRef.current.stop().catch(() => {});

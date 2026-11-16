@@ -482,6 +482,14 @@ export async function sendEncryptedMedia(
       },
     };
   } catch (cause) {
+    // Diagnostic sans contenu : le motif et l'étape atteinte suffisent à
+    // distinguer un clair illisible d'un refus réseau, serveur ou de chiffrement.
+    const preparation = await loadMediaPreparation(input.db, clientId).catch(() => null);
+    console.warn(
+      `[e2ee] envoi média échoué (${input.asset.kind}) : ${
+        cause instanceof Error ? cause.message : 'inconnu'
+      } — étape ${preparation?.state ?? 'preparation'}`,
+    );
     await cleanUpFailedSend(input.db, clientId, preparationCreated, cause);
     throw cause;
   } finally {

@@ -14,6 +14,7 @@ import type {
   DeviceSession,
   FeedPage,
   FeedTab,
+  FollowState,
   ForgotPasswordResult,
   Gender,
   LocationUpdateResult,
@@ -155,6 +156,16 @@ export const api = {
       body,
       headers: deviceHeaders(),
     });
+  },
+
+  /** Suit un compte ; un compte privé renvoie `pending`. */
+  followUser(token: string, userId: string) {
+    return request<FollowState>(`/users/${userId}/follow`, { method: 'POST', token });
+  },
+
+  /** Ne plus suivre, ou annule une demande en attente. */
+  unfollowUser(token: string, userId: string) {
+    return request<FollowState>(`/users/${userId}/follow`, { method: 'DELETE', token });
   },
 
   /** Détail d'une publication (visibilité vérifiée par le serveur). */

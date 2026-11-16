@@ -87,15 +87,21 @@ describe('buildChatRows', () => {
     expect(rows.map((row) => row.key)).toContain('date-b');
   });
 
-  it('insère un séparateur d’heure au-delà de l’écart', () => {
+  it('n’ajoute pas de séparateur d’heure : chaque bulle porte la sienne', () => {
     const rows = buildChatRows({
       messages: [
         view({ id: 'a', createdAt: new Date(base).toISOString() }),
         view({ id: 'b', createdAt: new Date(base + 10 * MINUTE).toISOString() }),
+        view({
+          id: 'c',
+          createdAt: new Date(base + 15 * MINUTE).toISOString(),
+          sender: { ...sender, id: 'other' },
+        }),
       ],
       timeGapMs: 5 * MINUTE,
     });
-    expect(rows.some((row) => row.type === 'time' && row.key === 'time-b')).toBe(true);
+    expect(rows.some((row) => row.type === 'time')).toBe(false);
+    expect([...rows].reverse().map((row) => row.key)).toEqual(['date-a', 'a', 'b', 'c']);
   });
 
   it('marque la continuation pour le même expéditeur dans l’écart', () => {
@@ -191,4 +197,59 @@ describe('buildChatRows', () => {
     });
     expect(rows.some((row) => row.type === 'unread')).toBe(false);
   });
+
+describe('fil vertical des suites', () => {
+  const groupsOf = (rows: ReturnType<typeof buildChatRows>) =>
+    Object.fromEntries(
+      rows
+        .filter((row) => row.type === 'message' || row.type === 'album')
+        .map((row) => [row.key, row.group]),
+    );
+
+  it('relie trois messages consécutifs du même expéditeur', () => {
+    const rows = buildChatRows({
+      messages: [
+        view({ id: 'a', createdAt: new Date(base).toISOString() }),
+        view({ id: 'b', createdAt: new Date(base + MINUTE).toISOString() }),
+        view({ id: 'c', createdAt: new Date(base + 2 * MINUTE).toISOString() }),
+      ],
+      timeGapMs: 5 * MINUTE,
+    });
+    expect(groupsOf(rows)).toEqual({ a: 'first', b: 'middle', c: 'last' });
+  });
+
+  it('laisse un message isolé sans fil', () => {
+    const rows = buildChatRows({
+      messages: [view({ id: 'a', createdAt: new Date(base).toISOString() })],
+      timeGapMs: 5 * MINUTE,
+    });
+    expect(groupsOf(rows)).toEqual({ a: 'single' });
+  });
+
+  it('coupe le fil au changement d’expéditeur', () => {
+    const rows = buildChatRows({
+      messages: [
+        view({ id: 'a', createdAt: new Date(base).toISOString() }),
+        view({
+          id: 'b',
+          createdAt: new Date(base + MINUTE).toISOString(),
+          sender: { ...sender, id: 'other' },
+        }),
+      ],
+      timeGapMs: 5 * MINUTE,
+    });
+    expect(groupsOf(rows)).toEqual({ a: 'single', b: 'single' });
+  });
+
+  it('coupe le fil au-delà du court intervalle', () => {
+    const rows = buildChatRows({
+      messages: [
+        view({ id: 'a', createdAt: new Date(base).toISOString() }),
+        view({ id: 'b', createdAt: new Date(base + 6 * MINUTE).toISOString() }),
+      ],
+      timeGapMs: 5 * MINUTE,
+    });
+    expect(groupsOf(rows)).toEqual({ a: 'single', b: 'single' });
+  });
+});
 });

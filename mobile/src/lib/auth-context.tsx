@@ -7,6 +7,7 @@ import { resetRecentEmoji } from '@/features/emoji/useRecentEmoji';
 import { resetStickerLibrary } from '@/features/stickers/stickerLibrary';
 import { sweepSecureMedia } from '@/features/e2ee/mediaStore';
 import { resetE2eeInitState } from '@/features/e2ee/initState';
+import { getActiveE2eeUser, setActiveE2eeUser } from '@/features/e2ee/activeUser';
 import { activateLocalStore } from './store';
 import { syncPushToken, ensurePushRegistration, getExistingPushToken } from './push';
 import { disconnectSocket } from './socket';
@@ -33,6 +34,27 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+/**
+ * Ferme les bases chiffrées du compte précédent. Import paresseux : le module
+ * natif E2EE ne doit pas être chargé sur les cibles qui n'en ont pas (web).
+ */
+async function closeE2eeDatabases(): Promise<void> {
+  try {
+    const { closeAllE2eeDatabases } = await import('@/features/e2ee/db');
+    await closeAllE2eeDatabases();
+  } catch {
+    /* aucune base ouverte */
+  }
+}
+
+async function bindE2eeUser(userId: string): Promise<void> {
+  if (getActiveE2eeUser() !== userId) {
+    await closeE2eeDatabases();
+    resetE2eeInitState();
+  }
+  setActiveE2eeUser(userId);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -58,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         cachedUser: User | null,
       ): Promise<boolean> => {
         if (!cachedUser) return false;
+        await bindE2eeUser(cachedUser.id);
         await cache.prepareForUser(cachedUser.id);
         await activateLocalStore(cachedUser.id).catch(() => undefined);
         if (!cancelled) {
@@ -74,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const me = await api.me(stored);
             await storeCachedUser(me);
             if (!cancelled) {
+              await bindE2eeUser(me.id);
               await cache.prepareForUser(me.id);
               await activateLocalStore(me.id).catch(() => undefined);
               // `me` a pu rafraîchir le jeton : l'état doit garder le plus récent.
@@ -98,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               const me = await api.me(refreshed.accessToken);
               await storeCachedUser(me);
               if (!cancelled) {
+                await bindE2eeUser(me.id);
                 await cache.prepareForUser(me.id);
                 await activateLocalStore(me.id).catch(() => undefined);
                 setToken(refreshed.accessToken);
@@ -125,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const me = await api.me(refreshed.accessToken);
             await storeCachedUser(me);
             if (!cancelled) {
+              await bindE2eeUser(me.id);
               await cache.prepareForUser(me.id);
               await activateLocalStore(me.id).catch(() => undefined);
               setToken(refreshed.accessToken);
@@ -157,6 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       loading,
       signIn: async (newToken, newRefresh, newUser) => {
+        await bindE2eeUser(newUser.id);
         await cache.prepareForUser(newUser.id);
         await activateLocalStore(newUser.id).catch(() => undefined);
         await storeTokens(newToken, newRefresh);
@@ -193,6 +220,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         disconnectSocket();
         setToken(null);
         setUser(null);
+        setActiveE2eeUser(null);
+        await closeE2eeDatabases();
         resetE2eeInitState();
         // Le cache et la file restent attachés à ce compte : une reconnexion du
         // même utilisateur retrouve son état. Au prochain compte, ils sont
