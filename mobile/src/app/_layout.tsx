@@ -183,11 +183,10 @@ function RootNavigator() {
         headerTitleStyle: { color: theme.text },
         contentStyle: { backgroundColor: theme.background },
       }}>
-      <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="login" options={{ headerShown: false }} />
       <Stack.Screen name="register" options={{ headerShown: false }} />
       <Stack.Screen name="forgot-password" options={{ title: 'Mot de passe oublié' }} />
-      <Stack.Screen name="chats" options={{ headerShown: false }} />
       <Stack.Screen name="new-message" options={{ title: 'Nouveau message' }} />
       <Stack.Screen name="new-group" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[id]" options={{ title: '' }} />
@@ -195,7 +194,6 @@ function RootNavigator() {
       <Stack.Screen name="conversation-search/[id]" options={{ title: 'Recherche' }} />
       <Stack.Screen name="invite/[token]" options={{ title: 'Invitation' }} />
       <Stack.Screen name="document-viewer" options={{ headerShown: false }} />
-      <Stack.Screen name="profile" options={{ title: 'Profil' }} />
       <Stack.Screen name="profile/edit" options={{ title: 'Modifier le profil' }} />
       <Stack.Screen name="user/[id]" options={{ title: 'Profil' }} />
       <Stack.Screen name="settings" options={{ title: 'Paramètres' }} />
