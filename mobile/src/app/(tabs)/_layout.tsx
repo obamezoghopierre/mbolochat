@@ -81,6 +81,7 @@ export default function TabsLayout() {
             <Pressable
               onPress={() => router.push('/settings')}
               hitSlop={8}
+              style={styles.headerButton}
               accessibilityRole="button"
               accessibilityLabel={fr.tabs.settings}>
               <Icon icon={Settings} size={22} color={theme.text} />
@@ -103,5 +104,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 14,
     fontWeight: '500',
+  },
+  // Sans marge, l'icône vient coller au bord droit alors que le titre garde
+  // 16 px à gauche : l'en-tête paraît déséquilibré.
+  headerButton: {
+    marginRight: Spacing.three,
   },
 });
