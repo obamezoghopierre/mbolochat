@@ -1,4 +1,4 @@
-import { Tabs } from 'expo-router';
+import { Tabs } from 'expo-router/js-tabs';
 import { Compass, Home, MessageCircle, SquarePlus, User } from 'lucide-react-native';
 import { StyleSheet } from 'react-native';
 
