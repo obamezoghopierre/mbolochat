@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { Heart, MessageCircle } from 'lucide-react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -5,6 +6,7 @@ import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { Radii, Spacing, Type } from '@/constants/theme';
+import { primaryMedia } from './pager/feed-media';
 import { formatListTimestamp } from '@/lib/format';
 import type { FeedPost } from '@/lib/types';
 import { useTheme } from '@/hooks/use-theme';
@@ -31,6 +33,10 @@ export function PostCard({
 }) {
   const theme = useTheme();
   const reacted = post.viewer.reaction !== null;
+  const media = primaryMedia(post);
+  // Une vidéo n'a pas d'image dans `url` : on affiche son poster, jamais un
+  // lecteur dans une carte de liste.
+  const preview = media ? (media.kind === 'video' ? media.posterUrl : media.url) : null;
 
   return (
     <Pressable
@@ -68,6 +74,16 @@ export function PostCard({
           </ThemedText>
         </View>
       </Pressable>
+
+      {preview ? (
+        <Image
+          source={{ uri: preview }}
+          style={[styles.media, { backgroundColor: theme.backgroundSelected }]}
+          contentFit="cover"
+          transition={120}
+          accessibilityLabel={media?.altText ?? 'Média de la publication'}
+        />
+      ) : null}
 
       {post.caption ? (
         <ThemedText style={styles.caption}>{post.caption}</ThemedText>
@@ -138,6 +154,11 @@ const styles = StyleSheet.create({
   },
   caption: {
     ...Type.body,
+  },
+  media: {
+    width: '100%',
+    aspectRatio: 4 / 5,
+    borderRadius: Radii.md,
   },
   footer: {
     flexDirection: 'row',

@@ -467,6 +467,19 @@ export type SocialReaction = 'like' | 'love' | 'fire' | 'clap';
 
 export type SocialVisibility = 'public' | 'followers' | 'private';
 
+export interface PublicationMedia {
+  assetId: string;
+  kind: 'image' | 'video' | 'audio';
+  mime: string;
+  position: number;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  url: string | null;
+  posterUrl: string | null;
+  altText: string | null;
+}
+
 /** Publication du fil social (posts et reels unifiés côté API). */
 export interface FeedPost {
   id: string;
@@ -476,6 +489,8 @@ export interface FeedPost {
   visibility: SocialVisibility;
   createdAt: string;
   author: SocialAuthor;
+  /** Médias attachés, dans l'ordre du carrousel (vide pour un post texte). */
+  media?: PublicationMedia[];
   counters: {
     likes: number;
     comments: number;

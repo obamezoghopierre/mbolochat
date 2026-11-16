@@ -1,13 +1,5 @@
-import { router } from 'expo-router';
 import { Home, MapPin, Users } from 'lucide-react-native';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { EmptyState } from '@/components/empty-state';
@@ -18,8 +10,8 @@ import { fr } from '@/i18n/fr';
 import { useTheme } from '@/hooks/use-theme';
 import { useState } from 'react';
 
-import type { FeedPost, FeedTab } from '@/lib/types';
-import { PostCard } from './post-card';
+import type { FeedTab } from '@/lib/types';
+import { FeedPager } from './pager/feed-pager';
 import { useFeed } from './use-feed';
 
 const TABS: { id: FeedTab; label: string }[] = [
@@ -77,16 +69,8 @@ export function FeedScreen() {
 function FeedList({ tab }: { tab: FeedTab }) {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const [height, setHeight] = useState(0);
   const feed = useFeed(tab);
-
-  const renderItem = ({ item }: { item: FeedPost }) => (
-    <PostCard
-      post={item}
-      onToggleLike={feed.toggleLike}
-      onPress={() => router.push(`/post/${item.id}`)}
-      onPressAuthor={() => router.push(`/user/${item.author.id}`)}
-    />
-  );
 
   const empty = () => {
     if (feed.status === 'loading') {
@@ -145,43 +129,31 @@ function FeedList({ tab }: { tab: FeedTab }) {
   };
 
   return (
-    <View style={styles.listWrap}>
+    <View
+      style={styles.listWrap}
+      onLayout={(event) => setHeight(event.nativeEvent.layout.height)}>
       {feed.error && feed.items.length > 0 ? (
         <ThemedText type="small" style={[styles.inlineError, { color: theme.danger }]}>
           {feed.error}
         </ThemedText>
       ) : null}
 
-      <FlatList
-        data={feed.items}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={[
-          styles.list,
-          feed.items.length === 0 && styles.listEmpty,
-          { paddingBottom: insets.bottom + Spacing.five },
-        ]}
-        ItemSeparatorComponent={() => <View style={{ height: Spacing.threeHalf }} />}
-        ListEmptyComponent={<>{empty()}</>}
-        refreshControl={
-          <RefreshControl
-            refreshing={feed.refreshing}
-            onRefresh={feed.refresh}
-            tintColor={theme.accent}
-            colors={[theme.accent]}
-          />
-        }
-        onEndReached={feed.loadMore}
-        onEndReachedThreshold={0.4}
-        ListFooterComponent={
-          feed.loadingMore ? (
-            <View style={styles.footer}>
-              <ActivityIndicator color={theme.accent} />
-            </View>
-          ) : undefined
-        }
-        showsVerticalScrollIndicator={false}
-      />
+      {feed.items.length === 0 ? (
+        <View style={styles.emptyFill}>{empty()}</View>
+      ) : (
+        <FeedPager
+          items={feed.items}
+          height={height}
+          onToggleLike={feed.toggleLike}
+          onLoadMore={feed.loadMore}
+        />
+      )}
+
+      {feed.loadingMore ? (
+        <View style={[styles.footer, { bottom: insets.bottom + Spacing.five }]}>
+          <ActivityIndicator color={theme.accent} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -189,12 +161,14 @@ function FeedList({ tab }: { tab: FeedTab }) {
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    paddingHorizontal: Spacing.three,
     gap: Spacing.three,
   },
+  // Le pager vidéo est bord à bord : le padding horizontal vit sur les
+  // onglets, pas sur l'écran.
   tabs: {
     flexDirection: 'row',
     gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
   },
   tab: {
     flex: 1,
@@ -204,6 +178,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   listWrap: {
+    flex: 1,
+  },
+  emptyFill: {
     flex: 1,
   },
   list: {
@@ -235,9 +212,11 @@ const styles = StyleSheet.create({
   },
   inlineError: {
     textAlign: 'center',
+    paddingHorizontal: Spacing.three,
   },
   footer: {
-    paddingVertical: Spacing.four,
+    position: 'absolute',
+    right: Spacing.three,
     alignItems: 'center',
   },
 });
