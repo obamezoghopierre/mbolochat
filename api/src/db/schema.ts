@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   type AnyPgColumn,
   boolean,
+  customType,
   date,
   doublePrecision,
   integer,
@@ -40,6 +41,17 @@ export const privacyVisibilityEnum = pgEnum('privacy_visibility', [
  * croissant des privilèges, à ne pas réordonner.
  */
 export const userRoleEnum = pgEnum('user_role', ['user', 'moderator', 'admin']);
+
+/**
+ * Vecteur de recherche plein texte PostgreSQL. Type non natif de Drizzle :
+ * la colonne est générée par la base (`GENERATED ALWAYS AS ... STORED`), donc
+ * jamais écrite par l'application.
+ */
+const tsvector = customType<{ data: string; driverData: string }>({
+  dataType() {
+    return 'tsvector';
+  },
+});
 
 export const users = pgTable('users', {
   id: text('id')
@@ -121,7 +133,13 @@ export const users = pgTable('users', {
   likeReceivedCount: integer('like_received_count').notNull().default(0),
   /** Dernier changement de `username` : sert de base au cooldown. */
   usernameUpdatedAt: timestamp('username_updated_at', { withTimezone: true }),
-});
+},
+  (table) => [
+    // Autocomplétion de la recherche par pseudo et par nom affiché.
+    index('users_username_trgm_idx').using('gin', sql`${table.username} gin_trgm_ops`),
+    index('users_display_name_trgm_idx').using('gin', sql`${table.displayName} gin_trgm_ops`),
+  ],
+);
 
 export const conversations = pgTable('conversations', {
   id: text('id')
@@ -1066,8 +1084,16 @@ export const publications = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     /** Suppression logique : les interactions restent auditables jusqu'à purge. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    /**
+     * Vecteur de recherche plein texte, tenu par PostgreSQL. La colonne n'est
+     * jamais écrite par l'application ; l'index GIN accompagne la migration.
+     */
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`to_tsvector('french', coalesce("caption", ''))`,
+    ),
   },
   (table) => [
+    index('publications_search_idx').using('gin', table.searchVector),
     uniqueIndex('publications_author_client_idx').on(table.authorId, table.clientId),
     index('publications_feed_idx').on(table.visibility, table.moderationStatus, table.createdAt),
     index('publications_hot_score_idx').on(table.hotScore),
@@ -1235,7 +1261,10 @@ export const hashtags = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index('hashtags_trend_idx').on(table.trendScore)],
+  (table) => [
+    index('hashtags_trend_idx').on(table.trendScore),
+    index('hashtags_tag_trgm_idx').using('gin', sql`${table.tag} gin_trgm_ops`),
+  ],
 );
 
 export const publicationHashtags = pgTable(

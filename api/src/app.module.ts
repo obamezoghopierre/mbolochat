@@ -15,6 +15,7 @@ import { InvitesModule } from './invites/invites.module.js';
 import { MediaModule } from './media/media.module.js';
 import { PresenceModule } from './presence/presence.module.js';
 import { PublicationsModule } from './publications/publications.module.js';
+import { SearchModule } from './search/search.module.js';
 import { SocialMediaModule } from './social-media/social-media.module.js';
 import { UploadsModule } from './uploads/uploads.module.js';
 import { UsersModule } from './users/users.module.js';
@@ -49,6 +50,7 @@ import { UsersModule } from './users/users.module.js';
     PresenceModule,
     PublicationsModule,
     SocialMediaModule,
+    SearchModule,
     ChatModule,
     CallsModule,
   ],

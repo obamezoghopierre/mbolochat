@@ -1,8 +1,9 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { publicationReactions, publications, users } from '../db/schema.js';
+import { visiblePublicationConditions } from '../social/publication-visibility.js';
 import type { AuthorCard, PublicationView } from '../publications/publications.service.js';
 
 export type FeedTab = 'for-you' | 'following' | 'local';
@@ -24,11 +25,11 @@ export interface FeedPage {
   nextCursor: string | null;
 }
 
-function encodeFeedCursor(hotScore: number, id: string): string {
+export function encodeFeedCursor(hotScore: number, id: string): string {
   return Buffer.from(`${hotScore}|${id}`, 'utf8').toString('base64url');
 }
 
-function decodeFeedCursor(cursor: string): { hotScore: number; id: string } {
+export function decodeFeedCursor(cursor: string): { hotScore: number; id: string } {
   const raw = Buffer.from(cursor, 'base64url').toString('utf8');
   const separator = raw.lastIndexOf('|');
   const hotScore = Number(raw.slice(0, separator));
@@ -78,22 +79,7 @@ export class FeedService {
         and f.status = 'accepted'
     )`;
 
-    const conditions = [
-      isNull(publications.deletedAt),
-      inArray(publications.moderationStatus, ['pending', 'approved']),
-      // Visibilité : public, abonnés acceptés, ou l'auteur lui-même.
-      sql`(
-        ${publications.visibility} = 'public'
-        or (${publications.visibility} = 'followers' and ${followsAuthor})
-        or ${publications.authorId} = ${viewerId}
-      )`,
-      sql`not exists (
-        select 1 from blocks b
-        where (b.blocker_id = ${viewerId} and b.blocked_id = ${publications.authorId})
-           or (b.blocker_id = ${publications.authorId} and b.blocked_id = ${viewerId})
-      )`,
-    ];
-
+    const conditions = visiblePublicationConditions(viewerId);
     if (tab === 'following') {
       conditions.push(followsAuthor);
     }
