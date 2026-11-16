@@ -182,9 +182,17 @@ export class FollowsService {
     };
   }
 
+  /** Statut d'abonnement du visiteur vers la cible, sans les compteurs. */
+  async followStatusOf(
+    followerId: string,
+    targetId: string,
+  ): Promise<'none' | 'pending' | 'accepted'> {
+    const row = await this.getRow(followerId, targetId);
+    return row?.status ?? 'none';
+  }
+
   /** Demandes en attente reçues par le propriétaire (compte privé). */
-  async listRequests(ownerId: string): Promise<ConnectionUser[]> {
-    const rows = await this.db
+  async listRequests(ownerId: string): Promise<ConnectionUser[]> {    const rows = await this.db
       .select(this.connectionFields())
       .from(follows)
       .innerJoin(users, eq(users.id, follows.followerId))

@@ -6,13 +6,21 @@ import {
   conversationMembers,
   messages,
   pushTokens,
+  userSocialSettings,
   users,
   type User,
 } from '../db/schema.js';
 import { calculateAge, isMinor, isPlausibleBirthday } from './age.js';
+import { FollowsService } from '../follows/follows.service.js';
 import { GeocodingService } from './geocoding.service.js';
 import { evaluateCityUpdate } from './location-policy.js';
-import { canSee, type ViewerRelation, type Visibility } from './visibility.js';
+import {
+  canInteract,
+  canSee,
+  canViewProfile,
+  type ViewerRelation,
+  type Visibility,
+} from './visibility.js';
 
 export interface PublicUser {
   id: string;
@@ -94,6 +102,26 @@ export interface UserProfile extends PublicUserView {
     /** Nombre de discussions partagées avec le visiteur (toutes si c'est son profil). */
     conversations: number;
   };
+  /** Identité sociale (ADR-0001) : agrégats et relation du visiteur. */
+  social: {
+    verified: boolean;
+    privateAccount: boolean;
+    followerCount: number;
+    followingCount: number;
+    publicationCount: number;
+    reelCount: number;
+    /** `none`, `pending` (demande envoyée à un compte privé) ou `accepted`. */
+    followStatus: 'none' | 'pending' | 'accepted';
+    /** Ce compte suit-il le visiteur (indicateur « suit en retour ») ? */
+    followsViewer: boolean;
+    /**
+     * Le visiteur peut-il voir le contenu social (publications, stories) ?
+     * Faux pour un compte privé dont il n'est pas abonné accepté.
+     */
+    contentVisible: boolean;
+    /** Le visiteur peut-il commenter / mentionner / reposter ? */
+    canInteract: boolean;
+  };
 }
 
 export interface UserSettings {
@@ -142,6 +170,7 @@ export class UsersService {
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly geocoding: GeocodingService,
+    private readonly follows: FollowsService,
   ) {}
 
   async findById(id: string): Promise<User | undefined> {
@@ -625,6 +654,21 @@ export class UsersService {
     const view = isMe ? toPublicUser(user) : toPublicUserView(user, relation);
     const canSeeProfile = isMe || canSee(user.profileVisibility, relation);
 
+    // Faits sociaux : abonnement, blocage, rôle. `isMe` court-circuite la lecture,
+    // un compte n'a jamais besoin d'être son propre abonné.
+    const socialFacts = isMe
+      ? { viewerId, isFollower: true, isFollowedBy: true, blocked: false }
+      : await this.follows.viewerFacts(viewerId, user.id);
+    const contentVisible =
+      isMe ||
+      (canSeeProfile &&
+        canViewProfile({ userId: user.id, privateAccount: user.privateAccount }, socialFacts));
+    const [socialSettings] = await this.db
+      .select({ commentPermission: userSocialSettings.commentPermission })
+      .from(userSocialSettings)
+      .where(eq(userSocialSettings.userId, user.id));
+    const followStatus = isMe ? 'none' : await this.follows.followStatusOf(viewerId, user.id);
+
     const [messagesRow] = await this.db
       .select({ value: count() })
       .from(messages)
@@ -676,6 +720,21 @@ export class UsersService {
       stats: {
         messages: messagesRow?.value ?? 0,
         conversations: conversationsCount,
+      },
+      social: {
+        verified: user.verified,
+        privateAccount: user.privateAccount,
+        followerCount: user.followerCount,
+        followingCount: user.followingCount,
+        publicationCount: user.publicationCount,
+        reelCount: user.reelCount,
+        followStatus,
+        followsViewer: isMe ? false : socialFacts.isFollowedBy,
+        contentVisible,
+        canInteract:
+          isMe ||
+          (contentVisible &&
+            canInteract(socialSettings?.commentPermission ?? 'everyone', socialFacts)),
       },
     };
   }
