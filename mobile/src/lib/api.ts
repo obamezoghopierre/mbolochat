@@ -11,6 +11,8 @@ import type {
   ConversationSearchHit,
   ConversationSummary,
   DeviceSession,
+  FeedPage,
+  FeedTab,
   ForgotPasswordResult,
   Gender,
   LocationUpdateResult,
@@ -23,6 +25,7 @@ import type {
   PresenceSettings,
   PresenceSnapshot,
   ResetPasswordResult,
+  SocialReaction,
   UploadResult,
   User,
   UserProfile,
@@ -149,6 +152,30 @@ export const api = {
       body,
       headers: deviceHeaders(),
     });
+  },
+
+  /** Fil social : Pour toi, Abonnements ou Local, avec curseur. */
+  feed(token: string, tab: FeedTab, cursor?: string) {
+    const query = new URLSearchParams({ tab, limit: '20' });
+    if (cursor) {
+      query.set('cursor', cursor);
+    }
+    return request<FeedPage>(`/feed?${query.toString()}`, { token });
+  },
+
+  /** Réaction à une publication (une seule par compte, type modifiable). */
+  reactToPublication(token: string, publicationId: string, kind: SocialReaction = 'like') {
+    return request<{ reaction: SocialReaction; likeCount: number }>(
+      `/publications/${publicationId}/like`,
+      { method: 'POST', token, body: { kind } },
+    );
+  },
+
+  removeReaction(token: string, publicationId: string) {
+    return request<{ reaction: null; likeCount: number }>(
+      `/publications/${publicationId}/like`,
+      { method: 'DELETE', token },
+    );
   },
 
   refresh(refreshToken: string) {

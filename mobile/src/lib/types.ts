@@ -428,3 +428,45 @@ export interface ConversationSearchHit {
   senderName: string;
 }
 
+/** Carte d'auteur d'une publication : aucune donnée personnelle. */
+export interface SocialAuthor {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  verified: boolean;
+}
+
+export type SocialReaction = 'like' | 'love' | 'fire' | 'clap';
+
+export type SocialVisibility = 'public' | 'followers' | 'private';
+
+/** Publication du fil social (posts et reels unifiés côté API). */
+export interface FeedPost {
+  id: string;
+  kind: 'post' | 'reel';
+  format: 'text' | 'image' | 'carousel' | 'video';
+  caption: string | null;
+  visibility: SocialVisibility;
+  createdAt: string;
+  author: SocialAuthor;
+  counters: {
+    likes: number;
+    comments: number;
+    reposts: number;
+    saves: number;
+    views: number;
+  };
+  viewer: {
+    reaction: SocialReaction | null;
+    /** Le visiteur suit l'auteur (abonnement accepté). */
+    followingAuthor: boolean;
+  };
+}
+
+export interface FeedPage {
+  items: FeedPost[];
+  nextCursor: string | null;
+}
+
+export type FeedTab = 'for-you' | 'following' | 'local';
