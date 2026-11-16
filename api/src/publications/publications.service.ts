@@ -5,12 +5,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { ConfigService } from '@nestjs/config';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.js';
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   comments,
+  mediaAssets,
+  publicationMedia,
   publicationReactions,
   publications,
   userSocialSettings,
@@ -21,6 +24,7 @@ import { ModerationService } from '../moderation/moderation.service.js';
 import { SocialNotificationsService } from '../social-notifications/social-notifications.service.js';
 import { canInteract, canViewPublication, type SocialViewer } from '../users/visibility.js';
 import type { CreateCommentDto, ReactDto } from './dto/interactions.dto.js';
+import { loadPublicationMedia, type PublicationMediaView } from './publication-media.js';
 import type { CreatePublicationDto } from './dto/create-publication.dto.js';
 
 /** Carte d'auteur réduite au strict public : aucune donnée personnelle. */
@@ -34,6 +38,8 @@ export interface AuthorCard {
 
 export interface PublicationView {
   id: string;
+  /** Médias attachés, dans l'ordre du carrousel. */
+  media: PublicationMediaView[];
   kind: 'post' | 'reel';
   format: 'text' | 'image' | 'carousel' | 'video';
   caption: string | null;
@@ -92,27 +98,73 @@ export class PublicationsService {
     private readonly follows: FollowsService,
     private readonly notifications: SocialNotificationsService,
     private readonly moderation: ModerationService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(authorId: string, dto: CreatePublicationDto): Promise<PublicationView> {
-    const caption = dto.caption.trim();
-    if (caption.length === 0) {
-      throw new BadRequestException('La légende ne peut pas être vide.');
+    const assetIds = dto.assetIds ?? [];
+    if (new Set(assetIds).size !== assetIds.length) {
+      throw new BadRequestException('Média fourni deux fois.');
+    }
+    const caption = (dto.caption ?? '').trim();
+    if (caption.length === 0 && assetIds.length === 0) {
+      throw new BadRequestException('La légende ne peut pas être vide sans média.');
     }
     const kind = dto.kind ?? 'post';
     // Auto-flag : un contenu qui contient un mot bloqué part en revue humaine
     // au lieu d'être publié directement.
-    const flagged = await this.moderation.hasBlockedWord(caption);
+    const flagged = caption.length > 0 ? await this.moderation.hasBlockedWord(caption) : false;
 
     const inserted = await this.db.transaction(async (tx) => {
+      const assets =
+        assetIds.length === 0
+          ? []
+          : await tx
+              .select()
+              .from(mediaAssets)
+              .where(
+                and(
+                  inArray(mediaAssets.id, assetIds),
+                  eq(mediaAssets.ownerId, authorId),
+                  eq(mediaAssets.status, 'ready'),
+                  isNull(mediaAssets.deletedAt),
+                ),
+              );
+      if (assets.length !== assetIds.length) {
+        throw new BadRequestException('Média introuvable ou pas encore prêt.');
+      }
+      // L'ordre du carrousel est celui fourni par le client.
+      const ordered = assetIds.map(
+        (assetId) => assets.find((asset) => asset.id === assetId)!,
+      );
+      const kinds = new Set(ordered.map((asset) => asset.kind));
+      if (kinds.size > 1) {
+        throw new BadRequestException('Une publication ne mélange pas images et vidéos.');
+      }
+      const mediaKind = ordered[0]?.kind;
+      if (mediaKind === 'video' && ordered.length > 1) {
+        throw new BadRequestException('Une seule vidéo par publication.');
+      }
+      if (mediaKind === 'audio') {
+        throw new BadRequestException('Le son seul n’est pas une publication.');
+      }
+      const format: 'text' | 'image' | 'carousel' | 'video' =
+        mediaKind === 'video'
+          ? 'video'
+          : ordered.length > 1
+            ? 'carousel'
+            : ordered.length === 1
+              ? 'image'
+              : 'text';
+
       const now = new Date();
       const [row] = await tx
         .insert(publications)
         .values({
           authorId,
           kind,
-          format: dto.format ?? 'text',
-          caption,
+          format,
+          caption: caption.length > 0 ? caption : null,
           visibility: dto.visibility ?? 'public',
           moderationStatus: flagged ? 'flagged' : 'pending',
           clientId: dto.clientId,
@@ -125,6 +177,15 @@ export class PublicationsService {
 
       if (!row) {
         return null;
+      }
+      if (ordered.length > 0) {
+        await tx.insert(publicationMedia).values(
+          ordered.map((asset, position) => ({
+            publicationId: row.id,
+            assetId: asset.id,
+            position,
+          })),
+        );
       }
       await tx
         .update(users)
@@ -507,6 +568,11 @@ export class PublicationsService {
       .select(this.authorFields())
       .from(users)
       .where(eq(users.id, row.authorId));
+    const mediaMap = await loadPublicationMedia(
+      this.db,
+      [row.id],
+      this.config.get<string>('SOCIAL_S3_PUBLIC_BASE_URL') ?? null,
+    );
     const [reaction] = await this.db
       .select({ kind: publicationReactions.kind })
       .from(publicationReactions)
@@ -519,6 +585,7 @@ export class PublicationsService {
 
     return {
       id: row.id,
+      media: mediaMap.get(row.id) ?? [],
       kind: row.kind,
       format: row.format,
       caption: row.caption,

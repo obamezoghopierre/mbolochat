@@ -1,8 +1,10 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { publicationReactions, publications, users } from '../db/schema.js';
+import { loadPublicationMedia } from '../publications/publication-media.js';
 import { visiblePublicationConditions } from '../social/publication-visibility.js';
 import type { AuthorCard, PublicationView } from '../publications/publications.service.js';
 
@@ -50,7 +52,10 @@ export function decodeFeedCursor(cursor: string): { hotScore: number; id: string
  */
 @Injectable()
 export class FeedService {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Database,
+    private readonly config: ConfigService,
+  ) {}
 
   async list(
     viewerId: string,
@@ -138,9 +143,15 @@ export class FeedService {
 
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
+    const media = await loadPublicationMedia(
+      this.db,
+      page.map((row) => row.id),
+      this.config.get<string>('SOCIAL_S3_PUBLIC_BASE_URL') ?? null,
+    );
     return {
       items: page.map((row) => ({
         id: row.id,
+        media: media.get(row.id) ?? [],
         kind: row.kind,
         format: row.format,
         caption: row.caption,
