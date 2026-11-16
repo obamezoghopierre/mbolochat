@@ -1,5 +1,9 @@
 # Travail restant — MboloChat
 
+> **Priorité P0 : la fusion avec Mbolo prime sur le backlog ci-dessous.**
+> Feuille de route : [`PLAN-FUSION-MBOLO.md`](./PLAN-FUSION-MBOLO.md).
+> Les éléments non bloquants de ce document sont reportés après les jalons de la fusion.
+
 État au 31 octobre 2026, après le commit `feat: messagerie et appels de groupe, moteur d'appel unifié`.
 
 ## 1. Vérification matérielle des appels vocaux (bloquant avant la suite)
