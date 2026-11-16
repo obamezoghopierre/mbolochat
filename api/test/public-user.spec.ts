@@ -43,6 +43,15 @@ function user(overrides: Partial<User> = {}): User {
     quietUtcOffsetMinutes: 0,
     deletedAt: null,
     createdAt: new Date('2026-01-01T00:00:00Z'),
+    role: 'user',
+    verified: false,
+    privateAccount: false,
+    followerCount: 0,
+    followingCount: 0,
+    publicationCount: 0,
+    reelCount: 0,
+    likeReceivedCount: 0,
+    usernameUpdatedAt: null,
     ...overrides,
   };
 }

@@ -267,6 +267,13 @@
       "when": 1794681077570,
       "tag": "0037_message_send_options",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794831762108,
+      "tag": "0038_social_socle",
+      "breakpoints": true
     }
   ]
 }

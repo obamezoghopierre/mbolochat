@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   boolean,
   date,
   doublePrecision,
@@ -32,6 +33,13 @@ export const privacyVisibilityEnum = pgEnum('privacy_visibility', [
   'contacts',
   'nobody',
 ]);
+
+/**
+ * Rôle du compte dans le produit social. `moderator` et `admin` donnent accès au
+ * back-office (voir `AdminGuard`, phase 1) ; l'ordre du tableau est l'ordre
+ * croissant des privilèges, à ne pas réordonner.
+ */
+export const userRoleEnum = pgEnum('user_role', ['user', 'moderator', 'admin']);
 
 export const users = pgTable('users', {
   id: text('id')
@@ -94,6 +102,25 @@ export const users = pgTable('users', {
   /** Suppression demandée : anonymisation après 30 jours, annulable avant. */
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * Identité sociale (ADR-0001). Le compte reste le même : le rôle et les
+   * compteurs vivent sur `users`, pas dans une table de profil séparée, pour
+   * qu'une seule jointure suffise à autoriser une action ou à rendre un profil.
+   */
+  role: userRoleEnum('role').notNull().default('user'),
+  /** Badge de vérification, attribué manuellement par la modération. */
+  verified: boolean('verified').notNull().default(false),
+  /** Compte privé : les abonnements passent par une demande (`follows.status`). */
+  privateAccount: boolean('private_account').notNull().default(false),
+  /** Compteurs dénormalisés, écrits uniquement par l'API en transaction. */
+  followerCount: integer('follower_count').notNull().default(0),
+  followingCount: integer('following_count').notNull().default(0),
+  publicationCount: integer('publication_count').notNull().default(0),
+  reelCount: integer('reel_count').notNull().default(0),
+  /** Total de réactions reçues sur les publications de ce compte. */
+  likeReceivedCount: integer('like_received_count').notNull().default(0),
+  /** Dernier changement de `username` : sert de base au cooldown. */
+  usernameUpdatedAt: timestamp('username_updated_at', { withTimezone: true }),
 });
 
 export const conversations = pgTable('conversations', {
@@ -708,6 +735,121 @@ export const e2eeOneTimePrekeys = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// Social (ADR-0001) — plan de données séparé du chat E2EE.
+// Aucune table de cette section ne référence `uploads`, `messages` ou les
+// enveloppes chiffrées : la séparation des plans est structurelle.
+// ---------------------------------------------------------------------------
+
+/** Qui peut interagir (commenter, mentionner, reposter) avec un compte. */
+export const socialInteractorEnum = pgEnum('social_interactor', [
+  'everyone',
+  'followers',
+  'following',
+  'nobody',
+]);
+
+/** `pending` = demande d'abonnement à un compte privé, en attente d'accord. */
+export const followStatusEnum = pgEnum('follow_status', ['accepted', 'pending']);
+
+/** Posts et reels partagent le même agrégat ; seul le rendu diffère. */
+export const publicationKindEnum = pgEnum('publication_kind', ['post', 'reel']);
+
+export const publicationFormatEnum = pgEnum('publication_format', [
+  'text',
+  'image',
+  'carousel',
+  'video',
+]);
+
+export const publicationVisibilityEnum = pgEnum('publication_visibility', [
+  'public',
+  'followers',
+  'private',
+]);
+
+/** Statut de modération, filtré dans les requêtes de feed et de détail. */
+export const moderationStatusEnum = pgEnum('moderation_status', [
+  'pending',
+  'approved',
+  'flagged',
+  'removed',
+]);
+
+export const reactionKindEnum = pgEnum('reaction_kind', ['like', 'love', 'fire', 'clap']);
+
+export const storyAudienceEnum = pgEnum('story_audience', ['everyone', 'followers']);
+
+export const mediaKindEnum = pgEnum('media_kind', ['image', 'video', 'audio']);
+
+export const mediaStatusEnum = pgEnum('media_status', [
+  'pending',
+  'uploaded',
+  'processing',
+  'ready',
+  'failed',
+]);
+
+export const mediaJobKindEnum = pgEnum('media_job_kind', [
+  'image_variants',
+  'video_poster',
+  'video_transcode',
+  'cleanup',
+]);
+
+export const mediaJobStatusEnum = pgEnum('media_job_status', [
+  'pending',
+  'running',
+  'done',
+  'failed',
+]);
+
+export const socialNotificationTypeEnum = pgEnum('social_notification_type', [
+  'like',
+  'comment',
+  'reply',
+  'mention',
+  'repost',
+  'follow',
+  'follow_request',
+  'follow_accepted',
+  'story_reply',
+  'moderation',
+]);
+
+export const reportTargetTypeEnum = pgEnum('report_target_type', [
+  'publication',
+  'comment',
+  'story',
+  'user',
+]);
+
+export const reportReasonEnum = pgEnum('report_reason', [
+  'spam',
+  'harassment',
+  'hate',
+  'nudity',
+  'violence',
+  'misinformation',
+  'other',
+]);
+
+export const reportStatusEnum = pgEnum('report_status', [
+  'open',
+  'reviewing',
+  'resolved',
+  'dismissed',
+]);
+
+export const moderationActionEnum = pgEnum('moderation_action', [
+  'hide',
+  'remove',
+  'restore',
+  'warn',
+  'suspend',
+  'dismiss',
+]);
+
 export type User = typeof users.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
@@ -718,3 +860,639 @@ export type PushToken = typeof pushTokens.$inferSelect;
 export type Upload = typeof uploads.$inferSelect;
 export type MessageEvent = typeof messageEvents.$inferSelect;
 export type GeoCityCache = typeof geoCityCache.$inferSelect;
+
+/**
+ * Préférences sociales, séparées des réglages de confidentialité du chat
+ * (`users.write_permission`, `call_permission`…) : un compte peut être ouvert
+ * aux commentaires sans changer qui peut lui écrire.
+ */
+export const userSocialSettings = pgTable('user_social_settings', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  /** Qui peut commenter les publications. */
+  commentPermission: socialInteractorEnum('comment_permission').notNull().default('everyone'),
+  /** Qui peut mentionner le compte dans une publication ou un commentaire. */
+  mentionPermission: socialInteractorEnum('mention_permission').notNull().default('everyone'),
+  /** Qui peut reposter le contenu du compte. */
+  repostPermission: socialInteractorEnum('repost_permission').notNull().default('everyone'),
+  /** Audience par défaut des stories. */
+  storyAudience: storyAudienceEnum('story_audience').notNull().default('followers'),
+  notifyLikes: boolean('notify_likes').notNull().default(true),
+  notifyComments: boolean('notify_comments').notNull().default(true),
+  notifyFollows: boolean('notify_follows').notNull().default(true),
+  notifyMentions: boolean('notify_mentions').notNull().default(true),
+  notifyReposts: boolean('notify_reposts').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Graphe social orienté : `followerId` suit `followingId`.
+ *
+ * La clé primaire composite rend un abonnement unique par couple. Pour un compte
+ * privé, la ligne naît `pending` et passe à `accepted` sur approbation ; un
+ * compte public écrit directement `accepted`.
+ */
+export const follows = pgTable(
+  'follows',
+  {
+    followerId: text('follower_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    followingId: text('following_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    status: followStatusEnum('status').notNull().default('accepted'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    acceptedAt: timestamp('accepted_at', { withTimezone: true }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.followerId, table.followingId] }),
+    index('follows_following_status_idx').on(table.followingId, table.status),
+    index('follows_follower_status_idx').on(table.followerId, table.status),
+  ],
+);
+
+/** Variante générée d'un média social (vignette, poster, rendu plus léger). */
+export interface MediaVariant {
+  /** Libellé technique (« thumb », « poster », « 720p »), stable pour le client. */
+  label: string;
+  width: number;
+  height: number;
+  /** URL publique du CDN, dérivée de la clé de stockage. */
+  url: string;
+  sizeBytes: number;
+}
+
+/**
+ * Objet média du réseau social (S3/R2), distinct de `uploads` (chat).
+ *
+ * Le client ne crée jamais la ligne : `POST /media/uploads` la crée `pending` et
+ * rend une URL présignée ; la confirmation (`complete`) vérifie les octets réels
+ * avant `uploaded`, puis le worker média passe à `processing` / `ready`.
+ * Une publication ne peut référencer qu'un asset `ready` appartenant à l'auteur.
+ */
+export const mediaAssets = pgTable(
+  'media_assets',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Bucket logique de la configuration stockage (« social-public », …). */
+    bucket: text('bucket').notNull(),
+    /** Clé de l'objet, immuable : jamais réécrite pour un même asset. */
+    storageKey: text('storage_key').notNull(),
+    kind: mediaKindEnum('kind').notNull(),
+    mime: text('mime').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    /** Durée d'une vidéo ou d'un son, en millisecondes. */
+    durationMs: integer('duration_ms'),
+    status: mediaStatusEnum('status').notNull().default('pending'),
+    /** Variantes générées par le worker (`sharp` / `ffmpeg`). */
+    variants: jsonb('variants').$type<MediaVariant[]>(),
+    /** Empreinte SHA-256 calculée côté serveur à la confirmation. */
+    checksum: text('checksum'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Suppression logique avant purge de l'objet S3 et du cache CDN. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('media_assets_storage_key_idx').on(table.storageKey),
+    index('media_assets_owner_created_idx').on(table.ownerId, table.createdAt),
+    index('media_assets_status_idx').on(table.status, table.updatedAt),
+  ],
+);
+
+/**
+ * File de travail du pipeline média, en PostgreSQL (pas de Redis en v1).
+ *
+ * Reprend le motif de `message_events` : bail `locked_until` + `claim_token` de
+ * fencing, pour qu'un worker dont le bail a expiré ne puisse pas clore un job
+ * repris par un autre. Les workers prennent les lignes avec
+ * `FOR UPDATE SKIP LOCKED` (index `status, next_attempt_at`).
+ */
+export const mediaJobs = pgTable(
+  'media_jobs',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    assetId: text('asset_id')
+      .notNull()
+      .references(() => mediaAssets.id, { onDelete: 'cascade' }),
+    kind: mediaJobKindEnum('kind').notNull(),
+    status: mediaJobStatusEnum('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+    claimToken: text('claim_token'),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('media_jobs_pending_idx').on(table.status, table.nextAttemptAt),
+    index('media_jobs_asset_idx').on(table.assetId),
+  ],
+);
+
+/**
+ * Catalogue des sons de reels. Le son est un média audio appartenant au compte
+ * qui l'a déposé ; `usageCount` est tenu par l'API, jamais par le client.
+ */
+export const sounds = pgTable(
+  'sounds',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text('title').notNull(),
+    assetId: text('asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+    /** Auteur du son, `null` pour un son de catalogue ou orphelin. */
+    createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    durationMs: integer('duration_ms'),
+    usageCount: integer('usage_count').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('sounds_usage_idx').on(table.usageCount),
+    index('sounds_created_by_idx').on(table.createdById),
+  ],
+);
+
+/**
+ * Publication unifiée : post ou reel.
+ *
+ * Un seul agrégat pour les deux kinds (ADR-0001 §2.2) : interactions, compteurs,
+ * commentaires et modération sont écrits une fois. `clientId` rend la création
+ * idempotente par auteur ; `hotScore` est alimenté par le worker de classement et
+ * n'est jamais accepté depuis le client.
+ */
+export const publications = pgTable(
+  'publications',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: publicationKindEnum('kind').notNull().default('post'),
+    format: publicationFormatEnum('format').notNull().default('text'),
+    /** Légende / texte du post. Le média est décrit par `publication_media`. */
+    caption: text('caption'),
+    visibility: publicationVisibilityEnum('visibility').notNull().default('public'),
+    moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
+    /** Son utilisé par un reel, facultatif. */
+    soundId: text('sound_id').references(() => sounds.id, { onDelete: 'set null' }),
+    /** Score de classement recalculé hors ligne, jamais fourni par le client. */
+    hotScore: integer('hot_score').notNull().default(0),
+    /** Compteurs dénormalisés, incrémentés en transaction SQL uniquement. */
+    likeCount: integer('like_count').notNull().default(0),
+    commentCount: integer('comment_count').notNull().default(0),
+    repostCount: integer('repost_count').notNull().default(0),
+    saveCount: integer('save_count').notNull().default(0),
+    viewCount: integer('view_count').notNull().default(0),
+    /** Clé d'idempotence fournie par l'appareil, unique par auteur. */
+    clientId: text('client_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Suppression logique : les interactions restent auditables jusqu'à purge. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('publications_author_client_idx').on(table.authorId, table.clientId),
+    index('publications_feed_idx').on(table.visibility, table.moderationStatus, table.createdAt),
+    index('publications_hot_score_idx').on(table.hotScore),
+    index('publications_author_created_idx').on(table.authorId, table.createdAt),
+  ],
+);
+
+/** Médias attachés à une publication, ordonnés (carrousel). */
+export const publicationMedia = pgTable(
+  'publication_media',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    assetId: text('asset_id')
+      .notNull()
+      .references(() => mediaAssets.id, { onDelete: 'restrict' }),
+    /** Position dans le carrousel, à partir de 0. */
+    position: integer('position').notNull().default(0),
+    /** Texte alternatif saisi par l'auteur (accessibilité). */
+    altText: text('alt_text'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('publication_media_position_idx').on(table.publicationId, table.position),
+    index('publication_media_asset_idx').on(table.assetId),
+  ],
+);
+
+/** Commentaire ou réponse (`parentId`) à une publication. */
+export const comments = pgTable(
+  'comments',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Réponse à un autre commentaire ; `null` pour un commentaire racine. */
+    parentId: text('parent_id').references((): AnyPgColumn => comments.id, {
+      onDelete: 'cascade',
+    }),
+    body: text('body').notNull(),
+    likeCount: integer('like_count').notNull().default(0),
+    replyCount: integer('reply_count').notNull().default(0),
+    moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
+    /** Clé d'idempotence fournie par l'appareil, unique par auteur. */
+    clientId: text('client_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('comments_author_client_idx').on(table.authorId, table.clientId),
+    index('comments_publication_created_idx').on(table.publicationId, table.createdAt),
+    index('comments_parent_idx').on(table.parentId),
+  ],
+);
+
+/** J'aime sur un commentaire (PK composite : un seul par couple). */
+export const commentLikes = pgTable(
+  'comment_likes',
+  {
+    commentId: text('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
+);
+
+/** Réaction à une publication : une seule par utilisateur, type modifiable. */
+export const publicationReactions = pgTable(
+  'publication_reactions',
+  {
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: reactionKindEnum('kind').notNull().default('like'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.userId] }),
+    index('publication_reactions_user_idx').on(table.userId),
+  ],
+);
+
+/** Publication enregistrée par un utilisateur. */
+export const publicationSaves = pgTable(
+  'publication_saves',
+  {
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.userId] }),
+    index('publication_saves_user_idx').on(table.userId),
+  ],
+);
+
+/** Repost d'une publication par un utilisateur. */
+export const publicationReposts = pgTable(
+  'publication_reposts',
+  {
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.userId] }),
+    index('publication_reposts_user_idx').on(table.userId),
+  ],
+);
+
+/** Vue unique par utilisateur (une ligne à vie, pas une vue par affichage). */
+export const publicationViews = pgTable(
+  'publication_views',
+  {
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.userId] }),
+    index('publication_views_user_idx').on(table.userId),
+  ],
+);
+
+/** Hashtag normalisé (minuscules, sans `#`), unique dans le catalogue. */
+export const hashtags = pgTable(
+  'hashtags',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    tag: text('tag').notNull().unique(),
+    usageCount: integer('usage_count').notNull().default(0),
+    /** Score de tendance recalculé par worker, jamais fourni par le client. */
+    trendScore: integer('trend_score').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('hashtags_trend_idx').on(table.trendScore)],
+);
+
+export const publicationHashtags = pgTable(
+  'publication_hashtags',
+  {
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    hashtagId: text('hashtag_id')
+      .notNull()
+      .references(() => hashtags.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.hashtagId] }),
+    index('publication_hashtags_tag_idx').on(table.hashtagId),
+  ],
+);
+
+/**
+ * Story 24 h. L'audience et les exclusions sont vérifiées en SQL ; les vues
+ * uniques vivent dans `story_views`.
+ */
+export const stories = pgTable(
+  'stories',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    authorId: text('author_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    assetId: text('asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+    caption: text('caption'),
+    audience: storyAudienceEnum('audience').notNull().default('followers'),
+    /** Expiration fixée à la création (`now() + 24 h`), jamais prolongée. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('stories_author_expires_idx').on(table.authorId, table.expiresAt),
+    index('stories_expires_idx').on(table.expiresAt),
+  ],
+);
+
+export const storyViews = pgTable(
+  'story_views',
+  {
+    storyId: text('story_id')
+      .notNull()
+      .references(() => stories.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.storyId, table.userId] }),
+    index('story_views_user_idx').on(table.userId),
+  ],
+);
+
+/** Comptes explicitement exclus d'une story (en plus de l'audience). */
+export const storyExcludedUsers = pgTable(
+  'story_excluded_users',
+  {
+    storyId: text('story_id')
+      .notNull()
+      .references(() => stories.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.storyId, table.userId] })],
+);
+
+/** Story à la une, conservée après l'expiration des stories d'origine. */
+export const highlights = pgTable(
+  'highlights',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    /** Couverture choisie ; les assets restent vivants tant qu'un highlight les porte. */
+    coverAssetId: text('cover_asset_id').references(() => mediaAssets.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('highlights_owner_idx').on(table.ownerId, table.createdAt)],
+);
+
+/**
+ * Élément d'un highlight. `assetId` est copié depuis la story : c'est lui qui
+ * survit à l'expiration et à la purge de la story d'origine.
+ */
+export const highlightItems = pgTable(
+  'highlight_items',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    highlightId: text('highlight_id')
+      .notNull()
+      .references(() => highlights.id, { onDelete: 'cascade' }),
+    assetId: text('asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+    /** Story d'origine, conservée pour l'audit ; `null` si elle est purgée. */
+    sourceStoryId: text('source_story_id').references(() => stories.id, {
+      onDelete: 'set null',
+    }),
+    position: integer('position').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('highlight_items_position_idx').on(table.highlightId, table.position),
+    index('highlight_items_story_idx').on(table.sourceStoryId),
+  ],
+);
+
+/**
+ * Notification sociale, créée exclusivement côté serveur dans la transaction de
+ * l'interaction. `dedupeKey` (ex. `like:<publication>:<user>`) rend le rejeu
+ * inoffensif ; les préférences sont lues dans `user_social_settings` au moment
+ * de l'envoi du push.
+ */
+export const socialNotifications = pgTable(
+  'social_notifications',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** Destinataire. */
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Auteur de l'action ; `null` pour une notification de modération. */
+    actorId: text('actor_id').references(() => users.id, { onDelete: 'cascade' }),
+    type: socialNotificationTypeEnum('type').notNull(),
+    publicationId: text('publication_id').references(() => publications.id, {
+      onDelete: 'cascade',
+    }),
+    commentId: text('comment_id').references(() => comments.id, { onDelete: 'cascade' }),
+    storyId: text('story_id').references(() => stories.id, { onDelete: 'cascade' }),
+    /** Clé de déduplication, unique par destinataire. */
+    dedupeKey: text('dedupe_key').notNull(),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('social_notifications_dedupe_idx').on(table.userId, table.dedupeKey),
+    index('social_notifications_user_created_idx').on(table.userId, table.createdAt),
+    index('social_notifications_unread_idx').on(table.userId, table.readAt),
+  ],
+);
+
+/** Signalement d'un contenu ou d'un compte ; un seul par rapporteur et cible. */
+export const reports = pgTable(
+  'reports',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    reporterId: text('reporter_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    targetType: reportTargetTypeEnum('target_type').notNull(),
+    /** Identifiant de la cible, selon `targetType` (pas de FK polymorphe). */
+    targetId: text('target_id').notNull(),
+    reason: reportReasonEnum('reason').notNull(),
+    details: text('details'),
+    status: reportStatusEnum('status').notNull().default('open'),
+    resolvedById: text('resolved_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('reports_reporter_target_idx').on(
+      table.reporterId,
+      table.targetType,
+      table.targetId,
+    ),
+    index('reports_queue_idx').on(table.status, table.createdAt),
+    index('reports_target_idx').on(table.targetType, table.targetId),
+  ],
+);
+
+/**
+ * Journal d'audit de la modération, append-only : une ligne par décision.
+ * Aucune mise à jour ni suppression applicative.
+ */
+export const moderationActions = pgTable(
+  'moderation_actions',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    reportId: text('report_id').references(() => reports.id, { onDelete: 'set null' }),
+    moderatorId: text('moderator_id').references(() => users.id, { onDelete: 'set null' }),
+    targetType: reportTargetTypeEnum('target_type').notNull(),
+    targetId: text('target_id').notNull(),
+    action: moderationActionEnum('action').notNull(),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('moderation_actions_target_idx').on(table.targetType, table.targetId),
+    index('moderation_actions_created_idx').on(table.createdAt),
+  ],
+);
+
+/** Motif bloqué par la modération (auto-flag), insensible à la casse. */
+export const blockedWords = pgTable(
+  'blocked_words',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    /** Forme normalisée (minuscules, sans accents) et unique. */
+    word: text('word').notNull().unique(),
+    active: boolean('active').notNull().default(true),
+    createdById: text('created_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('blocked_words_active_idx').on(table.active)],
+);
+
+export type Follow = typeof follows.$inferSelect;
+export type UserSocialSettings = typeof userSocialSettings.$inferSelect;
+export type MediaAsset = typeof mediaAssets.$inferSelect;
+export type MediaJob = typeof mediaJobs.$inferSelect;
+export type Sound = typeof sounds.$inferSelect;
+export type Publication = typeof publications.$inferSelect;
+export type PublicationMedia = typeof publicationMedia.$inferSelect;
+export type Comment = typeof comments.$inferSelect;
+export type CommentLike = typeof commentLikes.$inferSelect;
+export type PublicationReaction = typeof publicationReactions.$inferSelect;
+export type PublicationSave = typeof publicationSaves.$inferSelect;
+export type PublicationRepost = typeof publicationReposts.$inferSelect;
+export type PublicationView = typeof publicationViews.$inferSelect;
+export type Hashtag = typeof hashtags.$inferSelect;
+export type Story = typeof stories.$inferSelect;
+export type StoryView = typeof storyViews.$inferSelect;
+export type Highlight = typeof highlights.$inferSelect;
+export type HighlightItem = typeof highlightItems.$inferSelect;
+export type SocialNotification = typeof socialNotifications.$inferSelect;
+export type Report = typeof reports.$inferSelect;
+export type ModerationAction = typeof moderationActions.$inferSelect;
+export type BlockedWord = typeof blockedWords.$inferSelect;
+
+
