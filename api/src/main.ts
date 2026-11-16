@@ -78,6 +78,30 @@ async function bootstrap() {
   const uploadsDir = join(process.cwd(), 'uploads');
   if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
 
+  // Back-office de modération (`admin/`, Vite + React), servi sous /admin.
+  // Déclaré avant le bundle web mobile : son fallback HTML attraperait /admin.
+  const adminDist = join(process.cwd(), '..', 'admin', 'dist');
+  if (existsSync(adminDist)) {
+    app.useStaticAssets(adminDist, { prefix: '/admin/' });
+    const adminIndex = join(adminDist, 'index.html');
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' || !req.path.startsWith('/admin')) {
+        next();
+        return;
+      }
+      if (req.path === '/admin') {
+        res.redirect('/admin/');
+        return;
+      }
+      // Un fichier (assets) est déjà traité par useStaticAssets ou n'existe pas.
+      if (req.path.includes('.')) {
+        next();
+        return;
+      }
+      res.sendFile(adminIndex);
+    });
+  }
+
   const webDist = join(process.cwd(), '..', 'mobile', 'dist');
   if (existsSync(webDist)) {
     app.useStaticAssets(webDist);

@@ -7,6 +7,7 @@ Monorepo applicatif **sans workspace npm racine** : chaque projet s'installe et 
 | `api/` | REST + Socket.IO | NestJS 12, Drizzle ORM, PostgreSQL 16 |
 | `mobile/` | Client Android d'abord, web ensuite | Expo SDK 58, React Native 0.88, expo-router |
 | `crypto/` | Cœur E2EE | Rust 1.89 (vodozemac), exposé via `mobile/modules/mbolo-crypto` |
+| `admin/` | Back-office de modération (web) | Vite, React 19, TypeScript |
 
 Node 20+ (la CI utilise Node 24). Pas de `package.json` à la racine : ne jamais lancer `npm install` depuis la racine.
 
@@ -26,6 +27,9 @@ cd api && cp .env.example .env && npm install && npm run start:dev
 
 cd mobile && npm install && npx expo run:android   # development build, obligatoire
 npx expo start --dev-client
+
+# Back-office de modération (facultatif) : http://localhost:5173, proxy vers :3001
+cd admin && npm install && npm run dev
 ```
 
 - **Expo Go ne suffit pas** : le projet dépend de modules natifs absents d'Expo Go (`mbolo-crypto`, WebRTC/appels, SQLCipher, configuration FCM).
@@ -52,6 +56,11 @@ npx expo-doctor
 npm test                      # Vitest : logique pure uniquement, pas de rendu RN
 node --test tests/*.test.mjs  # contrôles assets/emoji (node:test)
 
+# Back-office (depuis admin/)
+npx tsc --noEmit
+npm test                      # Vitest + Testing Library (jsdom)
+npm run build                 # dist/ servi par l'API à /admin
+
 # Crypto (depuis crypto/)
 bash scripts/check.sh         # fmt + clippy + tests + licences
 ```
@@ -63,6 +72,7 @@ Le seul workflow CI est `.github/workflows/crypto.yml`. **Aucun CI TypeScript** 
 - `api/src/main.ts` : bootstrap, CORS, Helmet, migrations, service du bundle web `../mobile/dist`. **L'API doit tourner avec `api/` comme cwd** ("drizzle" et "uploads" sont relatifs).
 - `api/src/<domaine>/` : module + controller + service. Gateways Socket.IO dans `api/src/chat` et `api/src/calls`.
 - `api/src/db/schema.ts` : source unique du schéma ; les migrations SQL sont dans `api/drizzle/`.
+- `admin/` : back-office Vite/React. `npm run build` écrit `admin/dist`, servi par l'API sous `/admin/` (à construire avant de démarrer l'API). Les rôles `moderator`/`admin` sont attribués avec `node api/scripts/promote-role.mjs <email-ou-pseudo> <role>`.
 - Médias et avatars sont stockés sur disque dans `api/uploads/` (ignoré par Git) et servis par URL signée : pas de stockage objet.
 - `mobile/src/app/` : routes expo-router (`typedRoutes`) ; `features/<domaine>/` : logique métier ; `lib/` : api, socket, outbox, store SQLite, jetons ; `components/` : UI partagée.
 - `crypto/` : bibliothèque Rust ; le wrapper Expo et les `.so` arm64/x86_64 précompilés sont dans `mobile/modules/mbolo-crypto/`.
