@@ -48,6 +48,12 @@ S3/MinIO), ni le portage UI.
 - `private_account` (utilisateur) + `follows.status` (`accepted | pending`) sont la
   source de vérité des comptes privés ; le filtrage se fait dans les requêtes, pas
   seulement dans l'UI.
+- Politique posée dans `api/src/users/visibility.ts` (fonctions pures, testées) :
+  `canViewPublication`, `canViewProfile`, `canInteract`. Arbitrages retenus :
+  `pending` (contrôle automatique) reste visible ; `flagged` attend une décision
+  humaine et n'est visible que de l'auteur et de la modération ; `removed` et la
+  suppression logique ne sont visibles que d'eux ; un blocage coupe tout sauf la
+  modération ; un visiteur anonyme (web en consultation) ne voit que le public.
 - `blocked_words` + `reports` + `moderation_actions` fournissent la file de modération
   et son journal d'audit (`moderation_actions` est append-only).
 
