@@ -1,0 +1,85 @@
+import {
+  Body,
+  Controller,
+  DefaultValuePipe,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { CurrentUser } from '../auth/current-user.decorator.js';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
+import type { JwtPayload } from '../auth/jwt-payload.js';
+import { CreatePublicationDto } from './dto/create-publication.dto.js';
+import { CreateCommentDto, ReactDto } from './dto/interactions.dto.js';
+import { COMMENT_LIST_DEFAULT_LIMIT, PublicationsService } from './publications.service.js';
+
+@Controller('publications')
+@UseGuards(JwtAuthGuard)
+export class PublicationsController {
+  constructor(private readonly publications: PublicationsService) {}
+
+  @Post()
+  async create(@CurrentUser() current: JwtPayload, @Body() body: CreatePublicationDto) {
+    return this.publications.create(current.sub, body);
+  }
+
+  @Get(':id')
+  async get(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.get(id, current.sub);
+  }
+
+  @Delete(':id')
+  async remove(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.remove(id, current.sub);
+  }
+
+  @Post(':id/like')
+  async react(
+    @CurrentUser() current: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: ReactDto,
+  ) {
+    return this.publications.react(id, current.sub, body ?? {});
+  }
+
+  @Delete(':id/like')
+  async unreact(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.unreact(id, current.sub);
+  }
+
+  @Post(':id/comments')
+  async comment(
+    @CurrentUser() current: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: CreateCommentDto,
+  ) {
+    return this.publications.comment(id, current.sub, body);
+  }
+
+  @Get(':id/comments')
+  async comments(
+    @CurrentUser() current: JwtPayload,
+    @Param('id') id: string,
+    @Query('limit', new DefaultValuePipe(COMMENT_LIST_DEFAULT_LIMIT), ParseIntPipe)
+    limit: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.publications.listComments(id, current.sub, limit, cursor);
+  }
+}
+
+/** Suppression d'un commentaire : route séparée, ce n'est pas `/publications/...`. */
+@Controller('comments')
+@UseGuards(JwtAuthGuard)
+export class CommentsController {
+  constructor(private readonly publications: PublicationsService) {}
+
+  @Delete(':id')
+  async remove(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.removeComment(id, current.sub);
+  }
+}

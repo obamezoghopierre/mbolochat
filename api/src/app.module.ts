@@ -13,6 +13,7 @@ import { FollowsModule } from './follows/follows.module.js';
 import { InvitesModule } from './invites/invites.module.js';
 import { MediaModule } from './media/media.module.js';
 import { PresenceModule } from './presence/presence.module.js';
+import { PublicationsModule } from './publications/publications.module.js';
 import { UploadsModule } from './uploads/uploads.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module.js';
     UploadsModule,
     MediaModule,
     PresenceModule,
+    PublicationsModule,
     ChatModule,
     CallsModule,
   ],

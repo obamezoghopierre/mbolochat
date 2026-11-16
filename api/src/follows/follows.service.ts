@@ -5,9 +5,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { blocks, follows, users } from '../db/schema.js';
+import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.js';
 import { canViewProfile, type SocialViewer } from '../users/visibility.js';
 
 /** État d'abonnement rendu au client après une action. */
@@ -34,24 +35,11 @@ export interface ConnectionPage {
   nextCursor: string | null;
 }
 
-/** Valeur par défaut des listes d'abonnés, partagée avec le contrôleur. */
-export const FOLLOW_LIST_DEFAULT_LIMIT = 20;
+const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
-/** Fait et décode le curseur `(createdAt, id)` de la pagination keyset. */
-function encodeCursor(createdAt: Date, id: string): string {
-  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64url');
-}
-
-function decodeCursor(cursor: string): { createdAt: Date; id: string } {
-  const raw = Buffer.from(cursor, 'base64url').toString('utf8');
-  const [iso, id] = raw.split('|');
-  const createdAt = new Date(iso ?? '');
-  if (!id || Number.isNaN(createdAt.getTime())) {
-    throw new BadRequestException('Curseur invalide.');
-  }
-  return { createdAt, id };
-}
+/** Valeur par défaut des listes d'abonnés, partagée avec le contrôleur. */
+export const FOLLOW_LIST_DEFAULT_LIMIT = DEFAULT_LIMIT;
 
 /**
  * Graphe social : suivre, ne plus suivre, demandes des comptes privés, listes.
@@ -266,13 +254,11 @@ export class FollowsService {
 
     const conditions = [eq(ownerColumn, targetId), eq(follows.status, 'accepted')];
     if (cursor) {
-      const decoded = decodeCursor(cursor);
-      // Keyset : on reprend strictement après la ligne du curseur.
+      const decoded = decodeKeysetCursor(cursor);
+      // Comparaison de lignes entières, dans PostgreSQL : la précision des
+      // microsecondes est conservée et la ligne du curseur est bien exclue.
       conditions.push(
-        or(
-          lt(follows.createdAt, decoded.createdAt),
-          and(eq(follows.createdAt, decoded.createdAt), lt(otherColumn, decoded.id)),
-        )!,
+        sql`(${follows.createdAt}, ${otherColumn}) < (${decoded.raw}::timestamptz, ${decoded.id})`,
       );
     }
 
@@ -280,7 +266,7 @@ export class FollowsService {
     const rows = await this.db
       .select({
         ...this.connectionFields(),
-        createdAt: follows.createdAt,
+        createdAtText: sql<string>`${follows.createdAt}::text`,
       })
       .from(follows)
       .innerJoin(users, eq(users.id, otherColumn))
@@ -291,9 +277,11 @@ export class FollowsService {
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
     return {
-      items: page.map(({ createdAt: _createdAt, ...rest }) => rest),
+      items: page.map(({ createdAtText: _createdAtText, ...rest }) => rest),
       nextCursor:
-        rows.length > bounded && last ? encodeCursor(last.createdAt, last.id) : null,
+        rows.length > bounded && last
+          ? encodeKeysetCursor(last.createdAtText, last.id)
+          : null,
     };
   }
 
