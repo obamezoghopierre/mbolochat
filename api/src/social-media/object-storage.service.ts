@@ -94,6 +94,26 @@ export class ObjectStorageService {
     }
   }
 
+  /** Contenu complet de l'objet, `null` s'il n'existe pas. */
+  async download(key: string): Promise<Buffer | null> {
+    const { client, bucket } = this.require();
+    try {
+      const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      return this.streamToBuffer(response.Body);
+    } catch (error) {
+      if (this.isNotFound(error)) return null;
+      throw error;
+    }
+  }
+
+  /** Écrit un objet produit par le serveur (variantes, poster, transcodage). */
+  async put(key: string, body: Buffer, contentType: string): Promise<void> {
+    const { client, bucket } = this.require();
+    await client.send(
+      new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }),
+    );
+  }
+
   async delete(key: string): Promise<void> {
     const { client, bucket } = this.require();
     await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));

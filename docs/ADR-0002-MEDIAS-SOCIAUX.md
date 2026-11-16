@@ -37,9 +37,15 @@ Docker restreint). Le spike doit donc rester vérifiable sans conteneur supplém
    ticket **et** à la confirmation, pour ne pas dépendre du client.
 6. **Propriété** : un asset n'est lisible et confirmable que par son propriétaire ;
    un asset d'un autre compte répond 404, pas 403, pour ne rien divulguer.
-7. **Variantes et transcodage différés** : la phase 0 s'arrête à `uploaded`. Le
-   worker `media_jobs` (`sharp`/`ffmpeg`, passe en `ready` + URL publique) appartient
-   à la phase 1, comme le prévoit le plan §7.4.
+7. **Worker média (phase 1)** : à la confirmation, un job est mis en file
+   (`image_variants` pour une image, `video_poster` + `video_transcode` pour une
+   vidéo). Le worker prend les jobs avec `FOR UPDATE SKIP LOCKED` et un
+   `claim_token` de fencing, comme `message_events`. Une image produit des variantes
+   WebP `thumb` (320) et `medium` (1080) via `sharp`, sans agrandissement ; une
+   vidéo produit un poster JPEG et un MP4 H.264/AAC progressif via `ffmpeg`, avec
+   durée et dimensions lues par `ffprobe`. L'asset passe en `ready` à la fin.
+   Trois tentatives maximum, délai progressif, `last_error` conservé.
+   Le job `cleanup` (purge des objets supprimés) reste à implémenter.
 
 ## 3. Tests
 
@@ -51,6 +57,12 @@ asset d'autrui invisible, confirmation sans téléversement, authentification ex
 
 Aucun test ne simule le stockage en mémoire : le chemin réseau et la signature d'URL
 sont exercés pour de vrai.
+
+`test/media-worker.e2e-spec.ts` va plus loin : il exécute le worker sur Postgres et
+S3rver réels, avec `sharp` et `ffmpeg`. Il vérifie les octets produits (WebP « RIFF »,
+JPEG, MP4 « ftyp »), l'absence d'agrandissement, la durée sondée (≈ 1 s), la reprise
+d'un job en échec jusqu'à `failed` après trois tentatives (délai remis à zéro entre
+les passes) et l'unicité de traitement sous deux workers concurrents.
 
 ## 4. Conséquences
 

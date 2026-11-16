@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { mediaAssets } from '../db/schema.js';
+import { mediaAssets, mediaJobs } from '../db/schema.js';
 import {
   ALLOWED_IMAGE_MIMES,
   ALLOWED_VIDEO_MIMES,
@@ -145,11 +145,22 @@ export class SocialMediaService {
       throw new BadRequestException('Le contenu ne correspond pas au type déclaré.');
     }
 
-    const [updated] = await this.db
-      .update(mediaAssets)
-      .set({ status: 'uploaded', updatedAt: new Date() })
-      .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.status, 'pending')))
-      .returning();
+    const updated = await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(mediaAssets)
+        .set({ status: 'uploaded', updatedAt: new Date() })
+        // Le filtre `pending` rend la confirmation idempotente sous course.
+        .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.status, 'pending')))
+        .returning();
+      if (!row) {
+        return null;
+      }
+      // Une seule mise en file : le job n'est créé que par la transition réussie.
+      const kinds =
+        row.kind === 'video' ? (['video_poster', 'video_transcode'] as const) : (['image_variants'] as const);
+      await tx.insert(mediaJobs).values(kinds.map((kind) => ({ assetId: row.id, kind })));
+      return row;
+    });
 
     return this.view(updated ?? asset);
   }
