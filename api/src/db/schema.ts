@@ -1520,6 +1520,7 @@ export type StoryView = typeof storyViews.$inferSelect;
 export type Highlight = typeof highlights.$inferSelect;
 export type HighlightItem = typeof highlightItems.$inferSelect;
 export type SocialNotification = typeof socialNotifications.$inferSelect;
+export type SocialNotificationType = (typeof socialNotificationTypeEnum.enumValues)[number];
 export type Report = typeof reports.$inferSelect;
 export type ModerationAction = typeof moderationActions.$inferSelect;
 export type BlockedWord = typeof blockedWords.$inferSelect;

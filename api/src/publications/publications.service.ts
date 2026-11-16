@@ -17,6 +17,7 @@ import {
   users,
 } from '../db/schema.js';
 import { FollowsService } from '../follows/follows.service.js';
+import { SocialNotificationsService } from '../social-notifications/social-notifications.service.js';
 import { canInteract, canViewPublication, type SocialViewer } from '../users/visibility.js';
 import type { CreateCommentDto, ReactDto } from './dto/interactions.dto.js';
 import type { CreatePublicationDto } from './dto/create-publication.dto.js';
@@ -72,6 +73,9 @@ const MAX_LIMIT = 50;
 export const COMMENT_LIST_DEFAULT_LIMIT = DEFAULT_LIMIT;
 
 type PublicationRow = typeof publications.$inferSelect;
+type PublicationCommentNotification = NonNullable<
+  Awaited<ReturnType<SocialNotificationsService['create']>>
+>;
 
 /**
  * Publications et interactions de base (ADR-0001, plan phase 1).
@@ -85,6 +89,7 @@ export class PublicationsService {
   constructor(
     @Inject(DRIZZLE) private readonly db: Database,
     private readonly follows: FollowsService,
+    private readonly notifications: SocialNotificationsService,
   ) {}
 
   async create(authorId: string, dto: CreatePublicationDto): Promise<PublicationView> {
@@ -182,6 +187,7 @@ export class PublicationsService {
       throw new ForbiddenException('Interaction impossible avec ce compte.');
     }
     const kind = dto.kind ?? 'like';
+    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
 
     await this.db.transaction(async (tx) => {
       const inserted = await tx
@@ -211,7 +217,17 @@ export class PublicationsService {
         .set({ likeReceivedCount: sql`${users.likeReceivedCount} + 1` })
         .where(eq(users.id, row.authorId));
       await this.refreshHotScore(tx, publicationId);
+      notification = await this.notifications.create(tx, {
+        recipientId: row.authorId,
+        actorId: viewerId,
+        type: 'like',
+        dedupeKey: `like:${publicationId}:${viewerId}`,
+        publicationId,
+      });
     });
+
+    // Effet push hors transaction : un échec réseau ne défait pas la réaction.
+    await this.notifications.deliver(notification);
 
     return { reaction: kind, likeCount: await this.likeCount(publicationId) };
   }
@@ -268,16 +284,23 @@ export class PublicationsService {
       throw new ForbiddenException('Ce compte n’autorise pas les commentaires.');
     }
 
+    let parentAuthorId: string | null = null;
     if (dto.parentId) {
       const [parent] = await this.db
-        .select({ id: comments.id, publicationId: comments.publicationId })
+        .select({
+          id: comments.id,
+          publicationId: comments.publicationId,
+          authorId: comments.authorId,
+        })
         .from(comments)
         .where(and(eq(comments.id, dto.parentId), isNull(comments.deletedAt)));
       if (!parent || parent.publicationId !== publicationId) {
         throw new NotFoundException('Commentaire parent introuvable.');
       }
+      parentAuthorId = parent.authorId;
     }
 
+    let created: PublicationCommentNotification[] = [];
     const inserted = await this.db.transaction(async (tx) => {
       const [comment] = await tx
         .insert(comments)
@@ -305,8 +328,35 @@ export class PublicationsService {
           .where(eq(comments.id, comment.parentId));
       }
       await this.refreshHotScore(tx, publicationId);
+      const notifications = [
+        await this.notifications.create(tx, {
+          recipientId: row.authorId,
+          actorId: viewerId,
+          type: 'comment',
+          dedupeKey: `comment:${comment.id}`,
+          publicationId,
+          commentId: comment.id,
+        }),
+      ];
+      if (comment.parentId && parentAuthorId && parentAuthorId !== row.authorId) {
+        notifications.push(
+          await this.notifications.create(tx, {
+            recipientId: parentAuthorId,
+            actorId: viewerId,
+            type: 'reply',
+            dedupeKey: `reply:${comment.id}:${parentAuthorId}`,
+            publicationId,
+            commentId: comment.id,
+          }),
+        );
+      }
+      created = notifications.filter((item): item is NonNullable<typeof item> => item !== null);
       return comment;
     });
+
+    for (const notification of created) {
+      await this.notifications.deliver(notification);
+    }
 
     if (inserted) {
       return this.loadCommentView(inserted.id);

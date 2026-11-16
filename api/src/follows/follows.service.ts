@@ -10,6 +10,7 @@ import { DRIZZLE, type Database } from '../db/db.module.js';
 import { blocks, follows, users } from '../db/schema.js';
 import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.js';
 import { canViewProfile, type SocialViewer } from '../users/visibility.js';
+import { SocialNotificationsService } from '../social-notifications/social-notifications.service.js';
 
 /** État d'abonnement rendu au client après une action. */
 export interface FollowState {
@@ -51,7 +52,10 @@ export const FOLLOW_LIST_DEFAULT_LIMIT = DEFAULT_LIMIT;
  */
 @Injectable()
 export class FollowsService {
-  constructor(@Inject(DRIZZLE) private readonly db: Database) {}
+  constructor(
+    @Inject(DRIZZLE) private readonly db: Database,
+    private readonly notifications: SocialNotificationsService,
+  ) {}
 
   /**
    * Suivre un compte. Idempotent : rejouer la requête ne crée pas de doublon et
@@ -91,6 +95,16 @@ export class FollowsService {
     });
 
     const row = await this.getRow(followerId, targetId);
+    // Notification côté serveur : demande ou abonnement, jamais pour soi-même
+    // (écarté par le service) et jamais entre comptes bloqués.
+    const notification = await this.notifications.create(this.db, {
+      recipientId: targetId,
+      actorId: followerId,
+      type: status === 'pending' ? 'follow_request' : 'follow',
+      dedupeKey: `follow:${followerId}`,
+    });
+    await this.notifications.deliver(notification);
+
     return { status: row?.status ?? 'none', followerCount: await this.countFollowers(targetId) };
   }
 
@@ -162,6 +176,16 @@ export class FollowsService {
         .set({ followingCount: sql`${users.followingCount} + 1` })
         .where(eq(users.id, followerId));
     });
+
+    if (accept) {
+      const notification = await this.notifications.create(this.db, {
+        recipientId: followerId,
+        actorId: ownerId,
+        type: 'follow_accepted',
+        dedupeKey: `follow_accepted:${ownerId}`,
+      });
+      await this.notifications.deliver(notification);
+    }
 
     const after = await this.getRow(followerId, ownerId);
     return {

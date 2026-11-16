@@ -6,9 +6,11 @@ import {
   conversationMembers,
   conversations,
   pushTokens,
+  userSocialSettings,
   users,
   type MessageAttachment,
 } from '../db/schema.js';
+import type { SocialNotificationType } from '../db/schema.js';
 import type { MessageDto } from '../conversations/conversations.service.js';
 import { MediaService } from '../media/media.service.js';
 import { PresenceService } from '../presence/presence.service.js';
@@ -82,6 +84,23 @@ interface ExpoCallPushMessage {
     avatarUrl: string;
     /** « 1 » : appel vidéo, pour le libellé de la notification. */
     video: string;
+  };
+}
+
+/** Notification sociale : data-only, routée par l'application vers l'écran. */
+interface ExpoSocialPushMessage {
+  to: string;
+  priority: 'high';
+  data: {
+    type: 'social';
+    notificationId: string;
+    kind: SocialNotificationType;
+    title: string;
+    body: string;
+    publicationId: string;
+    commentId: string;
+    actorId: string;
+    actorName: string;
   };
 }
 
@@ -713,8 +732,98 @@ export class PushService {
     }
   }
 
+  /**
+   * Notification sociale (réaction, commentaire, abonnement).
+   *
+   * Contrairement au chat, la notification in-app est déjà écrite par
+   * `SocialNotificationsService` : ici on ne décide que du push. Les
+   * préférences du compte et les heures calmes sont respectées ; un échec
+   * d'envoi ne remonte jamais à l'appelant.
+   */
+  async notifySocial(input: {
+    userId: string;
+    notificationId: string;
+    kind: SocialNotificationType;
+    title: string;
+    body: string;
+    publicationId?: string | null;
+    commentId?: string | null;
+    actorId: string;
+    actorName: string;
+  }): Promise<void> {
+    try {
+      const [user] = await this.db
+        .select({
+          quietHoursEnabled: users.quietHoursEnabled,
+          quietStartMinute: users.quietStartMinute,
+          quietEndMinute: users.quietEndMinute,
+          quietUtcOffsetMinutes: users.quietUtcOffsetMinutes,
+          notificationsEnabled: users.notificationsEnabled,
+        })
+        .from(users)
+        .where(eq(users.id, input.userId));
+      if (!user || !user.notificationsEnabled) {
+        return;
+      }
+      if (
+        quietHoursActive(
+          user.quietHoursEnabled,
+          user.quietStartMinute,
+          user.quietEndMinute,
+          user.quietUtcOffsetMinutes,
+        )
+      ) {
+        return;
+      }
+
+      const [settings] = await this.db
+        .select({
+          notifyLikes: userSocialSettings.notifyLikes,
+          notifyComments: userSocialSettings.notifyComments,
+          notifyFollows: userSocialSettings.notifyFollows,
+          notifyReposts: userSocialSettings.notifyReposts,
+          notifyMentions: userSocialSettings.notifyMentions,
+        })
+        .from(userSocialSettings)
+        .where(eq(userSocialSettings.userId, input.userId));
+      if (settings && !socialPushAllowed(input.kind, settings)) {
+        return;
+      }
+
+      const tokens = await this.db
+        .select({ token: pushTokens.token })
+        .from(pushTokens)
+        .where(eq(pushTokens.userId, input.userId));
+      if (tokens.length === 0) {
+        return;
+      }
+
+      await this.send(
+        tokens.map((row) => ({
+          to: row.token,
+          priority: 'high' as const,
+          data: {
+            type: 'social' as const,
+            notificationId: input.notificationId,
+            kind: input.kind,
+            title: input.title,
+            body: input.body,
+            publicationId: input.publicationId ?? '',
+            commentId: input.commentId ?? '',
+            actorId: input.actorId,
+            actorName: input.actorName,
+          },
+        })),
+      );
+    } catch (error) {
+      this.logger.warn(`Push social non envoyé : ${(error as Error).message}`);
+    }
+  }
+
   private async send(
-    payload: Array<ExpoPushMessage | ExpoCallPushMessage | ExpoCallUpdateMessage>,
+    payload: Array<
+      ExpoPushMessage | ExpoCallPushMessage | ExpoCallUpdateMessage | ExpoSocialPushMessage
+    >,
   ): Promise<void> {
     const deadTokens: string[] = [];
 
@@ -755,5 +864,35 @@ export class PushService {
     if (deadTokens.length > 0) {
       await this.db.delete(pushTokens).where(inArray(pushTokens.token, deadTokens));
     }
+  }
+}
+
+/** Préférences sociales : la catégorie de notification autorise-t-elle le push ? */
+function socialPushAllowed(
+  kind: SocialNotificationType,
+  settings: {
+    notifyLikes: boolean;
+    notifyComments: boolean;
+    notifyFollows: boolean;
+    notifyReposts: boolean;
+    notifyMentions: boolean;
+  },
+): boolean {
+  switch (kind) {
+    case 'like':
+      return settings.notifyLikes;
+    case 'comment':
+    case 'reply':
+      return settings.notifyComments;
+    case 'follow':
+    case 'follow_request':
+    case 'follow_accepted':
+      return settings.notifyFollows;
+    case 'repost':
+      return settings.notifyReposts;
+    case 'mention':
+      return settings.notifyMentions;
+    default:
+      return true;
   }
 }
