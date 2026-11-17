@@ -66,7 +66,7 @@ export function ImagePage({
         onLongPressEnd={noop}
       />
 
-      <HeartBurstOverlay burstKey={chrome.burstKey} />
+      <HeartBurstOverlay burstKey={chrome.burstKey} point={chrome.burstPoint} />
 
       {total > 1 ? (
         <View style={styles.counterPill}>

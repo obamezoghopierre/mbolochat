@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -18,9 +18,22 @@ export const TRANSCODED_LABEL = 'mp4';
 
 const WEBP_QUALITY = 80;
 const POSTER_MAX_WIDTH = 720;
-const FFMPEG_TIMEOUT_MS = 120_000;
+/**
+ * Largeur maximale du rendu servi au fil. Un portrait 4K (2160 × 3840) devient
+ * 1080 × 1920 : c'est la définition utile sur un téléphone, et cela divise le
+ * débit par quatre par rapport à l'original.
+ */
+const VIDEO_MAX_WIDTH = 1080;
+/** Intervalle de keyframes : un seek au doigt doit trouver une image proche. */
+const VIDEO_GOP_FRAMES = 30;
+/** Borne basse du délai accordé à ffmpeg, même pour un clip très court. */
+const FFMPEG_MIN_TIMEOUT_MS = 120_000;
+/** Multiplicateur appliqué à la durée source pour la borne haute. */
+const FFMPEG_TIMEOUT_FACTOR = 3;
+const FFMPEG_MAX_TIMEOUT_MS = 900_000;
 
 export interface ProcessedMedia {
+  /** Variantes produites par **cette** exécution, non fusionnées. */
   variants: MediaVariant[];
   width: number | null;
   height: number | null;
@@ -31,22 +44,8 @@ export interface ProcessorOptions {
   storage: ObjectStorageService;
   assetId: string;
   storageKey: string;
-  /** Variantes déjà présentes (`media_assets.variants`). */
-  existing: MediaVariant[] | null;
   ffmpegPath: string;
   ffprobePath: string;
-}
-
-/** Fusionne par libellé : rejouer un job ne duplique pas une variante. */
-function mergeVariants(existing: MediaVariant[] | null, produced: MediaVariant[]): MediaVariant[] {
-  const byLabel = new Map<string, MediaVariant>();
-  for (const variant of existing ?? []) {
-    byLabel.set(variant.label, variant);
-  }
-  for (const variant of produced) {
-    byLabel.set(variant.label, variant);
-  }
-  return [...byLabel.values()];
 }
 
 /**
@@ -81,12 +80,13 @@ export async function processImageVariants(
       width: buffer.info.width,
       height: buffer.info.height,
       url: options.storage.publicUrl(key) ?? key,
+      key,
       sizeBytes: buffer.data.length,
     });
   }
 
   return {
-    variants: mergeVariants(options.existing, produced),
+    variants: produced,
     width: sourceWidth,
     height: sourceHeight,
     durationMs: null,
@@ -96,38 +96,55 @@ export async function processImageVariants(
 /**
  * Artefacts vidéo. `poster` extrait une image fixe, `transcode` produit un MP4
  * H.264/AAC progressif (pas de HLS en v1, cf. plan §7).
+ *
+ * Le transcodage **redimensionne** : conserver une source 4K rendrait le fil
+ * illisible en 4G et le seek coûteux. Le GOP est fixé pour que le glissement sur
+ * la barre trouve une keyframe proche, et `yuv420p` garantit la compatibilité de
+ * décodage Android.
  */
 export async function processVideo(
   options: ProcessorOptions & { step: 'poster' | 'transcode' },
 ): Promise<ProcessedMedia> {
-  const original = await options.storage.download(options.storageKey);
-  if (!original) {
-    throw new Error('Objet source introuvable dans le stockage.');
-  }
-
   const directory = await mkdtemp(join(tmpdir(), 'mbolo-media-'));
   const inputPath = join(directory, 'input');
   try {
-    await writeFile(inputPath, original);
+    // Streaming direct vers le disque : une vidéo de 100 Mio ne transite jamais
+    // entièrement par la mémoire du worker.
+    const downloaded = await options.storage.downloadToFile(options.storageKey, inputPath);
+    if (!downloaded) {
+      throw new Error('Objet source introuvable dans le stockage.');
+    }
+
     const probe = await probeVideo(inputPath, options.ffprobePath);
+    const timeoutMs = Math.min(
+      FFMPEG_MAX_TIMEOUT_MS,
+      Math.max(
+        FFMPEG_MIN_TIMEOUT_MS,
+        (probe.durationMs ?? 60_000) * FFMPEG_TIMEOUT_FACTOR,
+      ),
+    );
     const produced: MediaVariant[] = [];
 
     if (options.step === 'poster') {
       const posterPath = join(directory, 'poster.jpg');
-      await runFfmpeg(options.ffmpegPath, [
-        '-y',
-        '-ss',
-        '0',
-        '-i',
-        inputPath,
-        '-frames:v',
-        '1',
-        '-vf',
-        `scale='min(${POSTER_MAX_WIDTH},iw)':-2`,
-        '-q:v',
-        '3',
-        posterPath,
-      ]);
+      await runFfmpeg(
+        options.ffmpegPath,
+        [
+          '-y',
+          '-ss',
+          '0',
+          '-i',
+          inputPath,
+          '-frames:v',
+          '1',
+          '-vf',
+          `scale='min(${POSTER_MAX_WIDTH},iw)':-2`,
+          '-q:v',
+          '3',
+          posterPath,
+        ],
+        timeoutMs,
+      );
       const poster = await readFile(posterPath);
       const key = `social/posters/${options.assetId}.jpg`;
       await options.storage.put(key, poster, 'image/jpeg');
@@ -135,46 +152,69 @@ export async function processVideo(
         label: POSTER_LABEL,
         width: Math.min(POSTER_MAX_WIDTH, probe.width ?? POSTER_MAX_WIDTH),
         height: probe.height
-          ? Math.round((probe.height * Math.min(POSTER_MAX_WIDTH, probe.width ?? POSTER_MAX_WIDTH)) /
-              (probe.width || 1))
+          ? Math.round(
+              (probe.height * Math.min(POSTER_MAX_WIDTH, probe.width ?? POSTER_MAX_WIDTH)) /
+                (probe.width || 1),
+            )
           : 0,
         url: options.storage.publicUrl(key) ?? key,
+        key,
         sizeBytes: poster.length,
       });
     } else {
       const outputPath = join(directory, 'output.mp4');
-      await runFfmpeg(options.ffmpegPath, [
-        '-y',
-        '-i',
-        inputPath,
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-crf',
-        '23',
-        '-c:a',
-        'aac',
-        '-b:a',
-        '128k',
-        '-movflags',
-        '+faststart',
-        outputPath,
-      ]);
+      await runFfmpeg(
+        options.ffmpegPath,
+        [
+          '-y',
+          '-i',
+          inputPath,
+          '-vf',
+          `scale='min(${VIDEO_MAX_WIDTH},iw)':-2`,
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '23',
+          '-pix_fmt',
+          'yuv420p',
+          '-g',
+          String(VIDEO_GOP_FRAMES),
+          '-keyint_min',
+          String(VIDEO_GOP_FRAMES),
+          '-sc_threshold',
+          '0',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-movflags',
+          '+faststart',
+          outputPath,
+        ],
+        timeoutMs,
+      );
       const transcoded = await readFile(outputPath);
       const key = `social/videos/${options.assetId}.mp4`;
       await options.storage.put(key, transcoded, 'video/mp4');
       produced.push({
         label: TRANSCODED_LABEL,
-        width: probe.width ?? 0,
-        height: probe.height ?? 0,
+        width: probe.width ? Math.min(VIDEO_MAX_WIDTH, probe.width) : 0,
+        height: probe.height
+          ? Math.round(
+              (probe.height * Math.min(VIDEO_MAX_WIDTH, probe.width ?? VIDEO_MAX_WIDTH)) /
+                (probe.width || 1),
+            )
+          : 0,
         url: options.storage.publicUrl(key) ?? key,
+        key,
         sizeBytes: transcoded.length,
       });
     }
 
     return {
-      variants: mergeVariants(options.existing, produced),
+      variants: produced,
       width: probe.width,
       height: probe.height,
       durationMs: probe.durationMs,
@@ -188,15 +228,19 @@ async function probeVideo(
   path: string,
   ffprobePath: string,
 ): Promise<{ width: number | null; height: number | null; durationMs: number | null }> {
-  const output = await run(ffprobePath, [
-    '-v',
-    'error',
-    '-print_format',
-    'json',
-    '-show_format',
-    '-show_streams',
-    path,
-  ]);
+  const output = await run(
+    ffprobePath,
+    [
+      '-v',
+      'error',
+      '-print_format',
+      'json',
+      '-show_format',
+      '-show_streams',
+      path,
+    ],
+    FFMPEG_MIN_TIMEOUT_MS,
+  );
   const parsed = JSON.parse(output) as {
     streams?: Array<{ codec_type?: string; width?: number; height?: number }>;
     format?: { duration?: string };
@@ -210,32 +254,32 @@ async function probeVideo(
   };
 }
 
-function runFfmpeg(ffmpegPath: string, args: string[]): Promise<void> {
-  return run(ffmpegPath, args).then(() => undefined);
+function runFfmpeg(ffmpegPath: string, args: string[], timeoutMs: number): Promise<void> {
+  return run(ffmpegPath, args, timeoutMs).then(() => undefined);
 }
 
 /** Exécute un binaire et rend sa sortie standard ; rejette avec stderr. */
-function run(binary: string, args: string[]): Promise<string> {
+function run(binary: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`${binary} a dépassé ${FFMPEG_TIMEOUT_MS} ms.`));
-    }, FFMPEG_TIMEOUT_MS);
+      proc.kill('SIGKILL');
+      reject(new Error(`${binary} a dépassé ${timeoutMs} ms.`));
+    }, timeoutMs);
 
-    child.stdout.on('data', (chunk) => {
+    proc.stdout.on('data', (chunk) => {
       stdout += String(chunk);
     });
-    child.stderr.on('data', (chunk) => {
+    proc.stderr.on('data', (chunk) => {
       stderr += String(chunk);
     });
-    child.on('error', (error) => {
+    proc.on('error', (error) => {
       clearTimeout(timer);
       reject(error);
     });
-    child.on('close', (code) => {
+    proc.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) {
         resolve(stdout);

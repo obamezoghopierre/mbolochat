@@ -71,9 +71,12 @@ Le seul workflow CI est `.github/workflows/crypto.yml`. **Aucun CI TypeScript** 
 
 - `api/src/main.ts` : bootstrap, CORS, Helmet, migrations, service du bundle web `../mobile/dist`. **L'API doit tourner avec `api/` comme cwd** ("drizzle" et "uploads" sont relatifs).
 - `api/src/<domaine>/` : module + controller + service. Gateways Socket.IO dans `api/src/chat` et `api/src/calls`.
+- Fil social : `api/src/feed` (classement, sessions de pagination figées), `api/src/ranking` (recalcul de `hot_score`, purge des sessions), `api/src/feedback` (signaux négatifs « Pas intéressé » / auteur masqué, filtrés en SQL dans le fil). La pagination d'un fil classé passe par une session : ne pas réintroduire un curseur sur `hot_score`, qui dérive à chaque interaction.
 - `api/src/db/schema.ts` : source unique du schéma ; les migrations SQL sont dans `api/drizzle/`.
 - `admin/` : back-office Vite/React. `npm run build` écrit `admin/dist`, servi par l'API sous `/admin/` (à construire avant de démarrer l'API). Les rôles `moderator`/`admin` sont attribués avec `node api/scripts/promote-role.mjs <email-ou-pseudo> <role>`.
 - Médias et avatars sont stockés sur disque dans `api/uploads/` (ignoré par Git) et servis par URL signée : pas de stockage objet.
+- Médias sociaux : le stockage objet (`SOCIAL_S3_*`) est distinct du stockage local du chat. Une URL **publique** n'est servie que si `isPubliclyCacheable` (`api/src/users/visibility.ts`) est vrai — tout le reste (abonnés, privé, en revue, supprimé) passe par une URL signée courte, jamais par une clé S3.
+- `npm run worker:media` traite la file média (variantes, poster, transcodage, purge) **et** recalcule périodiquement `publications.hot_score` (`RANKING_INTERVAL_MS`). Sans ce worker lancé, la fraîcheur n'a aucun effet sur « Pour toi ».
 - `mobile/src/app/` : routes expo-router (`typedRoutes`) ; `features/<domaine>/` : logique métier ; `lib/` : api, socket, outbox, store SQLite, jetons ; `components/` : UI partagée.
 - `crypto/` : bibliothèque Rust ; le wrapper Expo et les `.so` arm64/x86_64 précompilés sont dans `mobile/modules/mbolo-crypto/`.
 

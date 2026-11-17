@@ -281,6 +281,20 @@
       "when": 1794838100400,
       "tag": "0039_social_search",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794883925922,
+      "tag": "0040_feed_video",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794886217515,
+      "tag": "0041_feed_sessions",
+      "breakpoints": true
     }
   ]
 }

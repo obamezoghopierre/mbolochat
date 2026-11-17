@@ -5,7 +5,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.js';
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
@@ -17,15 +16,28 @@ import {
   publicationReactions,
   publicationReposts,
   publicationSaves,
+  publicationViews,
   publications,
   userSocialSettings,
   users,
 } from '../db/schema.js';
 import { FollowsService } from '../follows/follows.service.js';
 import { ModerationService } from '../moderation/moderation.service.js';
+import { enqueuePublicationCleanup } from '../social-media/media-cleanup.js';
+import { ObjectStorageService } from '../social-media/object-storage.service.js';
 import { SocialNotificationsService } from '../social-notifications/social-notifications.service.js';
-import { canInteract, canViewPublication, type SocialViewer } from '../users/visibility.js';
-import type { CreateCommentDto, ReactDto } from './dto/interactions.dto.js';
+import {
+  canInteract,
+  canViewPublication,
+  isPubliclyCacheable,
+  type SocialViewer,
+} from '../users/visibility.js';
+import type {
+  CreateCommentDto,
+  ReactDto,
+  RecordViewDto,
+} from './dto/interactions.dto.js';
+import { MAX_WATCH_MS } from './dto/interactions.dto.js';
 import { loadPublicationMedia, type PublicationMediaView } from './publication-media.js';
 import type { CreatePublicationDto } from './dto/create-publication.dto.js';
 
@@ -104,7 +116,7 @@ export class PublicationsService {
     private readonly follows: FollowsService,
     private readonly notifications: SocialNotificationsService,
     private readonly moderation: ModerationService,
-    private readonly config: ConfigService,
+    private readonly storage: ObjectStorageService,
   ) {}
 
   async create(authorId: string, dto: CreatePublicationDto): Promise<PublicationView> {
@@ -222,6 +234,63 @@ export class PublicationsService {
     return this.view(row, viewerId);
   }
 
+  /**
+   * Enregistre une vue et son temps de visionnage.
+   *
+   * Idempotent par construction : une seule ligne par `(publication, compte)`.
+   * Le temps ne peut que croître (`greatest`), `completed` ne peut que passer à
+   * vrai, et le compteur public `view_count` n'est incrémenté qu'à la **première**
+   * vue — un spectateur qui revient ne fabrique pas de reach supplémentaire.
+   *
+   * C'est le signal qui manquait au classement : sans lui, « Pour toi » ne peut
+   * mesurer que les likes, donc favoriser indéfiniment le contenu ancien.
+   */
+  async recordView(
+    publicationId: string,
+    viewerId: string,
+    input: RecordViewDto,
+  ): Promise<{ viewCount: number; watchMs: number; completed: boolean; firstView: boolean }> {
+    await this.assertVisible(publicationId, viewerId);
+    const watchedMs = Math.min(Math.max(0, Math.trunc(input.watchedMs ?? 0)), MAX_WATCH_MS);
+    const completed = input.completed === true;
+
+    const result = await this.db.transaction(async (tx) => {
+      const [upserted] = await tx
+        .insert(publicationViews)
+        .values({ publicationId, userId: viewerId, watchMs: watchedMs, completed })
+        .onConflictDoUpdate({
+          target: [publicationViews.publicationId, publicationViews.userId],
+          set: {
+            watchMs: sql`greatest(${publicationViews.watchMs}, excluded.watch_ms)`,
+            completed: sql`${publicationViews.completed} or excluded.completed`,
+          },
+        })
+        // `xmax = 0` distingue l'insertion de la mise à jour dans un upsert.
+        .returning({
+          inserted: sql<boolean>`(xmax = 0)`,
+          watchMs: publicationViews.watchMs,
+          completed: publicationViews.completed,
+        });
+      if (!upserted) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+      if (upserted.inserted) {
+        await tx
+          .update(publications)
+          .set({ viewCount: sql`${publications.viewCount} + 1` })
+          .where(eq(publications.id, publicationId));
+      }
+      return upserted;
+    });
+
+    return {
+      viewCount: await this.viewCount(publicationId),
+      watchMs: result.watchMs,
+      completed: result.completed,
+      firstView: result.inserted,
+    };
+  }
+
   /** Suppression logique par l'auteur, idempotente. */
   async remove(publicationId: string, viewerId: string): Promise<{ deleted: true }> {
     const { row } = await this.load(publicationId);
@@ -246,6 +315,9 @@ export class PublicationsService {
             : {}),
         })
         .where(eq(users.id, row.authorId));
+      // La suppression logique ne retire pas les octets : le worker doit purger
+      // l'original, le poster et les variantes du stockage.
+      await enqueuePublicationCleanup(tx, publicationId);
     });
     return { deleted: true };
   }
@@ -657,7 +729,15 @@ export class PublicationsService {
     return { deleted: true };
   }
 
-  /** Charge la publication et applique la visibilité. 404 pour ne rien fuiter. */
+  /**
+   * Charge la publication et applique la visibilité. 404 pour ne rien fuiter.
+   *
+   * Deux règles au-delà de `canViewPublication`, pour rester aligné sur le SQL du
+   * fil (`visiblePublicationConditions`) : un compte privé ne diffuse rien hors
+   * de ses abonnés acceptés, même une publication `public`, et un compte en
+   * cours de suppression n'expose plus rien. Sans cela, le détail d'une
+   * publication restait accessible alors que le fil la masquait.
+   */
   private async assertVisible(
     publicationId: string,
     viewerId: string,
@@ -676,6 +756,17 @@ export class PublicationsService {
     if (!visible) {
       throw new NotFoundException('Publication introuvable.');
     }
+    const isAuthor = row.authorId === viewerId;
+    if (!isAuthor && facts.isModerator !== true) {
+      const [author] = await this.db
+        .select({ privateAccount: users.privateAccount, deletedAt: users.deletedAt })
+        .from(users)
+        .where(eq(users.id, row.authorId));
+      const hiddenByAuthor = author?.privateAccount === true && !facts.isFollower;
+      if (hiddenByAuthor || author?.deletedAt) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+    }
     return { row, facts };
   }
 
@@ -691,14 +782,33 @@ export class PublicationsService {
   }
 
   private async view(row: PublicationRow, viewerId: string): Promise<PublicationView> {
-    const [author] = await this.db
-      .select(this.authorFields())
+    const [authorRow] = await this.db
+      .select({ ...this.authorFields(), privateAccount: users.privateAccount })
       .from(users)
       .where(eq(users.id, row.authorId));
+    const author: AuthorCard = authorRow
+      ? {
+          id: authorRow.id,
+          username: authorRow.username,
+          displayName: authorRow.displayName,
+          avatarUrl: authorRow.avatarUrl,
+          verified: authorRow.verified,
+        }
+      : { id: row.authorId, username: '', displayName: '', avatarUrl: null, verified: false };
+    // Mêmes règles que le fil : URL publique seulement si le contenu l'est.
+    const access = isPubliclyCacheable({
+      visibility: row.visibility,
+      moderationStatus: row.moderationStatus,
+      deleted: row.deletedAt !== null,
+      authorPrivateAccount: authorRow?.privateAccount ?? false,
+    })
+      ? 'public'
+      : 'signed';
     const mediaMap = await loadPublicationMedia(
       this.db,
       [row.id],
-      this.config.get<string>('SOCIAL_S3_PUBLIC_BASE_URL') ?? null,
+      this.storage.isConfigured() ? this.storage : null,
+      () => access,
     );
     const [reaction] = await this.db
       .select({ kind: publicationReactions.kind })
@@ -730,13 +840,7 @@ export class PublicationsService {
       caption: row.caption,
       visibility: row.visibility,
       createdAt: row.createdAt,
-      author: author ?? {
-        id: row.authorId,
-        username: '',
-        displayName: '',
-        avatarUrl: null,
-        verified: false,
-      },
+      author,
       counters: {
         likes: row.likeCount,
         comments: row.commentCount,
@@ -803,6 +907,14 @@ export class PublicationsService {
       .from(publications)
       .where(eq(publications.id, publicationId));
     return row?.likeCount ?? 0;
+  }
+
+  private async viewCount(publicationId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ viewCount: publications.viewCount })
+      .from(publications)
+      .where(eq(publications.id, publicationId));
+    return row?.viewCount ?? 0;
   }
 
   private async saveCount(publicationId: string): Promise<number> {

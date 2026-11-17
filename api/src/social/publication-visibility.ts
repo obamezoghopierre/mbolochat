@@ -1,6 +1,6 @@
 import { inArray, isNull, sql } from 'drizzle-orm';
 
-import { publications } from '../db/schema.js';
+import { publications, users } from '../db/schema.js';
 
 /**
  * Conditions d'autorisation d'une liste de publications, partagées par le feed
@@ -9,6 +9,13 @@ import { publications } from '../db/schema.js';
  *
  * Une publication `pending` reste visible (contrôle automatique en cours) ;
  * `flagged` et `removed` sont exclus des listes publiques.
+ *
+ * Deux règles portent sur l'**auteur** et supposent donc que l'appelant joint
+ * `users` sur l'auteur (`innerJoin(users, eq(users.id, publications.authorId))`) :
+ * - un compte privé ne diffuse rien hors de ses abonnés acceptés, y compris ses
+ *   publications marquées `public` (`canViewProfile` l'exige, le SQL doit le
+ *   traduire, sinon le profil est fermé mais le contenu fuit par le feed) ;
+ * - un compte en cours de suppression (`users.deleted_at`) n'apparaît plus.
  */
 export function visiblePublicationConditions(viewerId: string) {
   const followsAuthor = sql`exists (
@@ -20,11 +27,18 @@ export function visiblePublicationConditions(viewerId: string) {
 
   return [
     isNull(publications.deletedAt),
+    sql`${users.deletedAt} is null`,
     inArray(publications.moderationStatus, ['pending', 'approved']),
     sql`(
       ${publications.visibility} = 'public'
       or (${publications.visibility} = 'followers' and ${followsAuthor})
       or ${publications.authorId} = ${viewerId}
+    )`,
+    // Compte privé : `public` ne suffit pas, il faut un abonnement accepté.
+    sql`(
+      ${users.privateAccount} = false
+      or ${publications.authorId} = ${viewerId}
+      or ${followsAuthor}
     )`,
     sql`not exists (
       select 1 from blocks b

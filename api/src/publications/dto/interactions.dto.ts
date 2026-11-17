@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Max, MaxLength, Min } from 'class-validator';
 
 import { MAX_CLIENT_ID_LENGTH, MAX_COMMENT_LENGTH } from './create-publication.dto.js';
 
@@ -28,4 +28,29 @@ export class ReactDto {
   @IsOptional()
   @IsIn(REACTION_KINDS)
   kind?: (typeof REACTION_KINDS)[number];
+}
+
+/**
+ * Borne dure du temps de visionnage envoyé par le client : 6 h. Le serveur ne
+ * fait confiance qu'à une valeur croissante et bornée, jamais à un cumul
+ * arbitraire qui gonflerait le classement.
+ */
+export const MAX_WATCH_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Vue d'une publication, telle que le client la mesure.
+ *
+ * `watchedMs` est le temps **visible cumulé** (lecture réelle), pas le temps
+ * depuis l'ouverture de la page : c'est le signal de classement du fil.
+ */
+export class RecordViewDto {
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(MAX_WATCH_MS)
+  watchedMs?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  completed?: boolean;
 }

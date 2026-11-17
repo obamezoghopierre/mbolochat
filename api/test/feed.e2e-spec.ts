@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppModule } from '../src/app.module.js';
 import { DRIZZLE, type Database } from '../src/db/db.module.js';
 import { publications, users } from '../src/db/schema.js';
+import { RankingService } from '../src/ranking/ranking.service.js';
 
 /**
  * Feed de base sur vraie base : autorisation SQL (visibilité, abonnements,
@@ -287,6 +288,253 @@ describe('Feed (e2e)', () => {
       verified: false,
     });
     expect(JSON.stringify(body)).not.toContain('@e2e.dev');
+  });
+
+  it('masque les publications d’un compte privé à un non-abonné', async () => {
+    const author = await register('Prive');
+    const viewer = await register('Inconnu');
+    const city = `Prive-${suffix}`;
+    await Promise.all([setCity(author.id, city), setCity(viewer.id, city)]);
+    const post = await publish(author);
+
+    // Même une publication `public` ne sort pas d'un compte privé : le profil
+    // est fermé, le contenu doit l'être aussi (canViewProfile l'exige).
+    await db.update(users).set({ privateAccount: true }).where(eq(users.id, author.id));
+    const hidden = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
+    expect(hidden).not.toContain(post.id);
+    // Le détail doit être fermé aussi : le fil masquait mais l'URL directe
+    // répondait encore avant cette règle.
+    await request(app.getHttpServer())
+      .get(`/publications/${post.id}`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(404);
+
+    // Un compte privé transforme l'abonnement en demande : tant qu'elle n'est
+    // pas acceptée, rien ne change.
+    const request1 = await request(app.getHttpServer())
+      .post(`/users/${author.id}/follow`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(201);
+    expect(request1.body.status).toBe('pending');
+    expect(ids((await feed(viewer, { tab: 'local' }).expect(200)).body)).not.toContain(post.id);
+
+    // Une fois la demande acceptée, la publication apparaît dans le fil.
+    await request(app.getHttpServer())
+      .post(`/users/me/follow-requests/${viewer.id}/accept`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .expect(201);
+    const visible = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
+    expect(visible).toContain(post.id);
+  });
+
+  it('filtre le fil par format pour un pager plein écran', async () => {
+    const author = await register('Formats');
+    const viewer = await register('LecteurFormat');
+    const city = `Format-${suffix}`;
+    await Promise.all([setCity(author.id, city), setCity(viewer.id, city)]);
+    const textPost = await publish(author);
+    const other = await publish(author);
+
+    await request(app.getHttpServer())
+      .get('/feed')
+      .query({ tab: 'local', format: 'video' })
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(200)
+      .expect((response) => {
+        expect(ids(response.body)).not.toContain(textPost.id);
+        expect(ids(response.body)).not.toContain(other.id);
+      });
+
+    const texts = await feed(viewer, { tab: 'local', format: 'text' }).expect(200);
+    expect(ids(texts.body)).toEqual(expect.arrayContaining([textPost.id, other.id]));
+    await feed(viewer, { tab: 'local', format: 'gif' }).expect(400);
+  });
+
+  it('enregistre une vue unique et un temps de visionnage croissant', async () => {
+    const author = await register('Compteur');
+    const viewer = await register('Spectateur');
+    const second = await register('Spectatrice');
+    const city = `Vues-${suffix}`;
+    await Promise.all([
+      setCity(author.id, city),
+      setCity(viewer.id, city),
+      setCity(second.id, city),
+    ]);
+    const post = await publish(author);
+
+    const view = (actor: { token: string }, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post(`/publications/${post.id}/view`)
+        .set('Authorization', `Bearer ${actor.token}`)
+        .send(body);
+
+    const first = await view(viewer, { watchedMs: 1200 }).expect(201);
+    expect(first.body).toMatchObject({ viewCount: 1, watchMs: 1200, completed: false, firstView: true });
+
+    // Rejouer ne crée pas de vue supplémentaire, et le temps ne redescend pas.
+    const replay = await view(viewer, { watchedMs: 800 }).expect(201);
+    expect(replay.body).toMatchObject({ viewCount: 1, watchMs: 1200, firstView: false });
+
+    const longer = await view(viewer, { watchedMs: 5000, completed: true }).expect(201);
+    expect(longer.body).toMatchObject({ viewCount: 1, watchMs: 5000, completed: true });
+
+    const other = await view(second, { watchedMs: 900 }).expect(201);
+    expect(other.body.viewCount).toBe(2);
+
+    // Le compteur du fil suit les vues uniques.
+    const page = (await feed(viewer, { tab: 'local' }).expect(200)).body;
+    const item = page.items.find((entry: { id: string }) => entry.id === post.id);
+    expect(item.counters.views).toBe(2);
+
+    await view(viewer, { watchedMs: -10 }).expect(400);
+    await view(viewer, { watchedMs: 'beaucoup' }).expect(400);
+  });
+
+  it('recalcule périodiquement le score sans interaction', async () => {
+    const ranking = app.get(RankingService);
+    const author = await register('Ranking');
+    const post = await publish(author);
+    // Score effacé : c'est l'état d'une publication dont la fraîcheur n'a jamais
+    // été réévaluée (le cas que le worker doit corriger).
+    await setHotScore(post.id, 0);
+
+    await ranking.recomputeHotScores();
+    const [row] = await db
+      .select({ hotScore: publications.hotScore })
+      .from(publications)
+      .where(eq(publications.id, post.id));
+    expect(row.hotScore).toBeGreaterThan(0);
+
+    // Deuxième passe : plus rien à réécrire.
+    expect(await ranking.recomputeHotScores()).toBe(0);
+  });
+
+  it('garde l’ordre d’une session stable malgré une interaction', async () => {
+    const author = await register('Session');
+    const viewer = await register('Swipe');
+    const city = `Session-${suffix}`;
+    await Promise.all([setCity(author.id, city), setCity(viewer.id, city)]);
+
+    const posts = [];
+    for (let index = 0; index < 5; index += 1) {
+      posts.push(await publish(author));
+    }
+    for (let index = 0; index < posts.length; index += 1) {
+      await setHotScore(posts[index].id, 500 - index * 100);
+    }
+
+    const page1 = await feed(viewer, { tab: 'local', limit: 2 }).expect(200);
+    const firstPage = ids(page1.body);
+    expect(firstPage).toHaveLength(2);
+    expect(page1.body.nextCursor).toEqual(expect.any(String));
+
+    // Une interaction arrive entre deux pages : sans session figée, le score
+    // bouge et la page 2 sauterait ou répéterait des lignes.
+    await request(app.getHttpServer())
+      .post(`/publications/${posts[4].id}/like`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(201);
+
+    const page2 = await feed(viewer, {
+      tab: 'local',
+      limit: 3,
+      cursor: page1.body.nextCursor,
+    }).expect(200);
+    const secondPage = ids(page2.body);
+    expect(secondPage).toHaveLength(3);
+    for (const id of secondPage) {
+      expect(firstPage).not.toContain(id);
+    }
+    // Aucune publication perdue : les 5 sont couvertes par les deux pages.
+    expect(new Set([...firstPage, ...secondPage]).size).toBe(5);
+  });
+
+  it('ne resert pas un contenu déjà vu dans « Pour toi », mais le garde en local', async () => {
+    const author = await register('Vu');
+    const viewer = await register('Revoir');
+    const city = `Vues-${suffix}-pourtou`;
+    await Promise.all([setCity(author.id, city), setCity(viewer.id, city)]);
+    const post = await publish(author);
+    // Score élevé : la publication entre à coup sûr dans les 200 candidates.
+    await setHotScore(post.id, 2_000_000_000);
+
+    expect(ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body)).toContain(post.id);
+
+    await request(app.getHttpServer())
+      .post(`/publications/${post.id}/view`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .send({ watchedMs: 1500 })
+      .expect(201);
+
+    // « Pour toi » avance : le contenu vu récemment est écarté.
+    expect(ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body)).not.toContain(post.id);
+    // Local reste un fil de proximité : le contenu y demeure.
+    expect(ids((await feed(viewer, { tab: 'local' }).expect(200)).body)).toContain(post.id);
+  });
+
+  it('applique « pas intéressé » et le masquage d’un auteur', async () => {
+    const author = await register('Ecartee');
+    const viewer = await register('Selectif');
+    const city = `Feedback-${suffix}`;
+    await Promise.all([setCity(author.id, city), setCity(viewer.id, city)]);
+    const first = await publish(author);
+    const second = await publish(author);
+    await setHotScore(first.id, 900);
+    await setHotScore(second.id, 800);
+
+    // Publication écartée : elle disparaît du fil.
+    await request(app.getHttpServer())
+      .post('/feedback')
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .send({ targetType: 'publication', targetId: first.id })
+      .expect(201);
+    const afterHide = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
+    expect(afterHide).not.toContain(first.id);
+    expect(afterHide).toContain(second.id);
+
+    // Retrait : elle revient.
+    await request(app.getHttpServer())
+      .delete(`/feedback/publication/${first.id}`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(200);
+    expect(ids((await feed(viewer, { tab: 'local' }).expect(200)).body)).toContain(first.id);
+
+    // Auteur masqué : plus rien de lui, même ses autres publications.
+    await request(app.getHttpServer())
+      .post('/feedback')
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .send({ targetType: 'author', targetId: author.id })
+      .expect(201);
+    const afterMute = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
+    expect(afterMute).not.toContain(first.id);
+    expect(afterMute).not.toContain(second.id);
+
+    // Se masquer soi-même est refusé.
+    await request(app.getHttpServer())
+      .post('/feedback')
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .send({ targetType: 'author', targetId: viewer.id })
+      .expect(400);
+  });
+
+  it('trie les abonnements par date, pas par score', async () => {
+    const author = await register('Chrono');
+    const viewer = await register('Fidele');
+    const older = await publish(author);
+    const newer = await publish(author);
+    await setHotScore(older.id, 900_000);
+    await setHotScore(newer.id, 10);
+    await request(app.getHttpServer())
+      .post(`/users/${author.id}/follow`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(201);
+
+    const following = ids((await feed(viewer, { tab: 'following' }).expect(200)).body);
+    const newerIndex = following.indexOf(newer.id);
+    const olderIndex = following.indexOf(older.id);
+    expect(newerIndex).toBeGreaterThanOrEqual(0);
+    expect(olderIndex).toBeGreaterThanOrEqual(0);
+    expect(newerIndex).toBeLessThan(olderIndex);
   });
 
   it('préserve l’ordre du score matérialisé entre deux appels', async () => {

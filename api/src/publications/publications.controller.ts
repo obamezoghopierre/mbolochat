@@ -10,11 +10,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
+
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/jwt-payload.js';
 import { CreatePublicationDto } from './dto/create-publication.dto.js';
-import { CreateCommentDto, ReactDto } from './dto/interactions.dto.js';
+import { CreateCommentDto, ReactDto, RecordViewDto } from './dto/interactions.dto.js';
 import { COMMENT_LIST_DEFAULT_LIMIT, PublicationsService } from './publications.service.js';
 
 @Controller('publications')
@@ -38,6 +40,7 @@ export class PublicationsController {
   }
 
   @Post(':id/like')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
   async react(
     @CurrentUser() current: JwtPayload,
     @Param('id') id: string,
@@ -49,6 +52,18 @@ export class PublicationsController {
   @Delete(':id/like')
   async unreact(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
     return this.publications.unreact(id, current.sub);
+  }
+
+  @Post(':id/view')
+  // Une vue par page affichée : plafond large, mais un client bogué ne doit pas
+  // pouvoir gonfler indéfiniment les compteurs.
+  @Throttle({ default: { limit: 600, ttl: 60_000 } })
+  async view(
+    @CurrentUser() current: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: RecordViewDto,
+  ) {
+    return this.publications.recordView(id, current.sub, body ?? {});
   }
 
   @Post(':id/save')

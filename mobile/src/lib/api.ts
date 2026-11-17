@@ -280,6 +280,59 @@ export const api = {
     );
   },
 
+  /** « Pas intéressé » : la publication ne revient plus dans le fil. */
+  notInterested(token: string, publicationId: string) {
+    return request<unknown>('/feedback', {
+      method: 'POST',
+      token,
+      body: { targetType: 'publication', targetId: publicationId },
+    });
+  },
+
+  /** Retire un « pas intéressé » (le contenu peut revenir). */
+  removeNotInterested(token: string, publicationId: string) {
+    return request<{ removed: boolean }>(`/feedback/publication/${publicationId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  /** Masque toutes les publications d'un auteur dans le fil. */
+  muteAuthor(token: string, authorId: string) {
+    return request<unknown>('/feedback', {
+      method: 'POST',
+      token,
+      body: { targetType: 'author', targetId: authorId },
+    });
+  },
+
+  /** Lève le masquage d'un auteur. */
+  unmuteAuthor(token: string, authorId: string) {
+    return request<{ removed: boolean }>(`/feedback/author/${authorId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  /**
+   * Enregistre une vue et le temps de visionnage cumulé.
+   *
+   * Idempotent côté serveur : une seule vue par compte et par publication, temps
+   * croissant. Appelé au moment où la page quitte l'écran, pas à chaque tick.
+   */
+  recordView(
+    token: string,
+    publicationId: string,
+    input: { watchedMs: number; completed?: boolean },
+  ) {
+    return request<{
+      viewCount: number;
+      watchMs: number;
+      completed: boolean;
+      firstView: boolean;
+    }>(`/publications/${publicationId}/view`, { method: 'POST', token, body: input });
+  },
+
   /** Republie la publication sur son propre profil, idempotent. */
   repostPublication(token: string, publicationId: string) {
     return request<{ reposted: boolean; repostCount: number }>(

@@ -23,13 +23,15 @@ export function FeedGestureLayer({
   onLongPressEnd,
   accessibilityLabel,
 }: {
-  onDoubleTap: () => void;
+  /** Reçoit le point du double-tap (coordonnées relatives au média). */
+  onDoubleTap: (point: { x: number; y: number } | null) => void;
   onTap: () => void;
   onLongPressStart: () => void;
   onLongPressEnd: () => void;
   accessibilityLabel: string;
 }) {
   const lastTap = useRef(0);
+  const lastPoint = useRef<{ x: number; y: number } | null>(null);
   const singleTapTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const longPressed = useRef(false);
@@ -47,7 +49,10 @@ export function FeedGestureLayer({
 
   useEffect(() => clearTimers, [clearTimers]);
 
-  const handlePressIn = useCallback(() => {
+  const handlePressIn = useCallback((event?: { nativeEvent?: { locationX?: number; locationY?: number } }) => {
+    const x = event?.nativeEvent?.locationX;
+    const y = event?.nativeEvent?.locationY;
+    lastPoint.current = typeof x === 'number' && typeof y === 'number' ? { x, y } : null;
     longPressed.current = false;
     longPressTimer.current = setTimeout(() => {
       longPressed.current = true;
@@ -73,7 +78,7 @@ export function FeedGestureLayer({
         clearTimeout(singleTapTimer.current);
         singleTapTimer.current = undefined;
       }
-      onDoubleTap();
+      onDoubleTap(lastPoint.current);
       return;
     }
     lastTap.current = now;

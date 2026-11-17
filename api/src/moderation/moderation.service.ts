@@ -17,6 +17,7 @@ import {
   stories,
   users,
 } from '../db/schema.js';
+import { enqueuePublicationCleanup } from '../social-media/media-cleanup.js';
 
 export const QUEUE_DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -363,6 +364,11 @@ export class ModerationService {
           .update(publications)
           .set({ moderationStatus: status })
           .where(eq(publications.id, targetId));
+        if (action === 'remove') {
+          // Un retrait définitif doit aussi retirer les octets du stockage :
+          // sinon l'URL du média reste valable après la décision.
+          await enqueuePublicationCleanup(tx, targetId);
+        }
       } else {
         await tx
           .update(comments)

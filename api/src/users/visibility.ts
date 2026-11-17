@@ -127,6 +127,35 @@ export function canViewProfile(
   return viewer.viewerId !== null && viewer.isFollower;
 }
 
+/**
+ * Les médias de cette publication peuvent-ils être servis par le CDN public ?
+ *
+ * Seul un contenu réellement public y a droit : une URL publique est immuable et
+ * ne peut pas être révoquée, elle ne doit donc jamais désigner un contenu
+ * `followers`, un compte privé, un contenu en revue ou supprimé. Tout le reste
+ * passe par une URL signée courte.
+ */
+export function isPubliclyCacheable(publication: {
+  /** Visibilité de la publication (`public`, `followers`, `private`). */
+  visibility: SocialVisibility;
+  /** Statut de modération courant. */
+  moderationStatus: SocialModerationStatus;
+  /** Suppression logique, par l'auteur ou la modération. */
+  deleted: boolean;
+  /** Le compte auteur est privé (`users.private_account`). */
+  authorPrivateAccount: boolean;
+}): boolean {
+  if (publication.visibility !== 'public' || publication.deleted) {
+    return false;
+  }
+  if (publication.authorPrivateAccount) {
+    return false;
+  }
+  return (
+    publication.moderationStatus === 'pending' || publication.moderationStatus === 'approved'
+  );
+}
+
 /** Le visiteur peut-il commenter / mentionner / reposter ce compte ? */
 export function canInteract(permission: SocialInteractor, viewer: SocialViewer): boolean {
   if (viewer.viewerId === null || viewer.blocked) {

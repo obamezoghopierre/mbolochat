@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
 import { DRIZZLE, type Database } from '../src/db/db.module.js';
-import { users } from '../src/db/schema.js';
+import { mediaAssets, users } from '../src/db/schema.js';
 import { MediaWorkerModule } from '../src/social-media/media-worker.module.js';
 import { MediaWorkerService } from '../src/social-media/media-worker.service.js';
 
@@ -231,6 +231,65 @@ describe('Publications avec médias (e2e)', () => {
     expect(created.body.media[0].url).toContain('.mp4');
     expect(created.body.media[0].posterUrl).toContain('posters');
     expect(created.body.media[0].durationMs).toBeGreaterThan(900);
+  });
+
+  it('signe les médias d’une publication réservée aux abonnés', async () => {
+    const author = await register('Fermee');
+    const assetId = await readyAsset(author, {
+      kind: 'image',
+      mime: 'image/png',
+      bytes: await png(),
+    });
+
+    // Publication publique : URL de CDN, lisible sans signature.
+    const open = await publish(author, { assetIds: [assetId], caption: 'Ouverte' }).expect(201);
+    expect(open.body.media[0].url).toContain('social/variants/');
+    expect(open.body.media[0].url).not.toContain('X-Amz-Signature');
+
+    // Publication réservée aux abonnés : URL signée courte, et réellement lisible.
+    const closedAsset = await readyAsset(author, {
+      kind: 'image',
+      mime: 'image/png',
+      bytes: await png(),
+    });
+    const closed = await publish(author, {
+      assetIds: [closedAsset],
+      caption: 'Abonnés',
+      visibility: 'followers',
+    }).expect(201);
+    const signedUrl: string = closed.body.media[0].url;
+    expect(signedUrl).toContain('X-Amz-Signature');
+    // Le chemin public du bucket n'est plus exposé pour un contenu non public.
+    expect(signedUrl).not.toBe(open.body.media[0].url);
+    const fetched = await fetch(signedUrl);
+    expect(fetched.status).toBe(200);
+    expect(Buffer.from(await fetched.arrayBuffer()).subarray(0, 4).toString('ascii')).toBe('RIFF');
+  });
+
+  it('purge les objets d’une publication supprimée', async () => {
+    const author = await register('Purgee');
+    const assetId = await readyAsset(author, {
+      kind: 'image',
+      mime: 'image/png',
+      bytes: await png(),
+    });
+    const created = await publish(author, { assetIds: [assetId], caption: 'Éphémère' }).expect(201);
+    const publicUrl: string = created.body.media[0].url;
+    expect((await fetch(publicUrl)).status).toBe(200);
+
+    await request(app.getHttpServer())
+      .delete(`/publications/${created.body.id}`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .expect(200);
+
+    // Le worker exécute le job `cleanup` mis en file par la suppression.
+    await worker.runOnce(10);
+
+    const [row] = await db.select().from(mediaAssets).where(eq(mediaAssets.id, assetId));
+    expect(row.deletedAt).not.toBeNull();
+    expect(row.variants).toBeNull();
+    // L'URL publique ne sert plus rien : les octets ont quitté le stockage.
+    expect((await fetch(publicUrl)).status).toBe(404);
   });
 
   it('refuse un média d’un autre compte, non prêt, ou incohérent', async () => {

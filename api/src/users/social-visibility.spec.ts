@@ -4,6 +4,7 @@ import {
   canInteract,
   canViewProfile,
   canViewPublication,
+  isPubliclyCacheable,
   type SocialPublicationFacts,
   type SocialViewer,
 } from './visibility.js';
@@ -131,5 +132,30 @@ describe('canInteract', () => {
   it('« personne » refuse toujours, et un visiteur anonyme aussi', () => {
     expect(canInteract('nobody', viewer())).toBe(false);
     expect(canInteract('everyone', viewer({ viewerId: null }))).toBe(false);
+  });
+});
+
+describe('isPubliclyCacheable', () => {
+  const facts = (overrides: Partial<Parameters<typeof isPubliclyCacheable>[0]> = {}) => ({
+    visibility: 'public' as const,
+    moderationStatus: 'approved' as const,
+    deleted: false,
+    authorPrivateAccount: false,
+    ...overrides,
+  });
+
+  it('accepte une publication publique d’un compte public', () => {
+    expect(isPubliclyCacheable(facts())).toBe(true);
+    // `pending` est l'état d'un contrôle automatique en cours : encore servi.
+    expect(isPubliclyCacheable(facts({ moderationStatus: 'pending' }))).toBe(true);
+  });
+
+  it('refuse tout ce qui n’est pas réellement public', () => {
+    expect(isPubliclyCacheable(facts({ visibility: 'followers' }))).toBe(false);
+    expect(isPubliclyCacheable(facts({ visibility: 'private' }))).toBe(false);
+    expect(isPubliclyCacheable(facts({ authorPrivateAccount: true }))).toBe(false);
+    expect(isPubliclyCacheable(facts({ moderationStatus: 'flagged' }))).toBe(false);
+    expect(isPubliclyCacheable(facts({ moderationStatus: 'removed' }))).toBe(false);
+    expect(isPubliclyCacheable(facts({ deleted: true }))).toBe(false);
   });
 });

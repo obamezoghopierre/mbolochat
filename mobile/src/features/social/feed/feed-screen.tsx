@@ -1,7 +1,15 @@
 import { Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Animated, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  AppState,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { useNetworkState } from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
@@ -34,15 +42,39 @@ const NOTICE_DURATION = 2600;
  * Tous les états restent explicites (chargement, vide, erreur, pagination).
  */
 export function FeedScreen() {
-
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<FeedTab>(DEFAULT_TAB);
+  // Le fil doit se taire dès qu'il n'est plus l'écran visible ou que l'app passe
+  // en arrière-plan. `Tabs` garde les écrans montés : sans ces deux signaux, la
+  // vidéo continuait de jouer sous l'onglet Messages.
+  const [screenFocused, setScreenFocused] = useState(true);
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+
+  useFocusEffect(
+    useCallback(() => {
+      setScreenFocused(true);
+      return () => setScreenFocused(false);
+    }, []),
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      setAppActive(state === 'active');
+    });
+    return () => subscription.remove();
+  }, []);
 
   return (
     <View style={styles.screen}>
       {/* Remonter le fil à chaque onglet évite de réutiliser un curseur d'un
           autre classement. */}
-      <FeedSurfaceView key={tab} tab={tab} onTabChange={setTab} topInset={insets.top} />
+      <FeedSurfaceView
+        key={tab}
+        tab={tab}
+        onTabChange={setTab}
+        topInset={insets.top}
+        playbackActive={screenFocused && appActive}
+      />
     </View>
   );
 }
@@ -51,14 +83,20 @@ function FeedSurfaceView({
   tab,
   onTabChange,
   topInset,
+  playbackActive,
 }: {
   tab: FeedTab;
   onTabChange: (tab: FeedTab) => void;
   topInset: number;
+  playbackActive: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const [screenHeight, setScreenHeight] = useState(0);
   const feed = useFeed(tab);
+  // État réseau : le fil reste lisible hors ligne (contenu déjà chargé), mais
+  // l'utilisateur doit savoir pourquoi rien de nouveau n'arrive.
+  const network = useNetworkState();
+  const offline = network.isConnected === false;
   // La vidéo ne passe jamais sous la barre système (Retour/Accueil/Récents) :
   // l'item s'arrête juste au-dessus, comme sur TikTok. On retire donc l'inset
   // du bas à la hauteur mesurée par `onLayout`.
@@ -107,9 +145,16 @@ function FeedSurfaceView({
           items={feed.items}
           height={height}
           barInset={barInset}
+          playbackActive={playbackActive}
+          refreshing={feed.refreshing}
+          hasMore={feed.hasMore}
           onLoadMore={feed.loadMore}
+          onRefresh={feed.refresh}
           actions={{
             toggleLike: feed.toggleLike,
+            setReaction: feed.setReaction,
+            dismiss: feed.dismiss,
+            muteAuthor: feed.muteAuthor,
             toggleSave: feed.toggleSave,
             toggleRepost: feed.toggleRepost,
             follow: feed.follow,
@@ -138,7 +183,6 @@ function FeedSurfaceView({
                 style={styles.tab}>
                 <ThemedText
                   numberOfLines={1}
-                  allowFontScaling={false}
                   style={[styles.tabLabel, active && styles.tabLabelActive, OnMediaShadow]}>
                   {entry.label}
                 </ThemedText>
@@ -158,6 +202,14 @@ function FeedSurfaceView({
           </Pressable>
         </View>
       </View>
+
+      {offline ? (
+        <View style={[styles.offline, { top: topInset + Spacing.six }]} pointerEvents="none">
+          <ThemedText type="small" style={styles.offlineText}>
+            {fr.social.offlineNotice}
+          </ThemedText>
+        </View>
+      ) : null}
 
       {feed.notice ? (
         <Animated.View
@@ -340,6 +392,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.28)',
+  },
+  offline: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: 12,
+    backgroundColor: 'rgba(20,22,26,0.86)',
+  },
+  offlineText: {
+    color: FeedSurface.onMedia,
+    fontWeight: '600',
   },
   notice: {
     position: 'absolute',

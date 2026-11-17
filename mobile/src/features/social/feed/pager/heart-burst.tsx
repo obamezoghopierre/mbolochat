@@ -14,7 +14,14 @@ import { useHeartBurst } from './use-heart-burst';
  * compteur plutôt qu'un booléen permet deux double-taps consécutifs sans
  * attendre la fin de l'animation.
  */
-export function HeartBurstOverlay({ burstKey }: { burstKey: number }) {
+export function HeartBurstOverlay({
+  burstKey,
+  point,
+}: {
+  burstKey: number;
+  /** Point du double-tap : le cœur naît sous le doigt, comme sur TikTok. */
+  point?: { x: number; y: number } | null;
+}) {
   const { burst, opacity, scale, translateY } = useHeartBurst();
 
   // `burstKey` change uniquement sur un double-tap : l'effet rejoue l'animation.
@@ -28,7 +35,16 @@ export function HeartBurstOverlay({ burstKey }: { burstKey: number }) {
   return (
     <Animated.View
       pointerEvents="none"
-      style={[styles.center, { opacity, transform: [{ translateY }, { scale }] }]}>
+      style={[
+        point ? styles.atPoint : styles.center,
+        point
+          ? {
+              left: point.x - FeedMetrics.heart / 2,
+              top: point.y - FeedMetrics.heart / 2,
+            }
+          : null,
+        { opacity, transform: [{ translateY }, { scale }] },
+      ]}>
       <View style={styles.glow}>
         <Icon
           icon={Heart}
@@ -46,6 +62,9 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  atPoint: {
+    position: 'absolute',
   },
   glow: {
     shadowColor: FeedSurface.like,

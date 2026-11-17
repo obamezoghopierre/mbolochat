@@ -941,6 +941,12 @@ export interface MediaVariant {
   /** URL publique du CDN, dérivée de la clé de stockage. */
   url: string;
   sizeBytes: number;
+  /**
+   * Clé de l'objet dans le stockage. Indispensable pour signer une variante
+   * dont la publication n'est pas publique ; absente des lignes antérieures,
+   * auquel cas elle est redéduite de `url` (`keyFromPublicUrl`).
+   */
+  key?: string;
 }
 
 /**
@@ -1018,6 +1024,9 @@ export const mediaJobs = pgTable(
   (table) => [
     index('media_jobs_pending_idx').on(table.status, table.nextAttemptAt),
     index('media_jobs_asset_idx').on(table.assetId),
+    // Un seul job par asset et par type : rejouer une demande de purge ou de
+    // variante ne doit pas empiler des lignes identiques.
+    uniqueIndex('media_jobs_asset_kind_idx').on(table.assetId, table.kind),
   ],
 );
 
@@ -1097,6 +1106,13 @@ export const publications = pgTable(
     uniqueIndex('publications_author_client_idx').on(table.authorId, table.clientId),
     index('publications_feed_idx').on(table.visibility, table.moderationStatus, table.createdAt),
     index('publications_hot_score_idx').on(table.hotScore),
+    // Index du fil : la requête filtre toujours les suppressions et la
+    // modération, puis trie par score. Un index partiel évite de parcourir les
+    // lignes invisibles avant de trouver la page demandée.
+    index('publications_feed_hot_idx')
+      .on(table.hotScore)
+      .where(sql`deleted_at is null and moderation_status in ('pending', 'approved')`),
+    index('publications_visibility_hot_idx').on(table.visibility, table.hotScore),
     index('publications_author_created_idx').on(table.authorId, table.createdAt),
   ],
 );
@@ -1240,10 +1256,81 @@ export const publicationViews = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Temps de visionnage cumulé le plus élevé observé pour cette vue, en
+     * millisecondes. Signal de classement (`watch time`), jamais fourni
+     * directement comme vérité : le serveur borne la valeur à la durée du média
+     * et ne la fait que croître.
+     */
+    watchMs: integer('watch_ms').notNull().default(0),
+    /** La vue a atteint la fin du média au moins une fois. */
+    completed: boolean('completed').notNull().default(false),
   },
   (table) => [
     primaryKey({ columns: [table.publicationId, table.userId] }),
     index('publication_views_user_idx').on(table.userId),
+    // Agrégats de classement par publication (vues uniques, durée moyenne).
+    index('publication_views_publication_idx').on(table.publicationId),
+  ],
+);
+
+/** Cible d'un retour négatif : une publication précise ou un auteur entier. */
+export const feedbackTargetEnum = pgEnum('feedback_target', ['publication', 'author']);
+
+/**
+ * Retours négatifs du fil (« Pas intéressé », « Masquer cet auteur »).
+ *
+ * Le serveur les applique **en SQL** dans le fil : un contenu écarté ne revient
+ * pas par une autre page ni par un autre onglet. La cible est polymorphe, donc
+ * `targetId` n'a pas de clé étrangère ; la purge des comptes supprime les lignes
+ * par `userId`.
+ */
+export const contentFeedback = pgTable(
+  'content_feedback',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    targetType: feedbackTargetEnum('target_type').notNull(),
+    /** `publications.id` ou `users.id` selon `targetType`. */
+    targetId: text('target_id').notNull(),
+    /** Motif technique, extensible (`not_interested` pour l'instant). */
+    kind: text('kind').notNull().default('not_interested'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.targetType, table.targetId] }),
+    index('content_feedback_target_idx').on(table.targetType, table.targetId),
+  ],
+);
+
+/**
+ * Session de fil : l'ordre exact des publications proposées à un visiteur.
+ *
+ * Le classement dépend de signaux mouvants (score, affinité, déjà-vu) : paginer
+ * dessus directement ferait sauter ou répéter des lignes dès qu'une interaction
+ * arrive entre deux pages. La session fige l'ordre une fois pour toutes ; le
+ * curseur ne porte plus qu'un décalage.
+ */
+export const feedSessions = pgTable(
+  'feed_sessions',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Onglet d'origine : `for-you` ou `local` (les abonnements sont chronologiques). */
+    tab: text('tab').notNull(),
+    /** Ordre figé de la session (identifiants de publications). */
+    publicationIds: jsonb('publication_ids').$type<string[]>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index('feed_sessions_user_idx').on(table.userId, table.createdAt),
+    index('feed_sessions_expiry_idx').on(table.expiresAt),
   ],
 );
 

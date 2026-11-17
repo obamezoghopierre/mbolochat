@@ -19,6 +19,32 @@ export interface PublicationMediaView {
   altText: string | null;
 }
 
+/**
+ * Ce dont la résolution d'URL a besoin côté stockage. Interface étroite à
+ * dessein : `loadPublicationMedia` reste testable sans S3, et la signature des
+ * URL n'est jamais décidée dans la couche de lecture.
+ */
+export interface MediaUrlResolver {
+  /** URL publique immuable (contenu réellement public uniquement). */
+  publicUrl(key: string): string | null;
+  /** URL signée courte, pour tout contenu qui ne doit pas rester public. */
+  presignGet(key: string): Promise<string>;
+  /** Clé d'objet déduite d'une URL publique (variantes historiques). */
+  keyFromPublicUrl(url: string): string | null;
+}
+
+/**
+ * Niveau de diffusion d'une publication :
+ * - `public` : le média peut être servi par le CDN (publication publique d'un
+ *   compte public, non supprimée, non retirée par la modération) ;
+ * - `signed` : tout le reste (abonnés, privé, compte privé, `flagged`,
+ *   supprimé). Un contenu non public ne doit jamais être atteignable par une
+ *   URL qui ne peut pas être révoquée.
+ */
+export type MediaAccess = 'public' | 'signed';
+
+export type MediaAccessFor = (publicationId: string) => MediaAccess;
+
 type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
 type Executor = Database | Transaction;
 type AssetRow = typeof mediaAssets.$inferSelect;
@@ -26,58 +52,70 @@ type AssetRow = typeof mediaAssets.$inferSelect;
 /** Variantes préférées selon le type, de la meilleure à la plus légère. */
 const IMAGE_PREFERENCE = ['medium', 'thumb'];
 const VIDEO_PREFERENCE = ['mp4'];
+const POSTER_PREFERENCE = ['poster'];
 
-function variantUrl(asset: AssetRow, labels: string[]): string | null {
+function findVariant(asset: AssetRow, labels: string[]): MediaVariant | null {
   for (const label of labels) {
-    const found = (asset.variants ?? []).find((variant: MediaVariant) => variant.label === label);
+    const found = (asset.variants ?? []).find((variant) => variant.label === label);
     if (found?.url) {
-      return found.url;
+      return found;
     }
   }
   return null;
 }
 
-/**
- * Résout l'URL servie au client : variante adaptée si le worker en a produit
- * une, sinon l'original (chemin public du stockage). `null` si aucun stockage
- * public n'est configuré : le client ne doit pas recevoir une clé S3.
- */
-export function mediaView(
-  asset: AssetRow,
-  position: number,
-  baseUrl: string | null,
-  altText: string | null = null,
-): PublicationMediaView {
-  const preferred =
-    asset.kind === 'video' ? variantUrl(asset, VIDEO_PREFERENCE) : variantUrl(asset, IMAGE_PREFERENCE);
-  const fallback =
-    baseUrl && asset.status === 'ready'
-      ? `${baseUrl.replace(/\/$/, '')}/${asset.storageKey}`
-      : null;
-  const poster = asset.kind === 'video' ? variantUrl(asset, ['poster']) : null;
+/** Clé de stockage d'une variante, avec repli pour les lignes sans `key`. */
+function variantKey(variant: MediaVariant, resolver: MediaUrlResolver): string | null {
+  return variant.key ?? resolver.keyFromPublicUrl(variant.url);
+}
 
-  return {
-    assetId: asset.id,
-    kind: asset.kind,
-    mime: asset.mime,
-    position,
-    width: asset.width,
-    height: asset.height,
-    durationMs: asset.durationMs,
-    url: preferred ?? fallback,
-    posterUrl: poster,
-    altText,
-  };
+/**
+ * Résout les deux URL d'un asset selon le niveau de diffusion.
+ *
+ * Aucun repli d'un contenu `signed` vers son URL publique : si la clé n'est pas
+ * retrouvable, le média est rendu sans URL et le client affiche son état
+ * d'erreur, plutôt que d'exposer une adresse non révocable.
+ */
+async function resolveUrls(
+  asset: AssetRow,
+  resolver: MediaUrlResolver,
+  access: MediaAccess,
+): Promise<{ url: string | null; posterUrl: string | null }> {
+  const main =
+    asset.kind === 'video' ? findVariant(asset, VIDEO_PREFERENCE) : findVariant(asset, IMAGE_PREFERENCE);
+  const poster = asset.kind === 'video' ? findVariant(asset, POSTER_PREFERENCE) : null;
+  // Sans variante (image sans worker, vidéo non transcodée) : l'original.
+  const mainKey = main ? variantKey(main, resolver) : asset.storageKey;
+  const posterKey = poster ? variantKey(poster, resolver) : null;
+  const ready = asset.status === 'ready';
+
+  if (access === 'public') {
+    return {
+      url: ready && mainKey ? resolver.publicUrl(mainKey) : null,
+      posterUrl: posterKey ? resolver.publicUrl(posterKey) : null,
+    };
+  }
+
+  const [url, posterUrl] = await Promise.all([
+    ready && mainKey ? resolver.presignGet(mainKey) : Promise.resolve(null),
+    posterKey ? resolver.presignGet(posterKey) : Promise.resolve(null),
+  ]);
+  return { url, posterUrl };
 }
 
 /**
  * Charge les médias d'un lot de publications, en une requête par table.
  * Utilisé par le détail et par le fil pour éviter une requête par publication.
+ *
+ * `accessFor` décide, publication par publication, si l'URL peut être publique
+ * ou doit être signée. L'appelant connaît la visibilité, la modération et le
+ * statut du compte auteur : cette couche ne les devine pas.
  */
 export async function loadPublicationMedia(
   db: Executor,
   publicationIds: string[],
-  baseUrl: string | null,
+  resolver: MediaUrlResolver | null,
+  accessFor: MediaAccessFor = () => 'public',
 ): Promise<Map<string, PublicationMediaView[]>> {
   const result = new Map<string, PublicationMediaView[]>();
   if (publicationIds.length === 0) {
@@ -102,8 +140,23 @@ export async function loadPublicationMedia(
     .orderBy(publicationMedia.position);
 
   for (const row of rows) {
+    const access = resolver ? accessFor(row.publicationId) : 'signed';
+    const urls = resolver
+      ? await resolveUrls(row.asset, resolver, access)
+      : { url: null, posterUrl: null };
     const list = result.get(row.publicationId) ?? [];
-    list.push(mediaView(row.asset, row.position, baseUrl, row.altText));
+    list.push({
+      assetId: row.asset.id,
+      kind: row.asset.kind,
+      mime: row.asset.mime,
+      position: row.position,
+      width: row.asset.width,
+      height: row.asset.height,
+      durationMs: row.asset.durationMs,
+      url: urls.url,
+      posterUrl: urls.posterUrl,
+      altText: row.altText,
+    });
     result.set(row.publicationId, list);
   }
   return result;

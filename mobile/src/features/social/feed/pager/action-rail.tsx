@@ -22,6 +22,8 @@ import type { FeedPost } from '@/lib/types';
 
 export interface FeedActions {
   onToggleLike: () => void;
+  /** Appui long sur le cœur : ouvre le sélecteur de réaction. */
+  onPickReaction?: (() => void) | null;
   onOpenComments: () => void;
   onToggleSave: () => void;
   onToggleRepost: () => void;
@@ -86,6 +88,7 @@ export const FeedActionRail = memo(function FeedActionRail({
         color={state.reacted ? FeedSurface.like : FeedSurface.onMedia}
         fill={state.reacted ? FeedSurface.like : 'none'}
         onPress={actions.onToggleLike}
+        onLongPress={actions.onPickReaction ?? undefined}
         scale={likeScale}
       />
 
@@ -140,6 +143,7 @@ function RailAction({
   label,
   accessibilityLabel,
   onPress,
+  onLongPress,
   color = FeedSurface.onMedia,
   fill = 'none',
   selected = false,
@@ -150,6 +154,7 @@ function RailAction({
   label: string;
   accessibilityLabel: string;
   onPress: () => void;
+  onLongPress?: () => void;
   color?: string;
   fill?: string;
   selected?: boolean;
@@ -164,6 +169,8 @@ function RailAction({
   return (
     <Pressable
       onPress={handlePress}
+      onLongPress={onLongPress}
+      delayLongPress={320}
       hitSlop={6}
       accessibilityRole="button"
       accessibilityState={{ selected }}

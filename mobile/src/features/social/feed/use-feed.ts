@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { applyReaction, mergeFeedPage, toggleRepost, toggleSave } from './feed-model';
 import { ApiError, api } from '@/lib/api';
-import type { FeedPost, FeedTab } from '@/lib/types';
+import type { FeedPost, FeedTab, SocialReaction } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
 
 export type FeedStatus = 'loading' | 'ready' | 'error';
@@ -99,7 +99,6 @@ export function useFeed(tab: FeedTab) {
         return;
       }
       const removing = post.viewer.reaction !== null;
-      const previous = items;
       setItems((current) => applyReaction(current, post.id, removing ? null : 'like'));
       try {
         if (removing) {
@@ -108,9 +107,72 @@ export function useFeed(tab: FeedTab) {
           await api.reactToPublication(token, post.id, 'like');
         }
       } catch {
-        // Le serveur fait foi : on rend l'état d'avant l'optimisme.
-        setItems(previous);
+        // Le serveur fait foi : on rend l'état d'avant l'optimisme, pour cette
+        // publication seulement — une page chargée entre-temps reste en place.
+        setItems((current) => restorePost(current, post));
         notifyError('Réaction non enregistrée. Vérifie ta connexion.');
+      }
+    },
+    [notifyError, token],
+  );
+
+  /**
+   * Change la réaction (ou la retire). Un seul type par compte : l'API met à
+   * jour la ligne existante, le compteur ne bouge que sur `null` ↔ type.
+   */
+  const setReaction = useCallback(
+    async (post: FeedPost, kind: SocialReaction | null) => {
+      if (!token || post.viewer.reaction === kind) {
+        return;
+      }
+      setItems((current) => applyReaction(current, post.id, kind));
+      try {
+        if (kind === null) {
+          await api.removeReaction(token, post.id);
+        } else {
+          await api.reactToPublication(token, post.id, kind);
+        }
+      } catch {
+        setItems((current) => restorePost(current, post));
+        notifyError('Réaction non enregistrée. Vérifie ta connexion.');
+      }
+    },
+    [notifyError, token],
+  );
+
+  /** Écarte une publication du fil (« Pas intéressé »), avec retour arrière. */
+  const dismiss = useCallback(
+    async (post: FeedPost) => {
+      if (!token) {
+        return;
+      }
+      const previous = items;
+      setItems((current) => current.filter((entry) => entry.id !== post.id));
+      try {
+        await api.notInterested(token, post.id);
+        setNotice({ message: 'Moins de contenus comme celui-ci', tone: 'info' });
+      } catch {
+        setItems((current) => restoreItems(current, previous));
+        notifyError('Action impossible. Réessaie.');
+      }
+    },
+    [items, notifyError, token],
+  );
+
+  /** Masque toutes les publications d'un auteur, avec retour arrière. */
+  const muteAuthorAction = useCallback(
+    async (post: FeedPost) => {
+      if (!token) {
+        return;
+      }
+      const previous = items;
+      setItems((current) => current.filter((entry) => entry.author.id !== post.author.id));
+      try {
+        await api.muteAuthor(token, post.author.id);
+        setNotice({ message: 'Auteur masqué dans ton fil', tone: 'info' });
+      } catch {
+        setItems((current) => restoreItems(current, previous));
+        notifyError('Action impossible. Réessaie.');
       }
     },
     [items, notifyError, token],
@@ -121,7 +183,6 @@ export function useFeed(tab: FeedTab) {
       if (!token) {
         return;
       }
-      const previous = items;
       const next = toggleSave(items, post.id);
       setItems(next.items);
       try {
@@ -135,7 +196,7 @@ export function useFeed(tab: FeedTab) {
           tone: 'info',
         });
       } catch {
-        setItems(previous);
+        setItems((current) => restorePost(current, post));
         notifyError('Enregistrement impossible. Vérifie ta connexion.');
       }
     },
@@ -147,7 +208,6 @@ export function useFeed(tab: FeedTab) {
       if (!token) {
         return;
       }
-      const previous = items;
       const next = toggleRepost(items, post.id);
       setItems(next.items);
       try {
@@ -161,7 +221,7 @@ export function useFeed(tab: FeedTab) {
           tone: 'info',
         });
       } catch {
-        setItems(previous);
+        setItems((current) => restorePost(current, post));
         notifyError('Republication impossible. Vérifie ta connexion.');
       }
     },
@@ -173,7 +233,6 @@ export function useFeed(tab: FeedTab) {
       if (!token) {
         return;
       }
-      const previous = items;
       setItems((current) => markFollowing(current, post.author.id));
       try {
         const result = await api.followUser(token, post.author.id);
@@ -182,11 +241,11 @@ export function useFeed(tab: FeedTab) {
           setNotice({ message: 'Demande d’abonnement envoyée', tone: 'info' });
         }
       } catch {
-        setItems(previous);
+        setItems((current) => markFollowing(current, post.author.id, post.viewer.followingAuthor));
         notifyError('Abonnement impossible. Réessaie.');
       }
     },
-    [items, notifyError, token],
+    [notifyError, token],
   );
 
   const remove = useCallback(
@@ -194,13 +253,21 @@ export function useFeed(tab: FeedTab) {
       if (!token) {
         return;
       }
-      const previous = items;
+      const index = items.findIndex((entry) => entry.id === post.id);
       setItems((current) => current.filter((entry) => entry.id !== post.id));
       try {
         await api.deletePublication(token, post.id);
         setNotice({ message: 'Publication supprimée', tone: 'info' });
       } catch {
-        setItems(previous);
+        // Réinsertion à sa place d'origine, sans écraser les autres pages.
+        setItems((current) => {
+          if (current.some((entry) => entry.id === post.id)) {
+            return current;
+          }
+          const next = [...current];
+          next.splice(Math.max(0, Math.min(index, next.length)), 0, post);
+          return next;
+        });
         notifyError('Suppression impossible.');
       }
     },
@@ -217,6 +284,9 @@ export function useFeed(tab: FeedTab) {
     refresh,
     loadMore,
     toggleLike,
+    setReaction,
+    dismiss,
+    muteAuthor: muteAuthorAction,
     toggleSave: toggleSaveAction,
     toggleRepost: toggleRepostAction,
     follow,
@@ -225,6 +295,32 @@ export function useFeed(tab: FeedTab) {
     dismissNotice: () => setNotice(null),
     retry: () => void load({ reset: true }),
   };
+}
+
+/**
+ * Réinsère les publications retirées par une action optimiste, à leur place
+ * d'origine, sans écraser ce qui a été chargé entre-temps.
+ */
+function restoreItems(items: FeedPost[], previous: FeedPost[]): FeedPost[] {
+  const present = new Set(items.map((post) => post.id));
+  const result = [...items];
+  previous.forEach((post, index) => {
+    if (!present.has(post.id)) {
+      result.splice(Math.min(index, result.length), 0, post);
+    }
+  });
+  return result;
+}
+
+/**
+ * Rend l'état d'avant l'optimisme pour **une** publication.
+ *
+ * L'ancienne version restaurait le tableau entier capturé avant l'appel : une
+ * page chargée entre-temps, ou une autre action réussie sur une autre
+ * publication, disparaissait au passage.
+ */
+function restorePost(items: FeedPost[], previous: FeedPost): FeedPost[] {
+  return items.map((post) => (post.id === previous.id ? previous : post));
 }
 
 /** Applique l'abonnement à toutes les publications du même auteur. */

@@ -1,6 +1,6 @@
-import type { LucideIcon } from 'lucide-react-native';
+import { Check, type LucideIcon } from 'lucide-react-native';
 import type { ReactNode } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { BottomSheet } from '@/components/bottom-sheet';
 import { Icon } from '@/components/icon';
@@ -15,6 +15,8 @@ export interface SheetAction {
   label: string;
   icon?: SheetIcon;
   destructive?: boolean;
+  /** Action actuellement active (réaction choisie, par exemple). */
+  selected?: boolean;
   onPress: () => void;
 }
 
@@ -76,6 +78,11 @@ function ActionRow({ action, onClose }: { action: SheetAction; onClose: () => vo
       <ThemedText style={action.destructive ? { color: theme.danger } : undefined}>
         {action.label}
       </ThemedText>
+      {action.selected ? (
+        <View style={styles.check}>
+          <Icon icon={Check} size={18} color={theme.accent} />
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -91,5 +98,8 @@ const styles = StyleSheet.create({
   },
   actionIcon: {
     width: 24,
+  },
+  check: {
+    marginLeft: 'auto',
   },
 });

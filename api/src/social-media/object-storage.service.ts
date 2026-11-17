@@ -8,9 +8,18 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 
 /** Durée de vie d'une URL d'upload : courte, à usage unique de fait. */
 export const UPLOAD_URL_TTL_SECONDS = 300;
+
+/**
+ * Durée de vie d'une URL de lecture signée (contenu non public : `followers`,
+ * privé, en revue, supprimé, ou compte privé). Volontairement courte : elle est
+ * redemandée à chaque chargement de page du fil.
+ */
+export const READ_URL_TTL_SECONDS = 600;
 
 export interface StoredObjectInfo {
   size: number;
@@ -65,6 +74,36 @@ export class ObjectStorageService {
     );
   }
 
+  /**
+   * URL présignée de lecture, pour un contenu qui ne doit pas être public
+   * (publication `followers`/privée, en revue, compte privé).
+   *
+   * Le client ne reçoit jamais la clé : seulement une URL qui expire.
+   */
+  async presignGet(key: string, expiresIn = READ_URL_TTL_SECONDS): Promise<string> {
+    const { client, bucket } = this.require();
+    return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
+      expiresIn,
+    });
+  }
+
+  /**
+   * Retrouve la clé d'un objet à partir de son URL publique du bucket.
+   *
+   * Les variantes antérieures à l'ajout du champ `key` ne stockent que leur URL :
+   * cette conversion permet de les signer rétroactivement sans migration de
+   * données. `null` si l'URL vient d'ailleurs (CDN tiers, valeur inattendue).
+   */
+  keyFromPublicUrl(url: string): string | null {
+    if (!url.includes('://')) {
+      // Variante historiquement enregistrée sous forme de clé nue.
+      return url;
+    }
+    if (!this.publicBaseUrl) return null;
+    const base = `${this.publicBaseUrl.replace(/\/$/, '')}/`;
+    return url.startsWith(base) ? url.slice(base.length) : null;
+  }
+
   /** Métadonnées de l'objet, `null` s'il n'existe pas. */
   async head(key: string): Promise<StoredObjectInfo | null> {
     const { client, bucket } = this.require();
@@ -102,6 +141,33 @@ export class ObjectStorageService {
       return this.streamToBuffer(response.Body);
     } catch (error) {
       if (this.isNotFound(error)) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * Écrit l'objet dans un fichier, sans passer par la mémoire.
+   *
+   * Une vidéo de 100 Mio téléchargée en `Buffer` multiplie l'empreinte du worker
+   * par son nombre de jobs concurrents : le transcodage travaille sur un
+   * fichier temporaire, comme le fait déjà ffmpeg.
+   *
+   * @returns `false` si l'objet n'existe pas.
+   */
+  async downloadToFile(key: string, path: string): Promise<boolean> {
+    const { client, bucket } = this.require();
+    try {
+      const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      if (!response.Body) {
+        return false;
+      }
+      await pipeline(
+        response.Body as unknown as NodeJS.ReadableStream,
+        createWriteStream(path),
+      );
+      return true;
+    } catch (error) {
+      if (this.isNotFound(error)) return false;
       throw error;
     }
   }

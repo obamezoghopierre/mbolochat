@@ -1,9 +1,25 @@
-import { Link2, Send, ShieldAlert, Trash2 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import { NetworkStateType, useNetworkState } from 'expo-network';
+import {
+  EyeOff,
+  Flame,
+  Heart,
+  Link2,
+  Send,
+  ShieldAlert,
+  Star,
+  Trash2,
+  UserX,
+} from 'lucide-react-native';
 import { router } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { setVideoCacheSizeAsync } from 'expo-video';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
+  Image,
+  Platform,
+  RefreshControl,
   Share,
   StyleSheet,
   View,
@@ -15,16 +31,27 @@ import { ThemedText } from '@/components/themed-text';
 import { FeedMetrics, FeedSurface, Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { useAuth } from '@/lib/auth-context';
-import type { FeedPost } from '@/lib/types';
+import { postDeepLink } from '@/lib/deep-link';
+import type { FeedPost, SocialReaction } from '@/lib/types';
 import { FeedActionRail } from './action-rail';
 import { isVideoPost, primaryMedia } from './feed-media';
+import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { ImagePage } from './image-page';
+import { isPageActive, videoPageMode } from './preload';
 import { PostInfoBlock } from './post-info';
 import { TextPage } from './text-page';
+import { FeedViewTracker } from './view-tracker';
 import { VideoPage } from './video-page';
+import { VideoPrefetch } from './video-prefetch';
 
 export interface FeedPagerActions {
   toggleLike: (post: FeedPost) => Promise<void>;
+  /** Change la réaction (ou la retire) : `null` retire. */
+  setReaction: (post: FeedPost, kind: SocialReaction | null) => Promise<void>;
+  /** « Pas intéressé » : retire la publication du fil. */
+  dismiss: (post: FeedPost) => Promise<void>;
+  /** Masque toutes les publications de l'auteur. */
+  muteAuthor: (post: FeedPost) => Promise<void>;
   toggleSave: (post: FeedPost) => Promise<void>;
   toggleRepost: (post: FeedPost) => Promise<void>;
   follow: (post: FeedPost) => Promise<void>;
@@ -54,8 +81,12 @@ export function FeedPager({
   items,
   height,
   barInset,
+  playbackActive,
+  refreshing,
+  hasMore,
   actions,
   onLoadMore,
+  onRefresh,
 }: {
   items: FeedPost[];
   /** Hauteur de l'écran entier : un item = un écran, comme TikTok. */
@@ -65,10 +96,26 @@ export function FeedPager({
    * overlays remontent d'autant pour ne jamais passer dessous.
    */
   barInset: number;
+  /**
+   * L'écran est au premier plan (onglet actif et application ouverte).
+   * Une page ne joue que si elle est visible **et** que cet indicateur est vrai :
+   * sans cela, le son du fil continuait sous l'onglet Messages.
+   */
+  playbackActive: boolean;
+  /** Un rafraîchissement est en cours (tirer vers le bas). */
+  refreshing: boolean;
+  /** Reste-t-il des pages à charger ? */
+  hasMore: boolean;
   actions: FeedPagerActions;
   onLoadMore: () => void;
+  /** Recharge le fil depuis le début. */
+  onRefresh: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  // Sur réseau mobile, on ne précharge pas la vidéo voisine : le lecteur de la
+  // page active suffit, et deux flux simultanés coûtent cher en données.
+  const network = useNetworkState();
+  const preloadNeighbors = network.type !== NetworkStateType.CELLULAR;
   const { user } = useAuth();
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -78,12 +125,28 @@ export function FeedPager({
   const [scrubbing, setScrubbing] = useState(false);
   // Le cœur doit battre sur le post touché, pas sur toutes les pages montées :
   // la clé porte donc l'identifiant du post en plus du compteur.
-  const [burst, setBurst] = useState<{ id: string; key: number }>({ id: '', key: 0 });
+  const [burst, setBurst] = useState<{
+    id: string;
+    key: number;
+    point: { x: number; y: number } | null;
+  }>({ id: '', key: 0, point: null });
   const [menuTarget, setMenuTarget] = useState<FeedPost | null>(null);
+  const [reactionTarget, setReactionTarget] = useState<FeedPost | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const likeScale = useMemo(() => new Animated.Value(1), []);
+
+  // Plafond du cache disque, appliqué une fois. `useVideoPlayer` active ensuite
+  // le cache sur chaque source (`useCaching`) : c'est ce couple qui rend une
+  // vidéo déjà vue relisible sans réseau. Sans cet appel, la valeur constante
+  // restait du code mort et le cache prenait sa taille par défaut (1 Gio).
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      return;
+    }
+    void setVideoCacheSizeAsync(VIDEO_CACHE_BYTES).catch(() => undefined);
+  }, []);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -107,8 +170,10 @@ export function FeedPager({
 
   /** Double-tap : réagit sans jamais retirer une réaction déjà posée. */
   const handleDoubleTap = useCallback(
-    (post: FeedPost) => {
-      setBurst((current) => ({ id: post.id, key: current.key + 1 }));
+    (post: FeedPost, point: { x: number; y: number } | null = null) => {
+      setBurst((current) => ({ id: post.id, key: current.key + 1, point }));
+      // Retour haptique immédiat : c'est ce qui rend le double-tap « physique ».
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
       Animated.sequence([
         Animated.spring(likeScale, { toValue: 1.35, useNativeDriver: true, friction: 3 }),
         Animated.spring(likeScale, { toValue: 1, useNativeDriver: true, friction: 3 }),
@@ -134,7 +199,7 @@ export function FeedPager({
       const title = caption.length > 0 ? caption : `Publication de ${post.author.displayName}`;
       try {
         await Share.share({
-          message: `${title}\n\n${deepLink(post.id)}`,
+          message: `${title}\n\n${postDeepLink(post.id)}`,
           title,
         });
       } catch {
@@ -147,7 +212,7 @@ export function FeedPager({
   const copyLink = useCallback(
     async (post: FeedPost) => {
       try {
-        await Share.share({ message: deepLink(post.id) });
+        await Share.share({ message: postDeepLink(post.id) });
         showToast('Lien partagé');
       } catch {
         actions.notifyError(fr.social.shareError);
@@ -190,9 +255,22 @@ export function FeedPager({
       icon: Link2,
       onPress: () => void copyLink(target),
     };
+    // Signaux négatifs : ils changent le classement du fil, pas seulement l'écran.
+    const notInterestedAction: SheetAction = {
+      key: 'not-interested',
+      label: fr.social.notInterested,
+      icon: EyeOff,
+      onPress: () => void actions.dismiss(target),
+    };
+    const muteAction: SheetAction = {
+      key: 'mute-author',
+      label: fr.social.muteAuthor,
+      icon: UserX,
+      onPress: () => void actions.muteAuthor(target),
+    };
     return own
       ? [linkAction, shareAction, deleteAction, reportAction]
-      : [linkAction, shareAction, reportAction];
+      : [linkAction, shareAction, notInterestedAction, muteAction, reportAction];
   }, [actions, copyLink, currentUserId, menuTarget, share]);
 
   if (height <= 0) {
@@ -222,31 +300,45 @@ export function FeedPager({
         getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
-        // 5 = la page active, une en arrière et trois en avant : la vidéo
-        // suivante est déjà montée (donc prête) quand le geste commence.
-        windowSize={5}
+        // 3 = la page active et ses deux voisines. Seule la page active monte
+        // une `VideoView` ; les voisines se contentent d'un poster ou d'un
+        // lecteur détaché (cache disque).
+        windowSize={3}
         initialNumToRender={2}
         maxToRenderPerBatch={3}
-        // `removeClippedSubviews` détache les vues dès qu'elles sortent du
-        // cadre, ce qui laisse des trous noirs pendant le snap et coupe la
-        // vidéo voisine en pleine préparation. On le laisse désactivé : la
-        // fenêtre ci-dessus borne déjà le nombre de pages montées.
+        // Désactivé explicitement : sur Android c'est **actif par défaut**, et
+        // le détachement d'une `TextureVideoView` encore rattachée à un lecteur
+        // est précisément ce qui déclenche l'IllegalStateException au scroll.
+        removeClippedSubviews={false}
         onEndReached={onLoadMore}
         // Anticipe une page à l'avance : la requête part avant le dernier item.
         onEndReachedThreshold={1.5}
+        // Tirer vers le bas recharge le classement depuis le début.
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={FeedSurface.onMedia}
+            colors={[FeedSurface.onMedia]}
+            progressBackgroundColor="rgba(0,0,0,0.6)"
+          />
+        }
         renderItem={({ item, index }) => {
-          const isActive = index === activeIndex;
+          const distance = index - activeIndex;
+          const isActive = isPageActive(index, activeIndex, playbackActive);
           const chrome = {
             height,
             barInset,
             isActive,
-            activeIndex,
             // 0 sur les autres pages : seule celle du post touché rejoue.
             burstKey: burst.id === item.id ? burst.key : 0,
+            burstPoint: burst.id === item.id ? burst.point : null,
             likeScale,
-            distance: index - activeIndex,
           };
-          const doubleTap = () => handleDoubleTap(item);
+          const doubleTap = (point?: { x: number; y: number } | null) =>
+            handleDoubleTap(item, point ?? null);
+          const videoMode = videoPageMode(distance, preloadNeighbors);
+          const sourceUrl = videoMode === 'prefetch' ? videoSourceUrl(item) : null;
           // Le bloc infos et le rail partagent la même ancre basse. Ils remontent
           // de la hauteur de la barre, de la zone de la barre de progression
           // (24 px) et de 12 px de respiration : la ligne du son ne touche
@@ -257,19 +349,40 @@ export function FeedPager({
           return (
             <View style={[styles.page, { height, width: '100%' }]}>
               {isVideoPost(item) ? (
-                <VideoPage
-                  post={item}
-                  chrome={chrome}
-                  onDoubleTapLike={doubleTap}
-                  muted={muted}
-                  onToggleSound={() => setMuted((value) => !value)}
-                  onScrubStateChange={setScrubbing}
-                />
+                videoMode === 'play' ? (
+                  <VideoPage
+                    post={item}
+                    chrome={chrome}
+                    onDoubleTapLike={doubleTap}
+                    muted={muted}
+                    scrubbing={scrubbing}
+                    onToggleSound={() => setMuted((value) => !value)}
+                    onScrubStateChange={setScrubbing}
+                  />
+                ) : videoMode === 'prefetch' ? (
+                  // Voisine : lecteur détaché (aucune vue) pour remplir le
+                  // cache, plus son poster affiché en attendant.
+                  <>
+                    {sourceUrl ? <VideoPrefetch url={sourceUrl} /> : null}
+                    <VideoPoster post={item} height={height} />
+                  </>
+                ) : (
+                  // Réseau mobile : la voisine affiche son poster, sans lecteur.
+                  <VideoPoster post={item} height={height} />
+                )
               ) : primaryMedia(item) ? (
                 <ImagePage post={item} chrome={chrome} onDoubleTapLike={doubleTap} />
               ) : (
                 <TextPage post={item} chrome={chrome} />
               )}
+
+              {/* Consommation : temps réellement visible, envoyé au serveur au
+                  moment où la page cesse d'être active. */}
+              <FeedViewTracker
+                publicationId={item.id}
+                active={isActive}
+                durationMs={primaryMedia(item)?.durationMs ?? null}
+              />
 
               <OverlayScrim />
 
@@ -301,6 +414,7 @@ export function FeedPager({
                   }}
                   actions={{
                     onToggleLike: () => void actions.toggleLike(item),
+                    onPickReaction: () => setReactionTarget(item),
                     onOpenComments: () => openComments(item),
                     onToggleSave: () => void actions.toggleSave(item),
                     onToggleRepost: () => void actions.toggleRepost(item),
@@ -316,6 +430,16 @@ export function FeedPager({
         }}
       />
 
+      {/* Fin du fil : posée en overlay, jamais en pied de liste — un élément
+          supplémentaire casserait le snap plein écran. */}
+      {!hasMore && items.length > 0 && activeIndex === items.length - 1 ? (
+        <View style={[styles.endOfFeed, { bottom: barInset + Spacing.four }]} pointerEvents="none">
+          <ThemedText type="small" style={styles.endOfFeedText}>
+            {fr.social.endOfFeed}
+          </ThemedText>
+        </View>
+      ) : null}
+
       {toast ? (
         <View style={[styles.toast, { bottom: insets.bottom + Spacing.six }]} pointerEvents="none">
           <ThemedText type="small" style={styles.toastText}>
@@ -330,6 +454,14 @@ export function FeedPager({
         subtitle={menuTarget ? `Publication de ${menuTarget.author.displayName}` : undefined}
         actions={menuActions}
         onClose={() => setMenuTarget(null)}
+      />
+
+      {/* Sélecteur de réaction : appui long sur le cœur du rail, comme TikTok. */}
+      <ActionSheet
+        visible={reactionTarget !== null}
+        title={fr.social.reactionPickerTitle}
+        actions={REACTION_ACTIONS(reactionTarget, actions, () => setReactionTarget(null))}
+        onClose={() => setReactionTarget(null)}
       />
     </View>
   );
@@ -366,14 +498,61 @@ function OverlayScrim() {
   );
 }
 
-function deepLink(publicationId: string): string {
-  return `mbolochat://post/${publicationId}`;
+/** Actions du sélecteur de réaction, construites pour la publication ciblée. */
+function REACTION_ACTIONS(
+  target: FeedPost | null,
+  actions: FeedPagerActions,
+  close: () => void,
+): SheetAction[] {
+  if (!target) {
+    return [];
+  }
+  const pick = (kind: SocialReaction | null) => () => {
+    close();
+    void actions.setReaction(target, kind);
+  };
+  return [
+    { key: 'like', label: 'J’aime', icon: Heart, selected: target.viewer.reaction === 'like', onPress: pick('like') },
+    { key: 'love', label: 'J’adore', icon: Heart, selected: target.viewer.reaction === 'love', onPress: pick('love') },
+    { key: 'fire', label: 'Feu', icon: Flame, selected: target.viewer.reaction === 'fire', onPress: pick('fire') },
+    { key: 'clap', label: 'Bravo', icon: Star, selected: target.viewer.reaction === 'clap', onPress: pick('clap') },
+    {
+      key: 'none',
+      label: 'Retirer ma réaction',
+      icon: Trash2,
+      destructive: true,
+      selected: target.viewer.reaction === null,
+      onPress: pick(null),
+    },
+  ];
+}
+
+/** Poster seul, sans lecteur : voisine non préchargée (réseau mobile). */
+function VideoPoster({ post, height }: { post: FeedPost; height: number }) {
+  const poster = videoPosterUrl(post);
+  return (
+    <View style={[styles.page, { height }]}>
+      {poster ? (
+        <Image source={{ uri: poster }} style={styles.surface} resizeMode="cover" />
+      ) : (
+        <View style={styles.surface} />
+      )}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   page: {
     backgroundColor: FeedSurface.background,
+  },
+  // Poster de la voisine non préchargée : mêmes bornes que la surface native.
+  surface: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   // 150 px découpés en bandes égales : aucun bord visible, la vidéo reste
   // claire en haut de la zone.
@@ -407,6 +586,18 @@ const styles = StyleSheet.create({
   infoColumn: {
     flex: 1,
     paddingRight: Spacing.two,
+  },
+  endOfFeed: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radii.full,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  endOfFeedText: {
+    color: FeedSurface.onMedia,
+    fontWeight: '600',
   },
   toast: {
     position: 'absolute',

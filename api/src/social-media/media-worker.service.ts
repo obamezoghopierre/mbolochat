@@ -1,9 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, asc, eq, lt, lte, or, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { mediaAssets, mediaJobs } from '../db/schema.js';
+import {
+  mediaAssets,
+  mediaJobs,
+  publicationMedia,
+  publications,
+  type MediaVariant,
+} from '../db/schema.js';
 import { processImageVariants, processVideo, type ProcessedMedia } from './media-processors.js';
 import { ObjectStorageService } from './object-storage.service.js';
 
@@ -140,6 +146,17 @@ export class MediaWorkerService {
     if (!asset) {
       throw new Error('Média introuvable.');
     }
+    if (job.kind === 'cleanup') {
+      // La purge s'applique précisément à un asset supprimé : elle précède le
+      // marquage `deleted_at`, donc elle est traitée avant le contrôle ci-dessous.
+      // Si un autre contenu vivant référence encore ce média, il n'y a rien à
+      // purger : le job se clôt sans toucher au stockage, et une suppression
+      // ultérieure le réarmera.
+      if (!(await this.isReferenced(asset.id))) {
+        await this.cleanup(asset);
+      }
+      return;
+    }
     if (asset.deletedAt) {
       throw new Error('Média supprimé.');
     }
@@ -148,38 +165,115 @@ export class MediaWorkerService {
       storage: this.storage,
       assetId: asset.id,
       storageKey: asset.storageKey,
-      existing: asset.variants,
       ffmpegPath: this.ffmpegPath,
       ffprobePath: this.ffprobePath,
     };
 
     let processed: ProcessedMedia;
-    let status = asset.status;
+    // Libellés sans lesquels l'asset n'est pas publiable. Une vidéo est
+    // utilisable dès que son MP4 transcode existe : le poster est un confort de
+    // chargement, il ne doit pas bloquer la publication s'il échoue.
+    let required: readonly string[];
     if (job.kind === 'image_variants') {
       processed = await processImageVariants(options);
-      status = 'ready';
+      required = ['medium', 'thumb'];
     } else if (job.kind === 'video_poster' || job.kind === 'video_transcode') {
       processed = await processVideo({
         ...options,
         step: job.kind === 'video_poster' ? 'poster' : 'transcode',
       });
-      if (job.kind === 'video_transcode') {
-        status = 'ready';
-      }
+      required = job.kind === 'video_transcode' ? ['mp4'] : [];
     } else {
-      throw new Error(`Type de job non pris en charge : ${job.kind}.`);
+      throw new Error(`Type de job non pris en charge : ${String(job.kind)}.`);
     }
 
+    await this.persist(asset.id, processed, required);
+  }
+
+  /**
+   * Fusionne et écrit les variantes sous verrou de ligne.
+   *
+   * Deux jobs d'un même asset (poster et transcodage) peuvent être traités par
+   * deux workers : sans `FOR UPDATE`, chacun relit un `variants` périmé et le
+   * dernier écrase la variante de l'autre.
+   */
+  private async persist(
+    assetId: string,
+    processed: ProcessedMedia,
+    required: readonly string[],
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({
+          variants: mediaAssets.variants,
+          width: mediaAssets.width,
+          height: mediaAssets.height,
+          durationMs: mediaAssets.durationMs,
+          status: mediaAssets.status,
+          deletedAt: mediaAssets.deletedAt,
+        })
+        .from(mediaAssets)
+        .where(eq(mediaAssets.id, assetId))
+        .for('update');
+      if (!current) {
+        throw new Error('Média introuvable.');
+      }
+      if (current.deletedAt) {
+        throw new Error('Média supprimé.');
+      }
+
+      const merged = mergeVariants(current.variants ?? null, processed.variants);
+      const labels = new Set(merged.map((variant) => variant.label));
+      const complete = required.every((label) => labels.has(label));
+      await tx
+        .update(mediaAssets)
+        .set({
+          variants: merged,
+          width: processed.width ?? current.width,
+          height: processed.height ?? current.height,
+          durationMs: processed.durationMs ?? current.durationMs,
+          status: complete || current.status === 'ready' ? 'ready' : 'uploaded',
+          updatedAt: new Date(),
+        })
+        .where(eq(mediaAssets.id, assetId));
+    });
+  }
+
+  /** Un contenu vivant (non supprimé, non retiré) utilise-t-il encore l'asset ? */
+  private async isReferenced(assetId: string): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: publicationMedia.id })
+      .from(publicationMedia)
+      .innerJoin(publications, eq(publications.id, publicationMedia.publicationId))
+      .where(
+        and(
+          eq(publicationMedia.assetId, assetId),
+          isNull(publications.deletedAt),
+          ne(publications.moderationStatus, 'removed'),
+        ),
+      )
+      .limit(1);
+    return Boolean(row);
+  }
+
+  /**
+   * Purge les objets d'un asset (original, variantes, poster) puis le marque
+   * supprimé. `DeleteObject` est idempotent : rejouer la purge est sans effet.
+   */
+  private async cleanup(asset: typeof mediaAssets.$inferSelect): Promise<void> {
+    const keys = new Set<string>([asset.storageKey]);
+    for (const variant of asset.variants ?? []) {
+      const key = variant.key ?? this.storage.keyFromPublicUrl(variant.url);
+      if (key) {
+        keys.add(key);
+      }
+    }
+    for (const key of keys) {
+      await this.storage.delete(key);
+    }
     await this.db
       .update(mediaAssets)
-      .set({
-        variants: processed.variants,
-        width: processed.width ?? asset.width,
-        height: processed.height ?? asset.height,
-        durationMs: processed.durationMs ?? asset.durationMs,
-        status,
-        updatedAt: new Date(),
-      })
+      .set({ deletedAt: new Date(), variants: null, updatedAt: new Date() })
       .where(eq(mediaAssets.id, asset.id));
   }
 
@@ -200,4 +294,19 @@ export class MediaWorkerService {
       // Fencing : un worker au bail expiré ne peut pas écraser l'état d'un autre.
       .where(and(eq(mediaJobs.id, job.id), eq(mediaJobs.claimToken, job.claimToken)));
   }
+}
+
+/** Fusionne par libellé : rejouer un job ne duplique pas une variante. */
+function mergeVariants(
+  existing: MediaVariant[] | null,
+  produced: MediaVariant[],
+): MediaVariant[] {
+  const byLabel = new Map<string, MediaVariant>();
+  for (const variant of existing ?? []) {
+    byLabel.set(variant.label, variant);
+  }
+  for (const variant of produced) {
+    byLabel.set(variant.label, variant);
+  }
+  return [...byLabel.values()];
 }

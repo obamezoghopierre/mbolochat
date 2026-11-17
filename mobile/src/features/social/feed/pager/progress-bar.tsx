@@ -1,4 +1,4 @@
-import { useEvent } from 'expo';
+import { useEvent, useEventListener } from 'expo';
 import type { VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo } from 'react';
 import { StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
@@ -103,30 +103,28 @@ export function ProgressBar({
   // les worklets du geste, et une ref y est refusée.
   const ignoreUntil = useSharedValue(0);
 
-  const { currentTime } = useEvent(player, 'timeUpdate', {
-    currentTime: player.currentTime,
-    currentLiveTimestamp: null,
-    currentOffsetFromLive: null,
-    bufferedPosition: 0,
-  });
-
   const duration = player.duration ?? 0;
   const validDuration = Number.isFinite(duration) && duration > 0 ? duration : 0;
 
-  // Avancement normal : on n'écrit que si le doigt ne pilote pas, et pas juste
-  // après un relâchement (le lecteur y est encore à son ancienne position).
-  useEffect(() => {
+  // `timeUpdate` est ingéré sans état React : à 4 Hz (20 Hz pendant un
+  // glissement), un `setState` par tick re-rendait toute la page vidéo. La
+  // progression vit donc dans une valeur partagée Reanimated, sur le thread UI.
+  //
+  // `statusChange` re-rend le composant — c'est là que `player.duration` devient
+  // disponible — et `useEventListener` garde le dernier listener dans une ref :
+  // la fermeture lit donc toujours `validDuration` à jour.
+  useEvent(player, 'statusChange', { status: player.status });
+  useEventListener(player, 'timeUpdate', ({ currentTime: at }) => {
     if (validDuration === 0) {
       return;
     }
+    // Le doigt pilote la barre, ou un seek vient d'être relâché : on n'écrase pas.
     if (isScrubbing.value || Date.now() < ignoreUntil.value) {
       return;
     }
-    const ratio = clamp01(currentTime / validDuration);
+    const ratio = clamp01(at / validDuration);
     position.value = withTiming(ratio, { duration: ADVANCE_DURATION_MS });
-    // `ignoreUntil` est une valeur partagée lue impérativement, pas une dépendance.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTime, validDuration]);
+  });
 
   const clearSettleTimer = useCallback(() => {
     timerBox.clear();
