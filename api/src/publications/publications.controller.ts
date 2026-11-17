@@ -51,6 +51,26 @@ export class PublicationsController {
     return this.publications.unreact(id, current.sub);
   }
 
+  @Post(':id/save')
+  async save(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.save(id, current.sub);
+  }
+
+  @Delete(':id/save')
+  async unsave(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.unsave(id, current.sub);
+  }
+
+  @Post(':id/repost')
+  async repost(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.repost(id, current.sub);
+  }
+
+  @Delete(':id/repost')
+  async unrepost(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.unrepost(id, current.sub);
+  }
+
   @Post(':id/comments')
   async comment(
     @CurrentUser() current: JwtPayload,

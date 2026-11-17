@@ -1,81 +1,127 @@
 import { Image } from 'expo-image';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Radii, Spacing } from '@/constants/theme';
-import { PostOverlay } from './post-overlay';
-import { extraMediaCount, primaryMedia } from './feed-media';
+import { FeedSurface, Radii, Spacing } from '@/constants/theme';
+import { FeedGestureLayer } from './feed-gestures';
+import { HeartBurstOverlay } from './heart-burst';
+import { OnMediaShadow, feedText } from './feed-tokens';
+import type { FeedPageChrome } from './video-page';
+import { resolveMediaUrl } from '@/lib/media-url';
 import type { FeedPost } from '@/lib/types';
 
-/** Page plein écran d'une publication photo ou carrousel. */
+/**
+ * Page photo ou carrousel, plein écran. Un tap passe à l'image suivante
+ * (retour à la première après la dernière), le double-tap réagit — exactement
+ * le comportement d'un carrousel TikTok.
+ *
+ * Le compteur `1/3` apparaît en haut à droite dès qu'il y a plusieurs médias.
+ */
 export function ImagePage({
   post,
-  height,
-  onToggleLike,
-  onOpenComments,
-  onOpenProfile,
+  chrome,
+  onDoubleTapLike,
 }: {
   post: FeedPost;
-  height: number;
-  onToggleLike: (post: FeedPost) => void;
-  onOpenComments: () => void;
-  onOpenProfile: () => void;
+  chrome: FeedPageChrome;
+  onDoubleTapLike: () => void;
 }) {
-  const media = primaryMedia(post);
-  const extra = extraMediaCount(post);
+  // L'API renvoie des chemins signés relatifs : `<Image>` exige une URL
+  // absolue, sinon le post s'affiche avec un média vide.
+  const media = (post.media ?? [])
+    .map((entry) => ({ ...entry, url: resolveMediaUrl(entry.url) }))
+    .filter((entry) => Boolean(entry.url));
+  const [index, setIndex] = useState(0);
+  const current = media[index] ?? media[0];
+  const total = media.length;
+
+  const next = useCallback(() => {
+    if (total > 1) {
+      setIndex((value) => (value + 1) % total);
+    }
+  }, [total]);
 
   return (
-    <View style={[styles.page, { height }]}>
-      {media?.url ? (
+    <View style={[styles.page, { height: chrome.height }]}>
+      {current?.url ? (
         <Image
-          source={{ uri: media.url }}
+          source={{ uri: current.url }}
           style={StyleSheet.absoluteFill}
           contentFit="cover"
           transition={120}
-          accessibilityLabel={media.altText ?? post.caption ?? undefined}
+          accessibilityLabel={current.altText ?? post.caption ?? undefined}
         />
       ) : null}
 
-      <Pressable
-        onPress={onOpenComments}
-        accessibilityRole="button"
-        accessibilityLabel="Ouvrir les commentaires"
-        style={StyleSheet.absoluteFill}
+      <FeedGestureLayer
+        accessibilityLabel={
+          total > 1
+            ? `Photo ${index + 1} sur ${total} : deux taps pour réagir, un tap pour la suivante`
+            : 'Photo : deux taps pour réagir'
+        }
+        onDoubleTap={onDoubleTapLike}
+        onTap={next}
+        onLongPressStart={noop}
+        onLongPressEnd={noop}
       />
 
-      {extra > 0 ? (
+      <HeartBurstOverlay burstKey={chrome.burstKey} />
+
+      {total > 1 ? (
         <View style={styles.counterPill}>
-          <ThemedText type="small" style={styles.counterText}>
-            1 / {extra + 1}
+          <ThemedText style={[feedText.pill, OnMediaShadow]}>
+            {index + 1} / {total}
           </ThemedText>
         </View>
       ) : null}
 
-      <PostOverlay
-        post={post}
-        onToggleLike={onToggleLike}
-        onOpenComments={onOpenComments}
-        onOpenProfile={onOpenProfile}
-      />
+      {/* Points de pagination, comme TikTok : lisibles sans interaction. */}
+      {total > 1 ? (
+        <View style={styles.dots} pointerEvents="none">
+          {media.map((entry, dotIndex) => (
+            <View
+              key={entry.assetId}
+              style={[styles.dot, dotIndex === index && styles.dotActive]}
+            />
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
 
+function noop() {}
+
 const styles = StyleSheet.create({
   page: {
-    backgroundColor: '#000000',
+    backgroundColor: FeedSurface.background,
   },
   counterPill: {
     position: 'absolute',
     top: Spacing.three,
     right: Spacing.three,
     paddingHorizontal: Spacing.two,
-    paddingVertical: 2,
+    paddingVertical: Spacing.half,
     borderRadius: Radii.full,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
   },
-  counterText: {
-    color: '#ffffff',
-    fontWeight: '600',
+  dots: {
+    position: 'absolute',
+    top: Spacing.three,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: Spacing.one,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.4)',
+  },
+  dotActive: {
+    backgroundColor: FeedSurface.onMedia,
   },
 });

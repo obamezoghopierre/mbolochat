@@ -1,42 +1,42 @@
 import { StyleSheet, View } from 'react-native';
 
-import { PostCard } from '../post-card';
-import { Spacing } from '@/constants/theme';
+import { ThemedText } from '@/components/themed-text';
+import { FeedSurface, Spacing, Type } from '@/constants/theme';
+import { OnMediaShadow } from './feed-tokens';
+import type { FeedPageChrome } from './video-page';
 import type { FeedPost } from '@/lib/types';
 
 /**
- * Repli pour une publication sans média : la carte habituelle, centrée sur le
- * fond sombre du pager, pour ne pas perdre le contenu texte existant.
+ * Page d'une publication sans média : le texte du post occupe l'écran, sur le
+ * même noir que les autres pages, pour que le pager garde un rythme constant.
  */
 export function TextPage({
   post,
-  height,
-  onToggleLike,
-  onOpen,
-  onOpenProfile,
+  chrome,
 }: {
   post: FeedPost;
-  height: number;
-  onToggleLike: (post: FeedPost) => void;
-  onOpen: () => void;
-  onOpenProfile: () => void;
+  chrome: FeedPageChrome;
 }) {
   return (
-    <View style={[styles.page, { height }]}>
-      <PostCard
-        post={post}
-        onToggleLike={onToggleLike}
-        onPress={onOpen}
-        onPressAuthor={onOpenProfile}
-      />
+    <View style={[styles.page, { height: chrome.height }]}>
+      <ThemedText style={[styles.text, OnMediaShadow]}>{post.caption}</ThemedText>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   page: {
-    backgroundColor: '#0B0F14',
+    backgroundColor: FeedSurface.background,
+    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.three,
+    paddingHorizontal: Spacing.four,
+  },
+  text: {
+    ...Type.sectionTitle,
+    fontSize: 24,
+    lineHeight: 32,
+    fontWeight: '700',
+    color: FeedSurface.onMedia,
+    textAlign: 'center',
   },
 });

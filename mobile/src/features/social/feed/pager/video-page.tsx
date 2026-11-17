@@ -1,52 +1,100 @@
 import { useEvent } from 'expo';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import { Play, Volume2, VolumeX } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Image, Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
-import { ThemedText } from '@/components/themed-text';
-import { Radii, Spacing } from '@/constants/theme';
-import { extraMediaCount, primaryMedia } from './feed-media';
-import { PostOverlay } from './post-overlay';
+import { FeedSurface, Radii, Spacing } from '@/constants/theme';
+import { resolveMediaUrl } from '@/lib/media-url';
 import type { FeedPost } from '@/lib/types';
+import { FeedGestureLayer } from './feed-gestures';
+import { HeartBurstOverlay } from './heart-burst';
+import { ProgressBar } from './progress-bar';
+
+/** Décor commun fourni par le pager (hauteur, activité, cœur, échelle du like). */
+export interface FeedPageChrome {
+  height: number;
+  /** Hauteur de la barre du bas : les overlays remontent d'autant. */
+  barInset: number;
+  isActive: boolean;
+  /**
+   * Écart signé avec la page active (−1 = précédente, +1 = suivante).
+   * Sert au préchargement : une page voisine garde son lecteur monté et
+   * préparé sans jouer, pour que le swipe suivant démarre instantanément.
+   */
+  distance: number;
+  /** Index actif du pager : sert de clé pour réarmer la lecture. */
+  activeIndex: number;
+  /** Incrémenté à chaque double-tap : rejoue le cœur. */
+  burstKey: number;
+  likeScale: Animated.Value;
+}
+
+/** URL fixe (relative) du média vidéo d'une publication. */
+function videoUrl(post: FeedPost): string | null {
+  return post.media?.find((media) => media.kind === 'video' && media.url)?.url ?? null;
+}
+
+/** Image de couverture (variant `poster`) du média vidéo. */
+function videoPoster(post: FeedPost): string | null {
+  return post.media?.find((media) => media.kind === 'video')?.posterUrl ?? null;
+}
 
 /**
- * Page plein écran d'une publication vidéo, calquée sur le feed Mbolo :
- * vidéo couvrant l'écran, scrim bas, nom + description à gauche, colonne
- * d'actions à droite. Seule la page active joue ; les autres sont en pause.
+ * Page vidéo plein écran façon TikTok : la vidéo couvre l'écran, tap pour
+ * suspendre, double-tap pour réagir, appui long pour suspendre pendant le geste,
+ * barre de progression scrubbable en bas.
  *
- * Adaptations assumées : pas de pager natif ni de dégradé natif (aucune
- * dépendance ajoutée), actions limitées à ce que l'API sait faire (réaction,
- * commentaire, abonnement) — pas de partage ni d'enregistrement simulés.
+ * Un lecteur par item, créé par `useVideoPlayer` : React gère tout son cycle de
+ * vie (montage, recyclage, libération). Jamais de lecteur partagé entre deux
+ * VideoView — c'était la cause de
+ * « The player has been notified of disconnection from the player view ».
+ *
+ * Seule la page active joue ; quitter la page réarme la lecture.
  */
 export function VideoPage({
   post,
-  height,
-  isActive,
-  onToggleLike,
-  onOpenComments,
-  onOpenProfile,
+  chrome,
+  onDoubleTapLike,
+  onToggleSound,
+  onScrubStateChange,
+  muted,
 }: {
   post: FeedPost;
-  height: number;
-  isActive: boolean;
-  onToggleLike: (post: FeedPost) => void;
-  onOpenComments: () => void;
-  onOpenProfile: () => void;
+  chrome: FeedPageChrome;
+  onDoubleTapLike: () => void;
+  /** Le son est global au fil : le pager décide, la page applique. */
+  onToggleSound: () => void;
+  /** Vrai dès que le doigt glisse sur la barre : le feed fige son scroll. */
+  onScrubStateChange: (scrubbing: boolean) => void;
+  muted: boolean;
 }) {
-  const media = primaryMedia(post);
-  const url = media?.url ?? null;
+  const url = resolveMediaUrl(videoUrl(post));
+  const posterUrl = resolveMediaUrl(videoPoster(post));
+  const insets = useSafeAreaInsets();
+  const [userPaused, setUserPaused] = useState(false);
 
-  const player = useVideoPlayer(url, (instance) => {
-    instance.loop = true;
-  });
-  const { isPlaying } = useEvent(player, 'playingChange', {
-    isPlaying: player.playing,
-  });
+  // Le lecteur naît ici avec la bonne source. Le cache disque est activé sur la
+  // source (`useCaching`), plafonné à 200 Mo par le pager. Revenir sur une
+  // vidéo vue ne re-télécharge rien : ExoPlayer relit le SimpleCache.
+  const player = useVideoPlayer(
+    url,
+    (instance) => {
+      // Boucle native : la tête revient au début sans état « terminé ».
+      instance.loop = true;
+      // 50 ms : assez fin pour que la barre progresse sans à-coups, sans
+      // inonder le pont JS d'événements.
+      instance.timeUpdateEventInterval = 0.05;
+    },
+  );
 
-  const [muted, setMuted] = useState(false);
-  const [manuallyPaused, setManuallyPaused] = useState(false);
+  // `status` sert de déclencheur de reprise : un lecteur recyclé peut être
+  // encore `loading` au moment où sa page redevient active, et `play()` appelé
+  // trop tôt est perdu. On relance donc aussi quand il devient `readyToPlay`.
+  // Il sert aussi à garder le poster jusqu'à la première image décodée.
+  const { status } = useEvent(player, 'statusChange', { status: player.status });
 
   useEffect(() => {
     // `muted` est une propriété impérative de l'API expo-video : la règle
@@ -55,146 +103,186 @@ export function VideoPage({
     player.muted = muted;
   }, [muted, player]);
 
+  // Devenir la page active réarme la lecture : une pause volontaire ne doit pas
+  // survivre à la sortie de l'écran : dès que la page devient inactive, le
+  // drapeau retombe. C'est fait pendant le rendu (pas dans un effet) parce que
+  // la règle `set-state-in-effect` l'interdit et qu'on veut la valeur à jour
+  // avant l'effet de lecture ci-dessous.
+  if (!chrome.isActive && userPaused) {
+    setUserPaused(false);
+  }
+
   useEffect(() => {
-    if (isActive && !manuallyPaused) {
-      player.play();
-    } else {
+    if (!chrome.isActive || userPaused) {
       player.pause();
+      return;
     }
-  }, [isActive, manuallyPaused, player]);
+    // `status` est dans les dépendances : un lecteur recyclé encore `loading`
+    // ignore `play()` appelé trop tôt, il faut relancer quand il est prêt.
+    player.play();
+  }, [chrome.isActive, userPaused, player, status]);
 
-  const togglePlayback = useCallback(() => {
-    setManuallyPaused((current) => !current);
-  }, []);
+  const togglePlayback = useCallback(() => setUserPaused((value) => !value), []);
 
-  const extra = extraMediaCount(post);
+  /** Source unique pour les deux icônes : pause volontaire sur la page active. */
+  const isPaused = userPaused && chrome.isActive;
+  const pauseForLongPress = useCallback(() => setUserPaused(true), []);
+  const resumeAfterLongPress = useCallback(() => setUserPaused(false), []);
+
+  // Le lecteur est figé pendant le glissement et ne repart qu'au relâchement,
+  // et seulement s'il jouait avant : une pause volontaire reste une pause.
+  // Les icônes restent pilotées par `isPaused`, jamais par le scrub.
+  const handleSeekStart = useCallback(() => player.pause(), [player]);
+  const handleSeekEnd = useCallback(
+    (seconds: number) => {
+      // Seek précis : la position finale doit être exacte, pas tolérante.
+      seekExactly(player, seconds);
+      // La reprise attend que le seek natif soit appliqué : jouer juste après
+      // l'affectation de `currentTime` relance parfois la lecture à l'ancienne
+      // position pendant une frame.
+      resumeAfterSeek(player, chrome.isActive && !userPaused);
+    },
+    [chrome.isActive, player, userPaused],
+  );
+
+  // Le poster reste affiché tant que la première image n'est pas décodée :
+  // sans lui, chaque changement de vidéo laisserait voir un flash noir le
+  // temps que le lecteur se prépare.
+  const showPoster = status !== 'readyToPlay';
 
   return (
-    <View style={[styles.page, { height }]}>
-      {url ? (
-        <VideoView
-          player={player}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          nativeControls={false}
+    <View style={[styles.page, { height: chrome.height }]}>
+      <VideoView
+        player={player}
+        style={styles.surface}
+        // `surfaceType="textureView"` : sur Android, une `SurfaceView` est
+        // composée dans une couche native séparée. Quand la liste recycle les
+        // cellules pendant le scroll, cette couche garde l'ancienne position
+        // et la vidéo « flotte » hors de sa page — le défaut visible au
+        // scroll. Une `TextureView` est un vrai View, découpé et positionné
+        // comme le reste de la hiérarchie.
+        surfaceType="textureView"
+        contentFit="cover"
+        nativeControls={false}
+        pointerEvents="none"
+      />
+
+      {showPoster && posterUrl ? (
+        <Image
+          source={{ uri: posterUrl }}
+          style={styles.surface}
+          resizeMode="cover"
           pointerEvents="none"
         />
-      ) : (
-        <View style={[StyleSheet.absoluteFill, styles.fallback]}>
-          <ActivityIndicator color="#ffffff" />
+      ) : null}
+
+      <FeedGestureLayer
+        accessibilityLabel="Vidéo : deux taps pour réagir, un tap pour suspendre"
+        onDoubleTap={onDoubleTapLike}
+        onTap={togglePlayback}
+        onLongPressStart={pauseForLongPress}
+        onLongPressEnd={resumeAfterLongPress}
+      />
+
+      <HeartBurstOverlay burstKey={chrome.burstKey} />
+
+      {/* Icône centrale et bouton son partagent `isPaused` : les deux
+          apparaissent sur une pause volontaire et disparaissent dès la reprise
+          (l'ancienne version laissait le volume visible en lecture). */}
+      {isPaused ? (
+        <View pointerEvents="none" style={styles.playBadge}>
+          <Icon icon={Play} size={34} color={FeedSurface.onMedia} fill={FeedSurface.onMedia} />
         </View>
-      )}
+      ) : null}
 
-      <Pressable
-        onPress={togglePlayback}
-        accessibilityRole="button"
-        accessibilityLabel={isPlaying ? 'Mettre en pause' : 'Lire la vidéo'}
-        style={StyleSheet.absoluteFill}>
-        {!isPlaying && isActive ? (
-          <View style={styles.playBadge}>
-            <Icon icon={Play} size={34} color="#ffffff" fill="#ffffff" />
-          </View>
-        ) : null}
-      </Pressable>
+      {isPaused ? (
+        // Décalé sous la barre d'onglets du haut : sans les insets, le bouton
+        // son passait dessous et devenait intouchable.
+        <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
+          <Pressable
+            onPress={onToggleSound}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityState={{ selected: muted }}
+            accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
+            style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+            <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
+          </Pressable>
+        </View>
+      ) : null}
 
-      <View pointerEvents="none" style={styles.topScrim} />
-
-      <View style={styles.topRight}>
-        <Pressable
-          onPress={() => setMuted((current) => !current)}
-          hitSlop={10}
-          accessibilityRole="button"
-          accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
-          style={styles.roundButton}>
-          <Icon icon={muted ? VolumeX : Volume2} size={18} color="#ffffff" />
-        </Pressable>
-        {extra > 0 ? (
-          <View style={styles.counterPill}>
-            <ThemedText type="small" style={styles.onVideoText}>
-              +{extra}
-            </ThemedText>
-          </View>
-        ) : null}
-      </View>
-
-      <PostOverlay
-        post={post}
-        onToggleLike={onToggleLike}
-        onOpenComments={onOpenComments}
-        onOpenProfile={onOpenProfile}
+      <ProgressBar
+        player={player}
+        bottomInset={chrome.barInset}
+        active={chrome.isActive}
+        onSeekStart={handleSeekStart}
+        onSeekEnd={handleSeekEnd}
+        onScrubStateChange={onScrubStateChange}
       />
     </View>
   );
 }
 
+/** Seek frame-accurate hors rendu (helper libre : `player` est un objet natif). */
+function seekExactly(player: VideoPlayer, seconds: number) {
+  player.seekTolerance = { toleranceBefore: 0, toleranceAfter: 0 };
+  player.currentTime = seconds;
+}
+
+/** Délai laissé au lecteur pour appliquer un seek avant de reprendre. */
+const RESUME_AFTER_SEEK_MS = 60;
+
+/** Reprend la lecture une fois le seek précis appliqué, et seulement si elle jouait. */
+function resumeAfterSeek(player: VideoPlayer, shouldResume: boolean) {
+  if (!shouldResume) {
+    return;
+  }
+  setTimeout(() => player.play(), RESUME_AFTER_SEEK_MS);
+}
+
 const styles = StyleSheet.create({
-  onVideoText: {
-    color: '#ffffff',
-  },
   page: {
-    backgroundColor: '#000000',
+    backgroundColor: FeedSurface.background,
     justifyContent: 'flex-end',
   },
-  fallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#000000',
-  },
-  topScrim: {
+  // Bornes explicites : sans elles, la surface native peut conserver la taille
+  // de la page recyclée précédente et laisser apparaître une bande noire.
+  surface: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    height: 96,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    bottom: 0,
   },
-
+  fallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: FeedSurface.background,
+  },
   playBadge: {
     position: 'absolute',
-    top: '45%',
     alignSelf: 'center',
+    top: '44%',
     width: 74,
     height: 74,
     borderRadius: Radii.full,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-
-
   topRight: {
     position: 'absolute',
-    top: Spacing.three,
     right: Spacing.three,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
   },
   roundButton: {
     width: 36,
     height: 36,
     borderRadius: Radii.full,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  counterPill: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: 2,
-    borderRadius: Radii.full,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+  pressed: {
+    opacity: 0.7,
   },
-
-
-
-
-
-
-
-
-
-
-
-
-
 });

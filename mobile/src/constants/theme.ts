@@ -165,6 +165,56 @@ export const GlassColors = {
 /** Intensité de flou Android, sur l'échelle `expo-blur` (1 à 100). */
 export const BlurIntensity = 72;
 
+/**
+ * Feed plein écran (façon TikTok) : couleurs indépendantes du thème clair/sombre.
+ *
+ * Le média occupe tout l'écran ; le texte est toujours blanc, la lisibilité
+ * venant du dégradé et des ombres, jamais d'un fond opaque qui masquerait la
+ * vidéo. Les rouges d'interaction sont distincts du rouge d'erreur.
+ */
+export const FeedSurface = {
+  background: '#000000',
+  /** Liseré des éléments d'identité posés sur le média (avatar de l'auteur). */
+  accent: ACCENT,
+  onMedia: '#FFFFFF',
+  onMediaSoft: 'rgba(255,255,255,0.86)',
+  onMediaFaint: 'rgba(255,255,255,0.62)',
+  scrimTop: 'rgba(0,0,0,0.38)',
+  glass: 'rgba(255,255,255,0.16)',
+  glassStrong: 'rgba(255,255,255,0.26)',
+  glassPressed: 'rgba(255,255,255,0.32)',
+  like: '#FF2D55',
+  /** Bouton d'abonnement (« Suivre ») posé sur le média. Jaune clair Snapchat. */
+  follow: '#FFFC00',
+  save: '#FFC93C',
+  reposted: '#2ECC71',
+  /** Dégradé bas du média : transparent → noir, pour la lisibilité du texte. */
+  gradientBottom: ['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.82)'] as const,
+  /** Dégradé haut du média, sous les onglets. */
+  gradientTop: ['rgba(0,0,0,0.55)', 'transparent'] as const,
+} as const;
+
+/** Mesures du feed plein écran : rail d'actions, avatar, pastille. */
+export const FeedMetrics = {
+  /** Icônes du rail d'action : plus discret que les 30 px d'origine. */
+  actionIcon: 26,
+  actionGap: Spacing.two + Spacing.half,
+  /** Largeur réservée à droite pour ne pas passer sous le rail. */
+  railWidth: 64,
+  /** Photo de profil de l'auteur, en carré arrondi. */
+  avatar: 42,
+  gradientHeight: 280,
+  topGradientHeight: 150,
+  /** Hauteur de la barre de progression de la vidéo, au repos. */
+  progressHeight: 2,
+  /** Zone tactile de la barre de progression (plus haute que le trait visible). */
+  progressTrackHeight: 24,
+  /** Cœur du double-tap. */
+  heart: 110,
+  /** Pastille du compteur carrousel / son. */
+  pill: 26,
+} as const;
+
 /** Surfaces sombres translucides de la caméra et de l’éditeur média. */
 export const MediaSurface = {
   background: '#080A0D',
@@ -215,6 +265,38 @@ export const CallMetrics = {
   pip: { width: 108, height: 144 },
   tileGap: Spacing.three,
 } as const;
+
+/** Hauteur utile de la barre d'onglets, hors inset système. */
+export const TabBarHeight = 58;
+
+/**
+ * Surface de la barre d'onglets.
+ *
+ * La barre est sombre même en thème clair : elle flotte sur le média du feed et
+ * doit rester lisible dans les deux thèmes, avec un contraste constant.
+ */
+export const TabBarSurface = {
+  /** Fond opaque hors du fil. */
+  opaque: '#121212',
+  /** Fond transparent sur le fil : la vidéo reste visible dessous. */
+  transparent: 'rgba(18,18,18,0)',
+  /** Onglet inactif : blanc à 60 % sur le fond sombre. */
+  inactive: 'rgba(255,255,255,0.6)',
+  /** Onglet actif : cyan de la marque. */
+  active: '#00E5FF',
+  /** Filet supérieur, visible seulement quand la barre est opaque. */
+  border: 'rgba(255,255,255,0.08)',
+} as const;
+
+/**
+ * Ancre basse des contenus plein écran (feed, visionneuses) posés au-dessus de
+ * la barre d'onglets.
+ *
+ * La barre est déjà rendue par le navigateur avec sa propre hauteur : un écran
+ * d'onglet ne doit donc réserver que cette hauteur, sans rajouter l'inset
+ * système une seconde fois (sinon le contenu flotte au-dessus de la barre).
+ */
+export const TabBarInset = TabBarHeight;
 
 export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;

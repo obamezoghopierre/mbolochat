@@ -1,10 +1,10 @@
 import { router } from 'expo-router';
 import { Tabs } from 'expo-router/js-tabs';
-import { Bell, Compass, Home, MessageCircle, Settings, User } from 'lucide-react-native';
+import { Settings } from 'lucide-react-native';
 import { Pressable, StyleSheet } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
+import { CustomTabBar } from '@/components/navigation/custom-tab-bar';
 import { fr } from '@/i18n/fr';
 import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
@@ -19,45 +19,35 @@ import { useTheme } from '@/hooks/use-theme';
  */
 export default function TabsLayout() {
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
+      // Barre maison (src/components/navigation/custom-tab-bar.tsx) : animations
+      // Reanimated et transparence sur le fil, façon TikTok.
+      tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,
+        // La barre gère elle-même couleurs et typographie ; ces options ne sont
+        // là que pour les consommateurs qui lisent le thème du navigateur.
         tabBarActiveTintColor: theme.accent,
         tabBarInactiveTintColor: theme.textSecondary,
-        tabBarStyle: {
-          backgroundColor: theme.backgroundElement,
-          borderTopColor: theme.border,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          // Hauteur explicite : la barre par défaut (49 px) rogne le libellé
-          // sous l'icône de 22 px sur les écrans à petit insigne de navigation.
-          height: TAB_BAR_HEIGHT + insets.bottom,
-          paddingBottom: insets.bottom + Spacing.one,
-          paddingTop: Spacing.two,
-        },
-        tabBarLabelStyle: styles.label,
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: fr.tabs.feed,
-          tabBarIcon: ({ color }) => <Icon icon={Home} size={22} color={color} />,
         }}
       />
       <Tabs.Screen
         name="discover"
         options={{
           title: fr.tabs.discover,
-          tabBarIcon: ({ color }) => <Icon icon={Compass} size={22} color={color} />,
         }}
       />
       <Tabs.Screen
         name="notifications"
         options={{
           title: fr.tabs.notifications,
-          tabBarIcon: ({ color }) => <Icon icon={Bell} size={22} color={color} />,
         }}
       />
       {/*
@@ -70,7 +60,6 @@ export default function TabsLayout() {
         name="chats"
         options={{
           title: fr.tabs.chats,
-          tabBarIcon: ({ color }) => <Icon icon={MessageCircle} size={22} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -93,24 +82,16 @@ export default function TabsLayout() {
               <Icon icon={Settings} size={22} color={theme.text} />
             </Pressable>
           ),
-          tabBarIcon: ({ color }) => <Icon icon={User} size={22} color={color} />,
         }}
       />
     </Tabs>
   );
 }
 
-/** Hauteur utile de la barre, hors inset système. */
-const TAB_BAR_HEIGHT = 58;
+// La hauteur et la surface de la barre vivent dans `constants/theme.ts`
+// (`TabBarHeight`, `TabBarSurface`), avec le contenu plein écran posé dessus.
 
 const styles = StyleSheet.create({
-  // `lineHeight` explicite : à 11 px, la valeur par défaut dépasse la hauteur
-  // allouée au libellé et la dernière ligne se fait rogner.
-  label: {
-    fontSize: 11,
-    lineHeight: 14,
-    fontWeight: '500',
-  },
   // Sans marge, l'icône vient coller au bord droit alors que le titre garde
   // 16 px à gauche : l'en-tête paraît déséquilibré.
   headerButton: {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyReaction, mergeFeedPage } from './feed-model';
+import { applyReaction, mergeFeedPage, toggleRepost, toggleSave } from './feed-model';
 import type { FeedPost } from '@/lib/types';
 
 function post(overrides: Partial<FeedPost> = {}): FeedPost {
@@ -80,3 +80,39 @@ describe('applyReaction', () => {
     expect(items[1].counters.likes).toBe(0);
   });
 });
+
+describe('toggleSave', () => {
+  it('enregistre puis retire, en suivant le compteur', () => {
+    const saved = toggleSave([post()], 'post-1');
+    expect(saved.saved).toBe(true);
+    expect(saved.items[0].viewer.saved).toBe(true);
+    expect(saved.items[0].counters.saves).toBe(1);
+
+    const removed = toggleSave(saved.items, 'post-1');
+    expect(removed.saved).toBe(false);
+    expect(removed.items[0].viewer.saved).toBe(false);
+    expect(removed.items[0].counters.saves).toBe(0);
+  });
+
+  it('ne descend jamais sous zéro', () => {
+    const removed = toggleSave([post({ viewer: { reaction: null, followingAuthor: false, saved: false } })], 'post-1');
+    expect(removed.items[0].viewer.saved).toBe(true);
+    const again = toggleSave(removed.items, 'post-1');
+    expect(again.items[0].counters.saves).toBe(0);
+  });
+});
+
+describe('toggleRepost', () => {
+  it('republie puis retire, en suivant le compteur', () => {
+    const reposted = toggleRepost([post()], 'post-1');
+    expect(reposted.reposted).toBe(true);
+    expect(reposted.items[0].viewer.reposted).toBe(true);
+    expect(reposted.items[0].counters.reposts).toBe(1);
+
+    const removed = toggleRepost(reposted.items, 'post-1');
+    expect(removed.reposted).toBe(false);
+    expect(removed.items[0].viewer.reposted).toBe(false);
+    expect(removed.items[0].counters.reposts).toBe(0);
+  });
+});
+

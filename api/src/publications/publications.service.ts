@@ -15,6 +15,8 @@ import {
   mediaAssets,
   publicationMedia,
   publicationReactions,
+  publicationReposts,
+  publicationSaves,
   publications,
   userSocialSettings,
   users,
@@ -56,6 +58,10 @@ export interface PublicationView {
   viewer: {
     /** Réaction du visiteur, `null` s'il n'a pas réagi. */
     reaction: 'like' | 'love' | 'fire' | 'clap' | null;
+    /** Le visiteur a enregistré la publication. */
+    saved?: boolean;
+    /** Le visiteur a republié la publication. */
+    reposted?: boolean;
   };
 }
 
@@ -297,6 +303,127 @@ export class PublicationsService {
     await this.notifications.deliver(notification);
 
     return { reaction: kind, likeCount: await this.likeCount(publicationId) };
+  }
+
+  /**
+   * Enregistre la publication (signet). Idempotent : rejouer ne réincrémente
+   * pas le compteur, l'enregistrement reste privé et n'émet aucune notification.
+   */
+  async save(publicationId: string, viewerId: string) {
+    await this.assertVisible(publicationId, viewerId);
+
+    await this.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(publicationSaves)
+        .values({ publicationId, userId: viewerId })
+        .onConflictDoNothing()
+        .returning({ userId: publicationSaves.userId });
+      if (inserted.length === 0) {
+        return;
+      }
+      await tx
+        .update(publications)
+        .set({ saveCount: sql`${publications.saveCount} + 1` })
+        .where(eq(publications.id, publicationId));
+      await this.refreshHotScore(tx, publicationId);
+    });
+
+    return { saved: true, saveCount: await this.saveCount(publicationId) };
+  }
+
+  /** Retire l'enregistrement, idempotent. */
+  async unsave(publicationId: string, viewerId: string) {
+    await this.assertVisible(publicationId, viewerId);
+
+    await this.db.transaction(async (tx) => {
+      const deleted = await tx
+        .delete(publicationSaves)
+        .where(
+          and(
+            eq(publicationSaves.publicationId, publicationId),
+            eq(publicationSaves.userId, viewerId),
+          ),
+        )
+        .returning({ userId: publicationSaves.userId });
+      if (deleted.length === 0) {
+        return;
+      }
+      await tx
+        .update(publications)
+        .set({ saveCount: sql`greatest(${publications.saveCount} - 1, 0)` })
+        .where(eq(publications.id, publicationId));
+      await this.refreshHotScore(tx, publicationId);
+    });
+
+    return { saved: false, saveCount: await this.saveCount(publicationId) };
+  }
+
+  /**
+   * Republie la publication sur son propre profil. Idempotent par couple
+   * `(publication, reposteur)` ; l'auteur est notifié une seule fois.
+   */
+  async repost(publicationId: string, viewerId: string) {
+    const { row, facts } = await this.assertVisible(publicationId, viewerId);
+    if (facts.blocked) {
+      throw new ForbiddenException('Interaction impossible avec ce compte.');
+    }
+
+    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
+
+    await this.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(publicationReposts)
+        .values({ publicationId, userId: viewerId })
+        .onConflictDoNothing()
+        .returning({ userId: publicationReposts.userId });
+      if (inserted.length === 0) {
+        return;
+      }
+      await tx
+        .update(publications)
+        .set({ repostCount: sql`${publications.repostCount} + 1` })
+        .where(eq(publications.id, publicationId));
+      await this.refreshHotScore(tx, publicationId);
+      notification = await this.notifications.create(tx, {
+        recipientId: row.authorId,
+        actorId: viewerId,
+        type: 'repost',
+        dedupeKey: `repost:${publicationId}:${viewerId}`,
+        publicationId,
+      });
+    });
+
+    // Effet push hors transaction : un échec réseau ne défait pas le repost.
+    await this.notifications.deliver(notification);
+
+    return { reposted: true, repostCount: await this.repostCount(publicationId) };
+  }
+
+  /** Retire la republication, idempotent. */
+  async unrepost(publicationId: string, viewerId: string) {
+    await this.assertVisible(publicationId, viewerId);
+
+    await this.db.transaction(async (tx) => {
+      const deleted = await tx
+        .delete(publicationReposts)
+        .where(
+          and(
+            eq(publicationReposts.publicationId, publicationId),
+            eq(publicationReposts.userId, viewerId),
+          ),
+        )
+        .returning({ userId: publicationReposts.userId });
+      if (deleted.length === 0) {
+        return;
+      }
+      await tx
+        .update(publications)
+        .set({ repostCount: sql`greatest(${publications.repostCount} - 1, 0)` })
+        .where(eq(publications.id, publicationId));
+      await this.refreshHotScore(tx, publicationId);
+    });
+
+    return { reposted: false, repostCount: await this.repostCount(publicationId) };
   }
 
   /** Retire la réaction, idempotent. */
@@ -582,6 +709,18 @@ export class PublicationsService {
           eq(publicationReactions.userId, viewerId),
         ),
       );
+    const [saved] = await this.db
+      .select({ userId: publicationSaves.userId })
+      .from(publicationSaves)
+      .where(
+        and(eq(publicationSaves.publicationId, row.id), eq(publicationSaves.userId, viewerId)),
+      );
+    const [reposted] = await this.db
+      .select({ userId: publicationReposts.userId })
+      .from(publicationReposts)
+      .where(
+        and(eq(publicationReposts.publicationId, row.id), eq(publicationReposts.userId, viewerId)),
+      );
 
     return {
       id: row.id,
@@ -605,7 +744,11 @@ export class PublicationsService {
         saves: row.saveCount,
         views: row.viewCount,
       },
-      viewer: { reaction: reaction?.kind ?? null },
+      viewer: {
+        reaction: reaction?.kind ?? null,
+        saved: Boolean(saved),
+        reposted: Boolean(reposted),
+      },
     };
   }
 
@@ -660,5 +803,21 @@ export class PublicationsService {
       .from(publications)
       .where(eq(publications.id, publicationId));
     return row?.likeCount ?? 0;
+  }
+
+  private async saveCount(publicationId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ saveCount: publications.saveCount })
+      .from(publications)
+      .where(eq(publications.id, publicationId));
+    return row?.saveCount ?? 0;
+  }
+
+  private async repostCount(publicationId: string): Promise<number> {
+    const [row] = await this.db
+      .select({ repostCount: publications.repostCount })
+      .from(publications)
+      .where(eq(publications.id, publicationId));
+    return row?.repostCount ?? 0;
   }
 }

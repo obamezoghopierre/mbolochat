@@ -101,7 +101,7 @@ describe('Publications et interactions (e2e)', () => {
       verified: false,
     });
     expect(body.counters).toEqual({ likes: 0, comments: 0, reposts: 0, saves: 0, views: 0 });
-    expect(body.viewer).toEqual({ reaction: null });
+    expect(body.viewer).toEqual({ reaction: null, saved: false, reposted: false });
     expect(await counters(alice.id)).toEqual({
       publications: 1,
       reels: 0,
@@ -235,6 +235,91 @@ describe('Publications et interactions (e2e)', () => {
       .set('Authorization', `Bearer ${bob.token}`)
       .expect(200);
     expect(replay.body.likeCount).toBe(0);
+  });
+
+
+  it('enregistre puis retire un signet, sans fausser le compteur', async () => {
+    const alice = await register('Signets');
+    const bob = await register('Signeteur');
+    const post = await publish(alice).expect(201);
+
+    const saved = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/save`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(201);
+    expect(saved.body).toEqual({ saved: true, saveCount: 1 });
+
+    // Rejeu : idempotent, le compteur ne monte pas.
+    await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/save`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(201);
+
+    const seen = await see(bob, post.body.id).expect(200);
+    expect(seen.body.viewer.saved).toBe(true);
+    expect(seen.body.counters.saves).toBe(1);
+
+    const removed = await request(app.getHttpServer())
+      .delete(`/publications/${post.body.id}/save`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(removed.body).toEqual({ saved: false, saveCount: 0 });
+
+    // Rejeu du retrait : jamais négatif.
+    const replay = await request(app.getHttpServer())
+      .delete(`/publications/${post.body.id}/save`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(replay.body.saveCount).toBe(0);
+  });
+
+  it('republie puis retire, sans double notification', async () => {
+    const alice = await register('Repostee');
+    const bob = await register('Reposteur');
+    const post = await publish(alice).expect(201);
+
+    const reposted = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/repost`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(201);
+    expect(reposted.body).toEqual({ reposted: true, repostCount: 1 });
+
+    // Rejeu : idempotent.
+    await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/repost`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(201);
+
+    const seen = await see(bob, post.body.id).expect(200);
+    expect(seen.body.viewer.reposted).toBe(true);
+    expect(seen.body.counters.reposts).toBe(1);
+
+    const removed = await request(app.getHttpServer())
+      .delete(`/publications/${post.body.id}/repost`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(removed.body).toEqual({ reposted: false, repostCount: 0 });
+
+    const replay = await request(app.getHttpServer())
+      .delete(`/publications/${post.body.id}/repost`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(replay.body.repostCount).toBe(0);
+  });
+
+  it('refuse le signet et le repost sur une publication invisible', async () => {
+    const alice = await register('Privee');
+    const stranger = await register('Etranger');
+    const post = await publish(alice, { visibility: 'private' }).expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/save`)
+      .set('Authorization', `Bearer ${stranger.token}`)
+      .expect(404);
+    await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/repost`)
+      .set('Authorization', `Bearer ${stranger.token}`)
+      .expect(404);
   });
 
   it('refuse la réaction sur une publication invisible', async () => {

@@ -27,6 +27,7 @@ import type {
   PresenceSettings,
   PublicationComment,
   PresenceSnapshot,
+  ReportReason,
   ResetPasswordResult,
   SearchHashtag,
   SearchResult,
@@ -176,6 +177,23 @@ export const api = {
     return request<FeedPost>(`/publications/${publicationId}`, { token });
   },
 
+  /** Supprime sa propre publication. */
+  deletePublication(token: string, publicationId: string) {
+    return request<{ deleted: true }>(`/publications/${publicationId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  /** Signale un contenu ou un compte (file de modération côté serveur). */
+  report(token: string, targetType: 'publication' | 'comment' | 'story' | 'user', targetId: string, reason: ReportReason, details?: string) {
+    return request<{ id: string }>('/reports', {
+      method: 'POST',
+      token,
+      body: { targetType, targetId, reason, details },
+    });
+  },
+
   /** Commentaires d'une publication, du plus ancien au plus récent. */
   comments(token: string, publicationId: string, cursor?: string) {
     const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
@@ -243,6 +261,36 @@ export const api = {
   removeReaction(token: string, publicationId: string) {
     return request<{ reaction: null; likeCount: number }>(
       `/publications/${publicationId}/like`,
+      { method: 'DELETE', token },
+    );
+  },
+
+  /** Enregistre la publication dans les signets, idempotent. */
+  savePublication(token: string, publicationId: string) {
+    return request<{ saved: boolean; saveCount: number }>(
+      `/publications/${publicationId}/save`,
+      { method: 'POST', token },
+    );
+  },
+
+  unsavePublication(token: string, publicationId: string) {
+    return request<{ saved: boolean; saveCount: number }>(
+      `/publications/${publicationId}/save`,
+      { method: 'DELETE', token },
+    );
+  },
+
+  /** Republie la publication sur son propre profil, idempotent. */
+  repostPublication(token: string, publicationId: string) {
+    return request<{ reposted: boolean; repostCount: number }>(
+      `/publications/${publicationId}/repost`,
+      { method: 'POST', token },
+    );
+  },
+
+  unrepostPublication(token: string, publicationId: string) {
+    return request<{ reposted: boolean; repostCount: number }>(
+      `/publications/${publicationId}/repost`,
       { method: 'DELETE', token },
     );
   },

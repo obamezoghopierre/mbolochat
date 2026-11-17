@@ -27,4 +27,7 @@ echo "[setup] Installation des dépendances mobile…"
 echo "[setup] Démarrage de PostgreSQL…"
 docker compose up -d
 
+echo "[setup] Configuration du tunnel SSH/ADB…"
+bash scripts/setup-adb-tunnel.sh
+
 echo "[setup] Terminé. Lance l'API avec : cd api && npm run start:dev"

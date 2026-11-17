@@ -3,7 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { and, desc, eq, lt, or, sql } from 'drizzle-orm';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
-import { publicationReactions, publications, users } from '../db/schema.js';
+import {
+  publicationReactions,
+  publicationReposts,
+  publicationSaves,
+  publications,
+  users,
+} from '../db/schema.js';
 import { loadPublicationMedia } from '../publications/publication-media.js';
 import { visiblePublicationConditions } from '../social/publication-visibility.js';
 import type { AuthorCard, PublicationView } from '../publications/publications.service.js';
@@ -127,6 +133,8 @@ export class FeedService {
         hotScore: publications.hotScore,
         reaction: publicationReactions.kind,
         followingAuthor: followsAuthor,
+        saved: publicationSaves.userId,
+        reposted: publicationReposts.userId,
       })
       .from(publications)
       .innerJoin(users, eq(users.id, publications.authorId))
@@ -135,6 +143,17 @@ export class FeedService {
         and(
           eq(publicationReactions.publicationId, publications.id),
           eq(publicationReactions.userId, viewerId),
+        ),
+      )
+      .leftJoin(
+        publicationSaves,
+        and(eq(publicationSaves.publicationId, publications.id), eq(publicationSaves.userId, viewerId)),
+      )
+      .leftJoin(
+        publicationReposts,
+        and(
+          eq(publicationReposts.publicationId, publications.id),
+          eq(publicationReposts.userId, viewerId),
         ),
       )
       .where(and(...conditions))
@@ -167,6 +186,8 @@ export class FeedService {
         },
         viewer: {
           reaction: row.reaction ?? null,
+          saved: Boolean(row.saved),
+          reposted: Boolean(row.reposted),
           followingAuthor: Boolean(row.followingAuthor),
         },
       })),

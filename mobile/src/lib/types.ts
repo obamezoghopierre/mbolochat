@@ -465,6 +465,16 @@ export interface SocialAuthor {
 
 export type SocialReaction = 'like' | 'love' | 'fire' | 'clap';
 
+/** Motifs de signalement acceptés par l'API (`POST /reports`). */
+export type ReportReason =
+  | 'spam'
+  | 'harassment'
+  | 'hate'
+  | 'nudity'
+  | 'violence'
+  | 'misinformation'
+  | 'other';
+
 export type SocialVisibility = 'public' | 'followers' | 'private';
 
 export interface PublicationMedia {
@@ -502,6 +512,10 @@ export interface FeedPost {
     reaction: SocialReaction | null;
     /** Le visiteur suit l'auteur (abonnement accepté). */
     followingAuthor: boolean;
+    /** Le visiteur a enregistré la publication. */
+    saved?: boolean;
+    /** Le visiteur a republié la publication. */
+    reposted?: boolean;
   };
 }
 

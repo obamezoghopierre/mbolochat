@@ -8,11 +8,12 @@
     }
   },
   "postCreateCommand": "bash .devcontainer/post-create.sh",
-  "forwardPorts": [3001, 5432, 8081],
+  "forwardPorts": [3001, 5432, 8081, 5555],
   "portsAttributes": {
     "3001": { "label": "API MboloChat", "onAutoForward": "notify" },
     "5432": { "label": "PostgreSQL", "onAutoForward": "silent" },
-    "8081": { "label": "Expo Metro", "onAutoForward": "silent" }
+    "8081": { "label": "Expo Metro", "onAutoForward": "silent" },
+    "5555": { "label": "ADB tunnel", "onAutoForward": "silent" }
   },
   "customizations": {
     "vscode": {

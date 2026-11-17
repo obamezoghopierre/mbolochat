@@ -50,3 +50,57 @@ export function applyReaction(
     };
   });
 }
+
+/**
+ * Bascule un signet (enregistrement) de façon optimiste, sans serveur : le
+ * compteur suit la bascule, sans jamais passer sous zéro.
+ */
+export function toggleSave(
+  items: FeedPost[],
+  publicationId: string,
+): { items: FeedPost[]; saved: boolean } {
+  let saved = false;
+  const next = items.map((post) => {
+    if (post.id !== publicationId) {
+      return post;
+    }
+    const nowSaved = !post.viewer.saved;
+    saved = nowSaved;
+    return {
+      ...post,
+      counters: {
+        ...post.counters,
+        saves: nowSaved ? post.counters.saves + 1 : Math.max(0, post.counters.saves - 1),
+      },
+      viewer: { ...post.viewer, saved: nowSaved },
+    };
+  });
+  return { items: next, saved };
+}
+
+/**
+ * Bascule la republication de façon optimiste, sans serveur : même règle que
+ * l'API (idempotent par couple publication/reposteur).
+ */
+export function toggleRepost(
+  items: FeedPost[],
+  publicationId: string,
+): { items: FeedPost[]; reposted: boolean } {
+  let reposted = false;
+  const next = items.map((post) => {
+    if (post.id !== publicationId) {
+      return post;
+    }
+    const nowReposted = !post.viewer.reposted;
+    reposted = nowReposted;
+    return {
+      ...post,
+      counters: {
+        ...post.counters,
+        reposts: nowReposted ? post.counters.reposts + 1 : Math.max(0, post.counters.reposts - 1),
+      },
+      viewer: { ...post.viewer, reposted: nowReposted },
+    };
+  });
+  return { items: next, reposted };
+}
