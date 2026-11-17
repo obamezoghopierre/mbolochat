@@ -277,10 +277,10 @@ export function FeedPager({
     return <View style={styles.flex} />;
   }
 
+  // Hauteur explicite identique à celle des items : sans elle, la `FlatList`
+  // occupe la zone de l'onglet et le snap se cale sur une autre référence que
+  // la hauteur d'item, ce qui laisse apparaître la page suivante en bas.
   return (
-    // Hauteur explicite identique à celle des items : sans elle, la `FlatList`
-    // occupe la zone de l'onglet et le snap se cale sur une autre référence que
-    // la hauteur d'item, ce qui laisse apparaître la page suivante en bas.
     <View style={[styles.flex, { height }]}>
       <FlatList
         data={items}
@@ -291,8 +291,6 @@ export function FeedPager({
         // alors la même page, donc plus de snap bancal ni de page suivante
         // visible en bas pendant le geste.
         pagingEnabled
-        disableIntervalMomentum
-        decelerationRate="fast"
         snapToInterval={height}
         snapToAlignment="start"
         // Pendant un glissement sur la barre, le feed ne doit pas bouger.
@@ -343,8 +341,12 @@ export function FeedPager({
           // de la hauteur de la barre, de la zone de la barre de progression
           // (24 px) et de 12 px de respiration : la ligne du son ne touche
           // jamais le trait de progression.
+          // La zone de progression n'existe que sur les vidéos : la réserver
+          // sur un post texte ou une photo laisserait 36 px de vide au-dessus
+          // de la barre d'onglets.
           const paddingBottom =
-            barInset + FeedMetrics.progressTrackHeight + SOUND_TO_PROGRESS_GAP;
+            barInset +
+            (isVideoPost(item) ? FeedMetrics.progressTrackHeight + SOUND_TO_PROGRESS_GAP : 0);
 
           return (
             <View style={[styles.page, { height, width: '100%' }]}>
@@ -397,6 +399,7 @@ export function FeedPager({
                     post={item}
                     following={item.viewer.followingAuthor}
                     followState="idle"
+                    showCaption={item.format !== 'text'}
                     onFollow={() => void actions.follow(item)}
                     onOpenProfile={() => openProfile(item)}
                   />
@@ -429,6 +432,9 @@ export function FeedPager({
           );
         }}
       />
+
+      {/* Dégradé haut fixe : les onglets restent lisibles pendant le scroll. */}
+      <TopScrim />
 
       {/* Fin du fil : posée en overlay, jamais en pied de liste — un élément
           supplémentaire casserait le snap plein écran. */}
@@ -480,8 +486,8 @@ export function FeedPager({
  * n'atteint ~25 % qu'au tout dernier pixel, donc la vidéo reste claire.
  */
 const SCRIM_BANDS = 24;
-const SCRIM_HEIGHT = 150;
-const SCRIM_MAX_OPACITY = 0.25;
+const SCRIM_HEIGHT = 190;
+const SCRIM_MAX_OPACITY = 0.55;
 
 const SCRIM_COLORS = Array.from(
   { length: SCRIM_BANDS },
@@ -493,6 +499,31 @@ function OverlayScrim() {
     <View pointerEvents="none" style={styles.scrimContainer}>
       {SCRIM_COLORS.map((color) => (
         <View key={color} style={[styles.scrimBand, { backgroundColor: color }]} />
+      ))}
+    </View>
+  );
+}
+
+/** Nombre de bandes du dégradé sous les onglets. */
+const TOP_SCRIM_BANDS = 12;
+/** Hauteur du dégradé haut : laisse respirer les onglets sans voiler le média. */
+const TOP_SCRIM_HEIGHT = 96;
+
+const TOP_SCRIM_COLORS = Array.from({ length: TOP_SCRIM_BANDS }, (_, index) => {
+  const alpha = (1 - index / (TOP_SCRIM_BANDS - 1)) * 0.42;
+  return `rgba(0,0,0,${alpha.toFixed(3)})`;
+});
+
+/**
+ * Dégradé haut posé une seule fois au-dessus du pager : les onglets restent
+ * lisibles sur n'importe quelle vidéo, sans bandeau opaque qui casserait le
+ * plein écran.
+ */
+function TopScrim() {
+  return (
+    <View pointerEvents="none" style={styles.topScrim}>
+      {TOP_SCRIM_COLORS.map((color) => (
+        <View key={color} style={[styles.topScrimBand, { backgroundColor: color }]} />
       ))}
     </View>
   );
@@ -564,6 +595,16 @@ const styles = StyleSheet.create({
     height: SCRIM_HEIGHT,
   },
   scrimBand: {
+    flex: 1,
+  },
+  topScrim: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: TOP_SCRIM_HEIGHT,
+  },
+  topScrimBand: {
     flex: 1,
   },
   bottom: {

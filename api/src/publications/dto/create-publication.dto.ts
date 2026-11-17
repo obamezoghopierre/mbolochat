@@ -9,7 +9,8 @@ import {
 } from 'class-validator';
 
 /** Bornes nommées, alignées sur les futurs DTO mobiles. */
-export const MAX_CAPTION_LENGTH = 2200;
+/** Limite d'une publication texte, alignée sur Facebook (~63 200 caractères). */
+export const MAX_CAPTION_LENGTH = 63_200;
 export const MAX_COMMENT_LENGTH = 1000;
 export const MAX_CLIENT_ID_LENGTH = 128;
 

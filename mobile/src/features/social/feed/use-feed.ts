@@ -14,6 +14,30 @@ export interface FeedNotice {
 }
 
 /**
+ * Mémoire des fils chargés, clé par (session, onglet).
+ *
+ * TikTok ne recharge pas un onglet déjà visité : il garde sa liste et son
+ * curseur en mémoire et ne rajoute que de nouveaux éléments. On reproduit ce
+ * comportement ici — sinon changer d'onglet repart d'un écran de chargement et
+ * referme le fil courant.
+ */
+interface CachedFeed {
+  items: FeedPost[];
+  cursor: string | null;
+  status: FeedStatus;
+  loadedAt: number;
+}
+
+const feedCache = new Map<string, CachedFeed>();
+
+/** Au-delà, le fil est requêté à nouveau (le classement a pu bouger). */
+const FEED_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function cacheKey(token: string, tab: FeedTab): string {
+  return `${token}:${tab}`;
+}
+
+/**
  * État du fil : chargement initial, pagination par curseur, rafraîchissement et
  * actions optimistes avec retour arrière en cas d'échec réseau.
  *
@@ -22,13 +46,24 @@ export interface FeedNotice {
  */
 export function useFeed(tab: FeedTab) {
   const { token } = useAuth();
-  const [items, setItems] = useState<FeedPost[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [status, setStatus] = useState<FeedStatus>('loading');
+  const key = token ? cacheKey(token, tab) : '';
+  const cached = key ? feedCache.get(key) : undefined;
+
+  const [items, setItems] = useState<FeedPost[]>(cached?.items ?? []);
+  const [cursor, setCursor] = useState<string | null>(cached?.cursor ?? null);
+  const [status, setStatus] = useState<FeedStatus>(cached ? 'ready' : 'loading');
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [notice, setNotice] = useState<FeedNotice | null>(null);
   const inFlight = useRef(false);
+
+  // Toute mutation (chargement, pagination, action optimiste) est conservée
+  // pour que le retour sur l'onglet soit immédiat, sans requête réseau.
+  useEffect(() => {
+    if (key && status === 'ready') {
+      feedCache.set(key, { items, cursor, status, loadedAt: Date.now() });
+    }
+  }, [cursor, items, key, status]);
 
   const notifyError = useCallback((message: string) => {
     setNotice({ message, tone: 'error' });
@@ -73,12 +108,18 @@ export function useFeed(tab: FeedTab) {
     [cursor, tab, token],
   );
 
-  // L'onglet monte un nouveau fil (`key={tab}`) : le curseur d'un classement
-  // n'a jamais de sens dans un autre.
+  // Un onglet déjà visité garde sa liste : on ne requête que s'il n'y a rien
+  // en cache, ou si le cache a périmé. Le pull-to-refresh force le rechargement.
   useEffect(() => {
-    // Les états sont posés après l'appel réseau, pas pendant la phase de montage.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load({ reset: true });
+    if (!token) {
+      return;
+    }
+    const entry = feedCache.get(cacheKey(token, tab));
+    if (!entry || Date.now() - entry.loadedAt >= FEED_CACHE_TTL_MS) {
+      // Les états sont posés après l'appel réseau, pas pendant le montage.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      void load({ reset: true });
+    }
     // `load` change avec le curseur : la relancer à chaque page bouclerait.
   }, [tab, token]); // eslint-disable-line react-hooks/exhaustive-deps
 

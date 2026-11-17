@@ -1,20 +1,33 @@
 import { Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
   AppState,
   Pressable,
+  ScrollView,
   StyleSheet,
+  useWindowDimensions,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type ScrollViewInstance,
 } from 'react-native';
 import { useNetworkState } from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedSurface, Motion, Radii, Spacing, TabBarHeight, Type } from '@/constants/theme';
+import {
+  FeedSurface,
+  Motion,
+  Radii,
+  Spacing,
+  TabBarHeight,
+  TabBarSurface,
+  Type,
+} from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { FeedPager } from './pager/feed-pager';
 import { OnMediaShadow } from './pager/feed-tokens';
@@ -23,9 +36,9 @@ import { useReportPublication } from './use-report-publication';
 import type { FeedTab } from '@/lib/types';
 
 const TABS: { id: FeedTab; label: string }[] = [
-  { id: 'following', label: fr.social.feedTabs.following },
-  { id: 'for-you', label: fr.social.feedTabs.forYou },
   { id: 'local', label: fr.social.feedTabs.local },
+  { id: 'for-you', label: fr.social.feedTabs.forYou },
+  { id: 'following', label: fr.social.feedTabs.following },
 ];
 
 const DEFAULT_TAB: FeedTab = 'for-you';
@@ -43,7 +56,10 @@ const NOTICE_DURATION = 2600;
  */
 export function FeedScreen() {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [tab, setTab] = useState<FeedTab>(DEFAULT_TAB);
+  const pager = useRef<ScrollViewInstance | null>(null);
+
   // Le fil doit se taire dès qu'il n'est plus l'écran visible ou que l'app passe
   // en arrière-plan. `Tabs` garde les écrans montés : sans ces deux signaux, la
   // vidéo continuait de jouer sous l'onglet Messages.
@@ -64,29 +80,143 @@ export function FeedScreen() {
     return () => subscription.remove();
   }, []);
 
+  /**
+   * Les trois fils sont montés côte à côte dans un pager horizontal natif :
+   * ils gardent leur liste, leur curseur et leur position de scroll. Changer
+   * d'onglet ne fait que glisser le pager — aucune requête, aucun démontage.
+   */
+  const initialIndex = TABS.findIndex((entry) => entry.id === DEFAULT_TAB);
+
+  useEffect(() => {
+    pager.current?.scrollTo({ x: initialIndex * width, animated: false });
+  }, [initialIndex, width]);
+
+  const changeTab = useCallback(
+    (next: FeedTab) => {
+      const index = TABS.findIndex((entry) => entry.id === next);
+      if (index >= 0) {
+        pager.current?.scrollTo({ x: index * width, animated: true });
+      }
+      setTab(next);
+    },
+    [width],
+  );
+
+  const onPagerSettled = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const index = Math.round(event.nativeEvent.contentOffset.x / Math.max(1, width));
+      const next = TABS[index]?.id;
+      if (next) {
+        setTab(next);
+      }
+    },
+    [width],
+  );
+
   return (
     <View style={styles.screen}>
-      {/* Remonter le fil à chaque onglet évite de réutiliser un curseur d'un
-          autre classement. */}
-      <FeedSurfaceView
-        key={tab}
-        tab={tab}
-        onTabChange={setTab}
-        topInset={insets.top}
-        playbackActive={screenFocused && appActive}
-      />
+      <ScrollView
+        ref={pager}
+        testID="feed-horizontal-pager"
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        bounces={false}
+        directionalLockEnabled
+        onMomentumScrollEnd={onPagerSettled}
+        style={styles.screen}>
+        {TABS.map((entry) => (
+          <View key={entry.id} style={[styles.screen, { width }]}>
+            <FeedSurfaceView
+              tab={entry.id}
+              topInset={insets.top}
+              playbackActive={entry.id === tab && screenFocused && appActive}
+            />
+          </View>
+        ))}
+      </ScrollView>
+
+      {/* Barre du haut FIXE : posée une seule fois au-dessus du pager, elle ne
+          glisse pas pendant le swipe horizontal (comportement TikTok). */}
+      <FeedTopBar tab={tab} onTabChange={changeTab} topInset={insets.top} />
+    </View>
+  );
+}
+
+/** Barre d'onglets + création + recherche, calque fixe au-dessus du fil. */
+function FeedTopBar({
+  tab,
+  onTabChange,
+  topInset,
+}: {
+  tab: FeedTab;
+  onTabChange: (tab: FeedTab) => void;
+  topInset: number;
+}) {
+  const openSearch = useCallback(() => router.push('/discover'), []);
+  const openCreate = useCallback(() => router.push('/create'), []);
+
+  return (
+    <View pointerEvents="box-none" style={styles.fixedTop}>
+      <View
+        style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
+        pointerEvents="box-none">
+        <View style={styles.topBarSide} />
+        <View style={styles.tabs} accessibilityRole="tablist">
+          {TABS.map((entry) => {
+            const active = entry.id === tab;
+            return (
+              <Pressable
+                key={entry.id}
+                onPress={() => onTabChange(entry.id)}
+                hitSlop={8}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                style={styles.tab}>
+                <ThemedText
+                  numberOfLines={1}
+                  style={[styles.tabLabel, active && styles.tabLabelActive, OnMediaShadow]}>
+                  {entry.label}
+                </ThemedText>
+                <View style={[styles.tabUnderline, active && styles.tabUnderlineActive]} />
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={[styles.topBarSide, styles.topBarSideRight]}>
+          <Pressable
+            onPress={openSearch}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={fr.social.discoverSearch}
+            style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+            <Icon icon={Search} size={20} color={FeedSurface.onMedia} />
+          </Pressable>
+        </View>
+      </View>
+
+      <Pressable
+        onPress={openCreate}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={fr.social.createTitle}
+        style={({ pressed }) => [
+          styles.createFab,
+          { top: topInset + Spacing.two, left: Spacing.three },
+          pressed && styles.pressed,
+        ]}>
+        <Icon icon={Plus} size={24} color={FeedSurface.onMedia} strokeWidth={2.6} />
+      </Pressable>
     </View>
   );
 }
 
 function FeedSurfaceView({
   tab,
-  onTabChange,
   topInset,
   playbackActive,
 }: {
   tab: FeedTab;
-  onTabChange: (tab: FeedTab) => void;
   topInset: number;
   playbackActive: boolean;
 }) {
@@ -131,9 +261,6 @@ function FeedSurfaceView({
     return () => animation.stop();
   }, [feed.notice, noticeOpacity]);
 
-  const openSearch = useCallback(() => router.push('/discover'), []);
-  const openCreate = useCallback(() => router.push('/create'), []);
-
   return (
     <View
       style={styles.container}
@@ -165,44 +292,6 @@ function FeedSurfaceView({
         />
       )}
 
-      {/* Onglets posés sur le média, comme TikTok : jamais de bandeau opaque. */}
-      <View
-        style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
-        pointerEvents="box-none">
-        <View style={styles.topBarSide} />
-        <View style={styles.tabs} accessibilityRole="tablist">
-          {TABS.map((entry) => {
-            const active = entry.id === tab;
-            return (
-              <Pressable
-                key={entry.id}
-                onPress={() => onTabChange(entry.id)}
-                hitSlop={8}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                style={styles.tab}>
-                <ThemedText
-                  numberOfLines={1}
-                  style={[styles.tabLabel, active && styles.tabLabelActive, OnMediaShadow]}>
-                  {entry.label}
-                </ThemedText>
-                <View style={[styles.tabUnderline, active && styles.tabUnderlineActive]} />
-              </Pressable>
-            );
-          })}
-        </View>
-        <View style={[styles.topBarSide, styles.topBarSideRight]}>
-          <Pressable
-            onPress={openSearch}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={fr.social.discoverSearch}
-            style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-            <Icon icon={Search} size={20} color={FeedSurface.onMedia} />
-          </Pressable>
-        </View>
-      </View>
-
       {offline ? (
         <View style={[styles.offline, { top: topInset + Spacing.six }]} pointerEvents="none">
           <ThemedText type="small" style={styles.offlineText}>
@@ -226,22 +315,6 @@ function FeedSurfaceView({
           <ThemedText style={styles.noticeText}>{feed.notice.message}</ThemedText>
         </Animated.View>
       ) : null}
-
-      {/* Création : à gauche, sur la même ligne que la barre d'onglets, en face
-          de « Abonnements ». Rendue ICI et non dans `topBar` : c'est un calque
-          indépendant posé sur le média, il ne fait pas partie de la barre. */}
-      <Pressable
-        onPress={openCreate}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel={fr.social.createTitle}
-        style={({ pressed }) => [
-          styles.createFab,
-          { top: topInset + Spacing.two, left: Spacing.three },
-          pressed && styles.pressed,
-        ]}>
-        <Icon icon={Plus} size={24} color={FeedSurface.onMedia} strokeWidth={2.6} />
-      </Pressable>
 
       {feed.loadingMore ? (
         <View style={[styles.footer, { bottom: insets.bottom + Spacing.five }]}>
@@ -330,6 +403,14 @@ const styles = StyleSheet.create({
   emptyFill: {
     flex: 1,
   },
+  // Calque unique posé au-dessus du pager horizontal : la barre reste fixe
+  // pendant le swipe, contrairement aux anciennes copies par onglet.
+  fixedTop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
   topBar: {
     position: 'absolute',
     top: 0,
@@ -372,7 +453,8 @@ const styles = StyleSheet.create({
     color: FeedSurface.onMediaFaint,
   },
   tabLabelActive: {
-    color: FeedSurface.onMedia,
+    // Même cyan que l'onglet actif de la barre du bas.
+    color: TabBarSurface.active,
     fontWeight: '700',
   },
   tabUnderline: {
@@ -383,7 +465,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   tabUnderlineActive: {
-    backgroundColor: FeedSurface.onMedia,
+    backgroundColor: TabBarSurface.active,
   },
   roundButton: {
     width: 38,
@@ -419,7 +501,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   // Calque transparent cerclé de bleu : le média reste visible dessous et le
-  // bouton ne se confond plus avec la pastille « Suivre » (jaune, plus bas).
+  // bouton ne se confond plus avec la pastille « Suivre » (rouge, plus bas).
   createFab: {
     position: 'absolute',
     width: 44,

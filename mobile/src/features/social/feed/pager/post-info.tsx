@@ -1,10 +1,10 @@
 import { Check, Music2, Plus } from 'lucide-react-native';
-import { memo, useCallback, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Animated, Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedMetrics, FeedSurface, Radii, Spacing } from '@/constants/theme';
+import { FeedMetrics, FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { OnMediaShadow, feedText } from './feed-tokens';
 import type { FeedPost } from '@/lib/types';
@@ -15,9 +15,12 @@ const CAPTION_PREVIEW = 80;
 /** Mot-clé (`#`) ou mention (`@`) : coloré dans la légende, comme Mbolo. */
 const TOKEN_PATTERN = /(#[\w\u00C0-\u024F]+|@[\w\u00C0-\u024F]+)/g;
 
+/** Rotation d'un tour du disque « son original » (TikTok). */
+const DISC_PERIOD_MS = 3200;
+
 /**
  * Bloc d'informations posé sur le média, à gauche : auteur, légende dépliable,
- * hashtags mis en avant, lieu et ligne « son ».
+ * hashtags mis en avant et ligne « son » avec disque tournant.
  *
  * Tous les textes sont blancs avec ombre portée : la lisibilité ne dépend ni du
  * thème clair/sombre, ni de la luminosité de la photo. Aucun fond opaque qui
@@ -27,12 +30,15 @@ export const PostInfoBlock = memo(function PostInfoBlock({
   post,
   following,
   followState,
+  showCaption = true,
   onFollow,
   onOpenProfile,
 }: {
   post: FeedPost;
   following: boolean;
   followState: 'idle' | 'pending';
+  /** Les posts texte affichent déjà leur contenu dans la carte du pager. */
+  showCaption?: boolean;
   onFollow: () => void;
   onOpenProfile: () => void;
 }) {
@@ -51,15 +57,15 @@ export const PostInfoBlock = memo(function PostInfoBlock({
         accessibilityRole="button"
         accessibilityLabel={`Voir le profil de ${post.author.displayName}`}
         style={styles.authorRow}>
-        <ThemedText numberOfLines={1} style={[feedText.authorName, OnMediaShadow]}>
+        <ThemedText numberOfLines={1} style={[styles.authorName, OnMediaShadow]}>
           {post.author.displayName}
           {post.author.verified ? (
-            <ThemedText style={[feedText.authorName, styles.verified]}> ✓</ThemedText>
+            <ThemedText style={[styles.authorName, styles.verified]}> ✓</ThemedText>
           ) : null}
         </ThemedText>
         {following ? (
           <View style={[styles.chip, styles.chipMuted]}>
-            <Icon icon={Check} size={12} color="#FFFFFF" strokeWidth={3} />
+            <Icon icon={Check} size={12} color={FeedSurface.onMedia} strokeWidth={3} />
           </View>
         ) : followState === 'pending' ? (
           <View style={[styles.chip, styles.chipMuted]}>
@@ -82,7 +88,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
         )}
       </Pressable>
 
-      {caption.length > 0 ? (
+      {caption.length > 0 && showCaption ? (
         <Pressable onPress={toggleCaption} accessibilityRole="button">
           <ThemedText style={[feedText.caption, OnMediaShadow]}>
             {renderTokens(shown)}
@@ -96,7 +102,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
       ) : null}
 
       <View style={styles.soundRow}>
-        <Icon icon={Music2} size={13} color="#FFFFFF" />
+        <SpinningDisc />
         <ThemedText numberOfLines={1} style={[feedText.sound, OnMediaShadow, styles.soundText]}>
           {fr.social.originalSound} · {post.author.displayName}
         </ThemedText>
@@ -104,6 +110,34 @@ export const PostInfoBlock = memo(function PostInfoBlock({
     </View>
   );
 });
+
+/** Petit disque qui tourne, signature visuelle de la ligne « son » TikTok. */
+function SpinningDisc() {
+  const spin = useMemo(() => new Animated.Value(0), []);
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: DISC_PERIOD_MS,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [spin]);
+
+  const rotation = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <Animated.View style={[styles.disc, { transform: [{ rotate: rotation }] }]}>
+      <Icon icon={Music2} size={11} color={FeedSurface.onMedia} />
+    </Animated.View>
+  );
+}
 
 /** Colorie les `#hashtags` et `@mentions` sans casser le reste du texte. */
 function renderTokens(text: string) {
@@ -129,8 +163,12 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     flexShrink: 1,
   },
+  authorName: {
+    ...Type.body,
+    fontWeight: '700',
+    color: FeedSurface.onMedia,
+  },
   verified: {
-    ...feedText.authorName,
     color: '#5AA9FF',
     fontSize: FeedMetrics.avatar / 4,
   },
@@ -146,13 +184,14 @@ const styles = StyleSheet.create({
     backgroundColor: FeedSurface.follow,
   },
   chipAccentText: {
+    // Texte sombre pour contraster avec le fond jaune du bouton.
     color: '#000000',
   },
   chipMuted: {
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: FeedSurface.glass,
   },
   chipMutedText: {
-    color: '#FFFFFF',
+    color: FeedSurface.onMedia,
   },
   token: {
     ...feedText.caption,
@@ -161,8 +200,18 @@ const styles = StyleSheet.create({
   soundRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.one,
+    gap: Spacing.two,
     maxWidth: '100%',
+  },
+  disc: {
+    width: 19,
+    height: 19,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: FeedSurface.glassStrong,
+    borderWidth: 1,
+    borderColor: FeedSurface.onMediaFaint,
   },
   soundText: {
     flexShrink: 1,

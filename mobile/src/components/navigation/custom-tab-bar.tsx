@@ -104,6 +104,8 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
         containerStyle,
       ]}>
       <View style={styles.row}>
+        {/* Sur le fil, la barre est transparente et TOUTES les icônes sont
+            pleines, comme sur TikTok. Ailleurs, seul l'onglet actif est coloré. */}
         {state.routes.map((route, index) => {
           const { options } = descriptors[route.key];
           // Expo Router traduit `href: null` en `hidden`: la route reste dans
@@ -118,6 +120,7 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
               routeName={route.name}
               label={readLabel(options.tabBarLabel ?? options.title ?? route.name)}
               focused={focused}
+              filled={onFeed}
               onPress={() => pressTab(emitter, navigateToTab, route.key, focused)}
             />
           );
@@ -138,11 +141,14 @@ function TabButton({
   routeName,
   label,
   focused,
+  filled,
   onPress,
 }: {
   routeName: string;
   label: string;
   focused: boolean;
+  /** Vrai sur le fil : toutes les icônes sont pleines. */
+  filled: boolean;
   onPress: () => void;
 }) {
   const Glyph = TAB_ICONS[routeName] ?? House;
@@ -201,7 +207,7 @@ function TabButton({
       style={styles.tab}
       hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
       <Animated.View style={iconWrapStyle}>
-        <AnimatedIcon Glyph={Glyph} color={iconColor} />
+        <AnimatedIcon Glyph={Glyph} color={iconColor} filled={filled} />
       </Animated.View>
       <Animated.Text numberOfLines={1} style={[styles.label, labelStyle]}>
         {label}
@@ -221,9 +227,11 @@ function TabButton({
 function AnimatedIcon({
   Glyph,
   color,
+  filled,
 }: {
   Glyph: LucideIcon;
   color: SharedValue<string>;
+  filled: boolean;
 }) {
   // `useAnimatedReaction` écrit la couleur dans un état local, seule façon de
   // traverser la frontière SVG ↔ Reanimated sans composant animable dédié.
@@ -236,7 +244,16 @@ function AnimatedIcon({
     },
   );
 
-  return <Glyph size={ICON_SIZE} strokeWidth={2.1} color={resolved} />;
+  // Sur le fil, toutes les icônes sont pleines comme sur TikTok ; ailleurs,
+  // elles restent en trait et seule la couleur distingue l'onglet actif.
+  return (
+    <Glyph
+      size={ICON_SIZE}
+      strokeWidth={filled ? 1.8 : 2.1}
+      color={resolved}
+      fill={filled ? resolved : 'none'}
+    />
+  );
 }
 
 /** Ressort commun aux rebonds d'icône : rapide, sans oscillation visible. */

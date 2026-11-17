@@ -688,6 +688,8 @@ export const fr = {
     reportError: 'Signalement impossible. Réessaie.',
     seeMore: 'voir plus',
     seeLess: 'voir moins',
+    /** Carte de post texte : ouvre le lecteur plein écran. */
+    seeFullPost: 'Voir plus',
     originalSound: 'Son original',
     notInterested: 'Pas intéressé',
     notInterestedDone: 'Moins de contenus comme celui-ci',

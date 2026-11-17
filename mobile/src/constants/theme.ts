@@ -183,11 +183,13 @@ export const FeedSurface = {
   glass: 'rgba(255,255,255,0.16)',
   glassStrong: 'rgba(255,255,255,0.26)',
   glassPressed: 'rgba(255,255,255,0.32)',
-  like: '#FF2D55',
-  /** Bouton d'abonnement (« Suivre ») posé sur le média. Jaune clair Snapchat. */
+  /** Réaction et abonnement : jaune clair, cohérent sur le média sombre. */
+  like: '#FFFC00',
   follow: '#FFFC00',
-  save: '#FFC93C',
-  reposted: '#2ECC71',
+  /** Enregistrement : même jaune que la réaction et le bouton « Suivre ». */
+  save: '#FFFC00',
+  /** Republication : même jaune que la réaction, le suivi et l'enregistrement. */
+  reposted: '#FFFC00',
   /** Dégradé bas du média : transparent → noir, pour la lisibilité du texte. */
   gradientBottom: ['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.82)'] as const,
   /** Dégradé haut du média, sous les onglets. */
@@ -196,9 +198,9 @@ export const FeedSurface = {
 
 /** Mesures du feed plein écran : rail d'actions, avatar, pastille. */
 export const FeedMetrics = {
-  /** Icônes du rail d'action : plus discret que les 30 px d'origine. */
-  actionIcon: 26,
-  actionGap: Spacing.two + Spacing.half,
+  /** Icônes du rail d'action : taille TikTok (assez grandes pour être tactile). */
+  actionIcon: 30,
+  actionGap: Spacing.threeHalf,
   /** Largeur réservée à droite pour ne pas passer sous le rail. */
   railWidth: 64,
   /** Photo de profil de l'auteur, en carré arrondi. */
@@ -213,6 +215,21 @@ export const FeedMetrics = {
   heart: 110,
   /** Pastille du compteur carrousel / son. */
   pill: 26,
+} as const;
+
+/**
+ * Publication texte présentée comme une vidéo : fond dégradé animé façon
+ * « text post » TikTok. Le feed reste sombre quel que soit le thème ; ces
+ * teintes vivantes donnent au post une présence visuelle sans image distante.
+ */
+export const FeedTextPost = {
+  /** Dégradé de fond STATIQUE, du haut vers le bas (aucune animation). */
+  backdrop: ['#241059', '#3B1B6E', '#101A3C'] as const,
+  /** Carte de texte translucide : le fond coloré reste visible par transparence. */
+  card: 'rgba(16, 12, 38, 0.42)',
+  cardBorder: 'rgba(255, 255, 255, 0.18)',
+  /** Fond du bouton retour du lecteur plein écran. */
+  badge: 'rgba(255, 255, 255, 0.16)',
 } as const;
 
 /** Surfaces sombres translucides de la caméra et de l’éditeur média. */
