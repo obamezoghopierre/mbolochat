@@ -30,6 +30,7 @@ export function CommentRow({
   onReport,
   onDelete,
   onNotice,
+  onScoreChange,
   indented = false,
   replyToName,
 }: {
@@ -38,6 +39,7 @@ export function CommentRow({
   onReport?: (comment: PublicationComment) => void;
   onDelete?: (comment: PublicationComment) => void;
   onNotice?: (message: string) => void;
+  onScoreChange?: (commentId: string, score: number) => void;
   indented?: boolean;
   /** Pseudo du commentaire parent, affiché en gris devant une réponse. */
   replyToName?: string;
@@ -81,15 +83,18 @@ export function CommentRow({
     const next = !liked;
     const count = Math.max(0, likeCount + (next ? 1 : -1));
     const dislikes = disliked ? Math.max(0, dislikeCount - 1) : dislikeCount;
+    const optimisticScore = Math.max(0, count - dislikes);
     setOverride({
       liked: next,
       count,
       disliked: false,
       dislikes,
-      score: Math.max(0, count - dislikes),
+      score: optimisticScore,
     });
+    onScoreChange?.(comment.id, optimisticScore);
     try {
       const updated = await api.likeComment(token, comment.id, next);
+      onScoreChange?.(comment.id, updated.score);
       setOverride({
         liked: updated.viewerLiked,
         count: updated.likeCount,
@@ -100,7 +105,7 @@ export function CommentRow({
     } catch {
       setOverride(null);
     }
-  }, [comment.id, token, likeCount, liked, disliked, dislikeCount]);
+  }, [comment.id, token, likeCount, liked, disliked, dislikeCount, onScoreChange]);
 
   const toggleDislike = useCallback(async () => {
     if (!token) {
@@ -109,15 +114,18 @@ export function CommentRow({
     const next = !disliked;
     const count = Math.max(0, likeCount - (liked ? 1 : 0));
     const dislikes = Math.max(0, dislikeCount + (next ? 1 : -1));
+    const optimisticScore = Math.max(0, count - dislikes);
     setOverride({
       liked: false,
       count,
       disliked: next,
       dislikes,
-      score: Math.max(0, count - dislikes),
+      score: optimisticScore,
     });
+    onScoreChange?.(comment.id, optimisticScore);
     try {
       const updated = await api.dislikeComment(token, comment.id, next);
+      onScoreChange?.(comment.id, updated.score);
       setOverride({
         liked: updated.viewerLiked,
         count: updated.likeCount,
@@ -128,7 +136,7 @@ export function CommentRow({
     } catch {
       setOverride(null);
     }
-  }, [comment.id, token, likeCount, liked, disliked, dislikeCount]);
+  }, [comment.id, token, likeCount, liked, disliked, dislikeCount, onScoreChange]);
 
   const openMention = useCallback(
     async (username: string) => {
@@ -202,7 +210,7 @@ export function CommentRow({
       icon: Copy,
       onPress: () => void copy(),
     });
-    if (onReport) {
+    if (onReport && !isOwnComment) {
       actions.push({
         key: 'report',
         label: fr.social.reportComment,
@@ -232,6 +240,14 @@ export function CommentRow({
 
   const row = (
     <Pressable
+      accessible
+      accessibilityRole="button"
+      accessibilityActions={[{ name: 'openActions', label: fr.social.commentActionsTitle }]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'openActions') {
+          setMenuOpen(true);
+        }
+      }}
       onLongPress={() => setMenuOpen(true)}
       delayLongPress={350}
       style={[styles.row, indented ? styles.indented : null]}>

@@ -50,6 +50,25 @@ function parseTagsOnly(text: string): RichSegment[] {
   return segments;
 }
 
+const AUTOCOMPLETE = /(?:^|\s)([@#])([\p{L}\p{N}_.]{0,29})$/u;
+
+/** Token @pseudo / #tag en cours de saisie, pour l'autocomplétion. */
+export function detectAutocompleteToken(text: string): {
+  kind: 'mention' | 'hashtag';
+  query: string;
+  start: number;
+} | null {
+  const match = AUTOCOMPLETE.exec(text);
+  if (!match) {
+    return null;
+  }
+  return {
+    kind: match[1] === '@' ? 'mention' : 'hashtag',
+    query: match[2],
+    start: text.length - match[2].length - 1,
+  };
+}
+
 export function parseSocialText(text: string): RichSegment[] {
   const segments: RichSegment[] = [];
   let cursor = 0;

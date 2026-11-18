@@ -7,6 +7,7 @@ export const fr = {
   common: {
     cancel: 'Annuler',
     close: 'Fermer',
+    retry: 'Réessayer',
     save: 'Enregistrer',
     enabled: 'Activé',
     disabled: 'Désactivé',
@@ -684,6 +685,9 @@ export const fr = {
     replyToPrefix: (username: string) => `Rép. à @${username}`,
     viewReplies: (count: number) => `Voir ${count} réponse${count > 1 ? 's' : ''}`,
     hideReplies: 'Masquer les réponses',
+    collapseAllReplies: 'Tout replier',
+    expandAllReplies: 'Tout déplier',
+    addEmoji: 'Ajouter un emoji',
     commentPlaceholder: 'Ajouter un commentaire…',
     commentSend: 'Envoyer',
     commentError: 'Commentaire non envoyé. Réessaie.',

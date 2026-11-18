@@ -3,15 +3,19 @@ import BottomSheet, {
   type BottomSheetBackdropProps,
   BottomSheetFlatList,
 } from '@gorhom/bottom-sheet';
-import { SendHorizontal, X } from 'lucide-react-native';
+import { SendHorizontal, Smile, X } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
   Keyboard,
+  LayoutAnimation,
+  Platform,
   Pressable,
+  RefreshControl,
   StyleSheet,
   TextInput,
+  UIManager,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +31,7 @@ import {
   groupComments,
   mergeCommentPage,
 } from '@/features/social/publication/comments-model';
+import { detectAutocompleteToken } from '@/features/social/publication/rich-text';
 import { useReportComment } from '@/features/social/publication/use-report-comment';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
@@ -39,6 +44,19 @@ export const COMMENTS_SHEET_SNAP_RATIO = 0.72;
 
 /** Marge minimale sous le composeur quand la barre système ne remonte pas `insets.bottom`. */
 const COMPOSER_SYSTEM_BAR_FALLBACK = 48;
+
+const EMOJIS = ['👍', '❤️', '😂', '🎉', '🙏', '🔥', '😮', '👏'];
+
+type AutocompleteSuggestion = {
+  value: string;
+  displayName: string;
+  avatarUrl?: string | null;
+  isUser: boolean;
+};
+
+if (Platform.OS === 'android') {
+  UIManager.setLayoutAnimationEnabledExperimental?.(true);
+}
 
 /**
  * Feuille de commentaires façon Instagram.
@@ -69,6 +87,10 @@ export function CommentsSheet({
   const [sending, setSending] = useState(false);
   const [replyTo, setReplyTo] = useState<PublicationComment | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const pending = useRef<{ clientId: string; body: string; parentId?: string } | null>(null);
 
@@ -138,9 +160,10 @@ export function CommentsSheet({
   }, [load]);
 
   const loadMore = useCallback(async () => {
-    if (!token || !cursor) {
+    if (!token || !cursor || loadingMore) {
       return;
     }
+    setLoadingMore(true);
     try {
       const page = await api.comments(token, current.id, cursor);
       const merged = mergeCommentPage(comments, page);
@@ -148,8 +171,30 @@ export function CommentsSheet({
       setCursor(merged.nextCursor);
     } catch {
       setError(fr.social.commentsError);
+    } finally {
+      setLoadingMore(false);
     }
-  }, [comments, cursor, current.id, token]);
+  }, [comments, cursor, current.id, loadingMore, token]);
+
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }, [load]);
+
+  const updateScore = useCallback((commentId: string, score: number) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setComments((items) =>
+      items
+        .map((item) => (item.id === commentId ? { ...item, score } : item))
+        .sort(
+          (a, b) =>
+            b.score - a.score ||
+            a.createdAt.localeCompare(b.createdAt) ||
+            a.id.localeCompare(b.id),
+        ),
+    );
+  }, []);
 
   const send = useCallback(async () => {
     const body = draft.trim();
@@ -164,6 +209,7 @@ export function CommentsSheet({
     try {
       const created = await api.addComment(token, current.id, body, clientId, parentId);
       const replay = comments.some((item) => item.id === created.id);
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setComments((items) =>
         parentId ? appendReply(items, created) : appendComment(items, created),
       );
@@ -212,6 +258,88 @@ export function CommentsSheet({
 
   const report = useReportComment(setNotice);
 
+  useEffect(() => {
+    const active = detectAutocompleteToken(draft);
+    if (!token || !active || active.query.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const result = await api.search(
+          token,
+          active.query,
+          active.kind === 'mention' ? 'users' : 'hashtags',
+        );
+        if (cancelled) {
+          return;
+        }
+        setSuggestions(
+          active.kind === 'mention'
+            ? result.users.items.slice(0, 4).map((item) => ({
+                value: `@${item.username}`,
+                displayName: item.displayName,
+                avatarUrl: item.avatarUrl,
+                isUser: true,
+              }))
+            : result.hashtags.items.slice(0, 4).map((item) => ({
+                value: `#${item.tag}`,
+                displayName: `#${item.tag}`,
+                isUser: false,
+              })),
+        );
+      } catch {
+        if (!cancelled) {
+          setSuggestions([]);
+        }
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [draft, token]);
+
+  const handleDraftChange = useCallback((value: string) => {
+    setDraft(value);
+    const active = detectAutocompleteToken(value);
+    if (!active || active.query.length === 0) {
+      setSuggestions([]);
+    }
+  }, []);
+
+  const insertSuggestion = useCallback(
+    (value: string) => {
+      const active = detectAutocompleteToken(draft);
+      setDraft(active ? `${draft.slice(0, active.start)}${value} ` : `${draft}${value} `);
+      setSuggestions([]);
+    },
+    [draft],
+  );
+
+  const insertEmoji = useCallback((emoji: string) => {
+    setDraft((value) => value + emoji);
+    setEmojiOpen(false);
+  }, []);
+
+  const repliesCount = useMemo(
+    () => [...grouped.repliesByParent.values()].reduce((total, items) => total + items.length, 0),
+    [grouped],
+  );
+
+  const toggleAllReplies = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpanded((current) =>
+      current.size > 0
+        ? new Set()
+        : new Set(
+            grouped.roots
+              .filter((root) => grouped.repliesByParent.has(root.id))
+              .map((root) => root.id),
+          ),
+    );
+  }, [grouped]);
+
   // Les confirmations (copie, signalement, suppression) sont éphémères.
   useEffect(() => {
     if (!notice) {
@@ -228,6 +356,7 @@ export function CommentsSheet({
       }
       try {
         await api.deleteComment(token, comment.id);
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setComments((items) =>
           items.filter((item) => item.id !== comment.id && item.parentId !== comment.id),
         );
@@ -265,7 +394,19 @@ export function CommentsSheet({
       keyboardBlurBehavior="restore">
       {/* En-tête hors de la liste : il reste fixe pendant le défilement. */}
       <View style={styles.header}>
-        <View style={styles.headerSide} />
+        {repliesCount > 0 ? (
+          <Pressable
+            onPress={toggleAllReplies}
+            hitSlop={6}
+            accessibilityRole="button"
+            style={styles.headerSide}>
+            <ThemedText type="caption" themeColor="textSecondary">
+              {expanded.size > 0 ? fr.social.collapseAllReplies : fr.social.expandAllReplies}
+            </ThemedText>
+          </Pressable>
+        ) : (
+          <View style={styles.headerSide} />
+        )}
         <ThemedText type="sectionTitle">
           {fr.social.commentsCount(current.counters.comments)}
         </ThemedText>
@@ -285,6 +426,20 @@ export function CommentsSheet({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void refresh()}
+              tintColor={theme.accent}
+            />
+          }
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={theme.accent} size="small" />
+              </View>
+            ) : undefined
+          }
           ListEmptyComponent={
             status === 'loading' && comments.length === 0 ? (
               <View style={styles.center}>
@@ -295,6 +450,11 @@ export function CommentsSheet({
                 <ThemedText type="small" style={{ color: theme.danger }}>
                   {error}
                 </ThemedText>
+                <Pressable onPress={() => void load()} hitSlop={8} accessibilityRole="button">
+                  <ThemedText type="small" style={{ color: theme.accent, marginTop: Spacing.two }}>
+                    {fr.common.retry}
+                  </ThemedText>
+                </Pressable>
               </View>
             ) : (
               <View style={styles.center}>
@@ -315,6 +475,7 @@ export function CommentsSheet({
                   onReport={report.open}
                   onDelete={(target) => void deleteComment(target)}
                   onNotice={setNotice}
+                  onScoreChange={updateScore}
                 />
                 {replies.length > 0 ? (
                   <Pressable
@@ -337,6 +498,7 @@ export function CommentsSheet({
                         onReport={report.open}
                         onDelete={(target) => void deleteComment(target)}
                         onNotice={setNotice}
+                        onScoreChange={updateScore}
                         indented
                         replyToName={
                           grouped.roots.find((root) => root.id === reply.parentId)?.author.username
@@ -377,6 +539,49 @@ export function CommentsSheet({
         </View>
       ) : null}
 
+      {suggestions.length > 0 ? (
+        <View style={[styles.suggestions, { borderTopColor: theme.border }]}>
+          {suggestions.map((item) => (
+            <Pressable
+              key={item.value}
+              onPress={() => insertSuggestion(item.value)}
+              accessibilityRole="button"
+              style={styles.suggestionRow}>
+              {item.isUser ? (
+                <Avatar name={item.displayName} uri={item.avatarUrl} size={32} shape="rounded" />
+              ) : (
+                <View
+                  style={[styles.hashtagAvatar, { backgroundColor: theme.backgroundSelected }]}>
+                  <ThemedText style={{ color: theme.accent }}>#</ThemedText>
+                </View>
+              )}
+              <ThemedText type="small">{item.displayName}</ThemedText>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {emojiOpen ? (
+        <View style={[styles.suggestions, { borderTopColor: theme.border }]}>
+          {EMOJIS.map((emoji) => (
+            <Pressable
+              key={emoji}
+              onPress={() => insertEmoji(emoji)}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={emoji}>
+              <ThemedText style={styles.emoji}>{emoji}</ThemedText>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
+      {draft.length > 0 ? (
+        <ThemedText type="caption" themeColor="textSecondary" style={styles.charCount}>
+          {draft.length}/1000
+        </ThemedText>
+      ) : null}
+
       <View
         style={[
           styles.composer,
@@ -392,9 +597,16 @@ export function CommentsSheet({
           gender={user?.gender}
           size={34}
         />
+        <Pressable
+          onPress={() => setEmojiOpen((value) => !value)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={fr.social.addEmoji}>
+          <Smile size={20} color={theme.textSecondary} />
+        </Pressable>
         <TextInput
           value={draft}
-          onChangeText={setDraft}
+          onChangeText={handleDraftChange}
           placeholder={fr.social.commentPlaceholder}
           placeholderTextColor={theme.textSecondary}
           style={[
@@ -436,14 +648,13 @@ export function CommentsSheet({
 
 const styles = StyleSheet.create({
   header: {
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
-  headerSide: { width: 28 },
-  close: { padding: Spacing.one },
+  headerSide: { position: 'absolute', left: Spacing.three },
+  close: { position: 'absolute', right: Spacing.three, padding: Spacing.one },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 120 },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.four },
   repliesToggle: { paddingLeft: 42, paddingTop: Spacing.half, paddingBottom: Spacing.one },
@@ -462,6 +673,25 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.one,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
+  suggestions: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
+  hashtagAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: Radii.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emoji: { fontSize: 22 },
+  charCount: { textAlign: 'right', paddingHorizontal: Spacing.three },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',

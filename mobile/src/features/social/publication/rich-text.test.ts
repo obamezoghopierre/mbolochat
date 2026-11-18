@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseSocialText } from './rich-text';
+import { detectAutocompleteToken, parseSocialText } from './rich-text';
 
 describe('parseSocialText', () => {
   it('découpe mentions et hashtags en segments actifs', () => {
@@ -42,6 +42,20 @@ describe('parseSocialText', () => {
       { kind: 'text', value: ' ' },
       { kind: 'hashtag', tag: 'fusion', value: '#Fusión' },
     ]);
+  });
+
+  it('détecte le token en cours de saisie', () => {
+    expect(detectAutocompleteToken('Salut @feed.d')).toEqual({
+      kind: 'mention',
+      query: 'feed.d',
+      start: 6,
+    });
+    expect(detectAutocompleteToken('regarde #mbolo')).toEqual({
+      kind: 'hashtag',
+      query: 'mbolo',
+      start: 8,
+    });
+    expect(detectAutocompleteToken('texte sans token')).toBeNull();
   });
 
   it('ne rend pas actifs les autres schémas', () => {
