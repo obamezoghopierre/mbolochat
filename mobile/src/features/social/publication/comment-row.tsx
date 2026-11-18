@@ -1,8 +1,10 @@
+import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { Heart, ThumbsDown } from 'lucide-react-native';
+import { Copy, Flag, Heart, Link2, Reply, ThumbsDown, Trash2 } from 'lucide-react-native';
 import { useCallback, useMemo, useState } from 'react';
-import { Linking, Pressable, StyleSheet, View } from 'react-native';
+import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 
+import { ActionSheet, type SheetAction } from '@/components/action-sheet';
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Spacing, Type } from '@/constants/theme';
@@ -25,11 +27,17 @@ const COLLAPSED_LINES = 2;
 export function CommentRow({
   comment,
   onReply,
+  onReport,
+  onDelete,
+  onNotice,
   indented = false,
   replyToName,
 }: {
   comment: PublicationComment;
   onReply?: (comment: PublicationComment) => void;
+  onReport?: (comment: PublicationComment) => void;
+  onDelete?: (comment: PublicationComment) => void;
+  onNotice?: (message: string) => void;
   indented?: boolean;
   /** Pseudo du commentaire parent, affiché en gris devant une réponse. */
   replyToName?: string;
@@ -44,6 +52,7 @@ export function CommentRow({
     score: number;
   } | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [followOverride, setFollowOverride] = useState<{
     following: boolean;
     followedBy: boolean;
@@ -161,8 +170,71 @@ export function CommentRow({
     }
   }, [token, isOwnComment, following, followedBy, comment.author.id]);
 
-  return (
-    <View style={[styles.row, indented ? styles.indented : null]}>
+  const copy = useCallback(async () => {
+    await Clipboard.setStringAsync(comment.body);
+    onNotice?.(fr.social.commentCopied);
+  }, [comment.body, onNotice]);
+
+  const menuActions = useMemo<SheetAction[]>(() => {
+    const link = segments.find((segment) => segment.kind === 'link');
+    const actions: SheetAction[] = [];
+    if (link?.kind === 'link') {
+      actions.push({
+        key: 'link',
+        label: fr.social.openCommentLink,
+        icon: Link2,
+        onPress: () => {
+          void Linking.openURL(link.url).catch(() => undefined);
+        },
+      });
+    }
+    if (onReply) {
+      actions.push({
+        key: 'reply',
+        label: fr.social.replyToComment,
+        icon: Reply,
+        onPress: () => onReply(comment),
+      });
+    }
+    actions.push({
+      key: 'copy',
+      label: fr.social.copyComment,
+      icon: Copy,
+      onPress: () => void copy(),
+    });
+    if (onReport) {
+      actions.push({
+        key: 'report',
+        label: fr.social.reportComment,
+        icon: Flag,
+        onPress: () => onReport(comment),
+      });
+    }
+    if (isOwnComment && onDelete) {
+      actions.push({
+        key: 'delete',
+        label: fr.social.deleteComment,
+        icon: Trash2,
+        destructive: true,
+        onPress: () =>
+          Alert.alert(fr.social.deleteComment, fr.social.deleteComment, [
+            { text: fr.common.cancel, style: 'cancel' },
+            {
+              text: fr.social.deleteComment,
+              style: 'destructive',
+              onPress: () => onDelete(comment),
+            },
+          ]),
+      });
+    }
+    return actions;
+  }, [comment, copy, isOwnComment, onDelete, onReply, onReport, segments]);
+
+  const row = (
+    <Pressable
+      onLongPress={() => setMenuOpen(true)}
+      delayLongPress={350}
+      style={[styles.row, indented ? styles.indented : null]}>
       <Avatar
         name={comment.author.displayName}
         uri={comment.author.avatarUrl}
@@ -289,7 +361,19 @@ export function CommentRow({
           />
         </Pressable>
       </View>
-    </View>
+    </Pressable>
+  );
+
+  return (
+    <>
+      {row}
+      <ActionSheet
+        visible={menuOpen}
+        title={fr.social.commentActionsTitle}
+        actions={menuActions}
+        onClose={() => setMenuOpen(false)}
+      />
+    </>
   );
 }
 

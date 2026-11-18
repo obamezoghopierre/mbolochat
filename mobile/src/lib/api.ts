@@ -200,6 +200,11 @@ export const api = {
     return request<CommentPage>(`/publications/${publicationId}/comments${query}`, { token });
   },
 
+  /** Suppression d'un commentaire (auteur ou auteur de la publication). */
+  deleteComment(token: string, commentId: string) {
+    return request<{ deleted: true }>(`/comments/${commentId}`, { method: 'DELETE', token });
+  },
+
   /** J'aime sur un commentaire, idempotent côté serveur. */
   likeComment(token: string, commentId: string, liked: boolean) {
     return request<PublicationComment>(`/comments/${commentId}/like`, {

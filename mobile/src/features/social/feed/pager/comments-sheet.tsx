@@ -27,6 +27,7 @@ import {
   groupComments,
   mergeCommentPage,
 } from '@/features/social/publication/comments-model';
+import { useReportComment } from '@/features/social/publication/use-report-comment';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -67,6 +68,7 @@ export function CommentsSheet({
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [replyTo, setReplyTo] = useState<PublicationComment | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const pending = useRef<{ clientId: string; body: string; parentId?: string } | null>(null);
 
@@ -208,7 +210,47 @@ export function CommentsSheet({
     });
   }, []);
 
+  const report = useReportComment(setNotice);
+
+  // Les confirmations (copie, signalement, suppression) sont éphémères.
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+    const timer = setTimeout(() => setNotice(null), 2500);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const deleteComment = useCallback(
+    async (comment: PublicationComment) => {
+      if (!token) {
+        return;
+      }
+      try {
+        await api.deleteComment(token, comment.id);
+        setComments((items) =>
+          items.filter((item) => item.id !== comment.id && item.parentId !== comment.id),
+        );
+        const removed = comments.filter(
+          (item) => item.id === comment.id || item.parentId === comment.id,
+        ).length;
+        setCurrent((value) => ({
+          ...value,
+          counters: {
+            ...value.counters,
+            comments: Math.max(0, value.counters.comments - removed),
+          },
+        }));
+        setNotice(fr.social.commentDeleted);
+      } catch {
+        setNotice(fr.social.commentDeleteError);
+      }
+    },
+    [comments, token],
+  );
+
   return (
+    <>
     <BottomSheet
       index={0}
       snapPoints={snapPoints}
@@ -267,7 +309,13 @@ export function CommentsSheet({
             const open = expanded.has(item.id);
             return (
               <View>
-                <CommentRow comment={item} onReply={handleReply} />
+                <CommentRow
+                  comment={item}
+                  onReply={handleReply}
+                  onReport={report.open}
+                  onDelete={(target) => void deleteComment(target)}
+                  onNotice={setNotice}
+                />
                 {replies.length > 0 ? (
                   <Pressable
                     onPress={() => toggleReplies(item.id)}
@@ -286,6 +334,9 @@ export function CommentsSheet({
                         key={reply.id}
                         comment={reply}
                         onReply={handleReply}
+                        onReport={report.open}
+                        onDelete={(target) => void deleteComment(target)}
+                        onNotice={setNotice}
                         indented
                         replyToName={
                           grouped.roots.find((root) => root.id === reply.parentId)?.author.username
@@ -299,6 +350,17 @@ export function CommentsSheet({
           onEndReached={() => void loadMore()}
           onEndReachedThreshold={0.4}
         />
+
+      {notice ? (
+        <View style={[styles.notice, { backgroundColor: theme.accentSoft }]}>
+          <ThemedText type="caption" style={{ color: theme.accent }}>
+            {notice}
+          </ThemedText>
+          <Pressable onPress={() => setNotice(null)} hitSlop={8} accessibilityRole="button">
+            <X size={14} color={theme.accent} />
+          </Pressable>
+        </View>
+      ) : null}
 
       {replyTo ? (
         <View style={[styles.replyBanner, { borderTopColor: theme.border }]}>
@@ -367,6 +429,8 @@ export function CommentsSheet({
         </Pressable>
       </View>
     </BottomSheet>
+    {report.sheet}
+    </>
   );
 }
 
@@ -383,6 +447,13 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 120 },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.four },
   repliesToggle: { paddingLeft: 42, paddingTop: Spacing.half, paddingBottom: Spacing.one },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
   replyBanner: {
     flexDirection: 'row',
     alignItems: 'center',
