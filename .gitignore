@@ -11,6 +11,9 @@ api/uploads/
 *service-account*.json
 *firebase-adminsdk*.json
 
+# Clé d'authentification Tailscale (accès Waydroid) : ne jamais versionner
+tailscale-authkey
+
 # Artefacts Python (scripts de génération d’emoji)
 __pycache__/
 *.pyc
