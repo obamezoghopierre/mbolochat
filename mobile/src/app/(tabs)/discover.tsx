@@ -1,4 +1,4 @@
-import { Redirect, router } from 'expo-router';
+import { Redirect, router, useLocalSearchParams } from 'expo-router';
 import { Compass, Search } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -37,8 +37,9 @@ export default function DiscoverScreen() {
   const { token, loading } = useAuth();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ q?: string }>();
 
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(typeof params.q === 'string' ? params.q : '');
   const [trending, setTrending] = useState<SearchHashtag[]>([]);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');

@@ -461,6 +461,9 @@ export interface SocialAuthor {
   displayName: string;
   avatarUrl: string | null;
   verified: boolean;
+  /** Présent sur les commentaires : état du graphe social avec le lecteur. */
+  following?: boolean;
+  followedBy?: boolean;
 }
 
 export type SocialReaction = 'like' | 'love' | 'fire' | 'clap';

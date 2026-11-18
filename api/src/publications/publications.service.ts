@@ -5,13 +5,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql, type Column, type SQL } from 'drizzle-orm';
+import { extractHashtags, extractMentions } from '../common/social-tags.js';
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   commentDislikes,
   commentLikes,
   comments,
+  follows,
+  hashtags,
   mediaAssets,
   publicationMedia,
   publicationReactions,
@@ -49,6 +52,9 @@ export interface AuthorCard {
   displayName: string;
   avatarUrl: string | null;
   verified: boolean;
+  /** Présent sur les commentaires : état du graphe social avec le lecteur. */
+  following?: boolean;
+  followedBy?: boolean;
 }
 
 export interface PublicationView {
@@ -105,6 +111,24 @@ function commentScoreSql() {
     where ${commentDislikes.commentId} = ${comments.id}
   )`;
   return { dislikes, score: sql<number>`greatest(${comments.likeCount} - ${dislikes}, 0)` };
+}
+
+/** État du graphe social entre le lecteur et l'auteur d'un commentaire. */
+function followStateSql(viewerId: string, authorId: SQL | Column) {
+  return {
+    following: sql<boolean>`exists (
+      select 1 from ${follows}
+      where ${follows.followerId} = ${viewerId}
+        and ${follows.followingId} = ${authorId}
+        and ${follows.status} = 'accepted'
+    )`,
+    followedBy: sql<boolean>`exists (
+      select 1 from ${follows}
+      where ${follows.followerId} = ${authorId}
+        and ${follows.followingId} = ${viewerId}
+        and ${follows.status} = 'accepted'
+    )`,
+  };
 }
 
 function encodeCommentCursor(score: number, createdAtText: string, id: string): string {
@@ -631,6 +655,7 @@ export class PublicationsService {
           .where(eq(comments.id, comment.parentId));
       }
       await this.refreshHotScore(tx, publicationId);
+      const tagged = await this.applyCommentTags(tx, body, viewerId, publicationId, comment.id);
       const notifications = [
         await this.notifications.create(tx, {
           recipientId: row.authorId,
@@ -653,7 +678,10 @@ export class PublicationsService {
           }),
         );
       }
-      created = notifications.filter((item): item is NonNullable<typeof item> => item !== null);
+      created = [
+        ...notifications.filter((item): item is NonNullable<typeof item> => item !== null),
+        ...tagged,
+      ];
       return comment;
     });
 
@@ -704,6 +732,7 @@ export class PublicationsService {
         createdAtText: sql<string>`${comments.createdAt}::text`,
         dislikeCount: dislikes,
         score,
+        ...followStateSql(viewerId, comments.authorId),
         viewerLiked: sql<boolean>`exists (
           select 1 from ${commentLikes}
           where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${viewerId}
@@ -722,13 +751,14 @@ export class PublicationsService {
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
     return {
-      items: page.map(({ comment, author, viewerLiked, viewerDisliked, dislikeCount, score }) => ({
+      items: page.map(
+        ({ comment, author, viewerLiked, viewerDisliked, dislikeCount, score, following, followedBy }) => ({
         id: comment.id,
         publicationId: comment.publicationId,
         parentId: comment.parentId,
         body: comment.body,
         createdAt: comment.createdAt,
-        author,
+        author: { ...author, following, followedBy },
         likeCount: comment.likeCount,
         replyCount: comment.replyCount,
         viewerLiked,
@@ -911,6 +941,60 @@ export class PublicationsService {
     };
   }
 
+  /** Mentions et hashtags d'un commentaire, écrits dans la même transaction. */
+  private async applyCommentTags(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    body: string,
+    actorId: string,
+    publicationId: string,
+    commentId: string,
+  ): Promise<PublicationCommentNotification[]> {
+    const delivered: PublicationCommentNotification[] = [];
+    const usernames = extractMentions(body);
+    if (usernames.length > 0) {
+      const targets = await tx
+        .select({
+          id: users.id,
+          permission: userSocialSettings.mentionPermission,
+        })
+        .from(users)
+        .leftJoin(userSocialSettings, eq(userSocialSettings.userId, users.id))
+        .where(inArray(sql`lower(${users.username})`, usernames));
+      for (const target of targets) {
+        if (target.id === actorId) {
+          continue;
+        }
+        const facts = await this.follows.viewerFacts(actorId, target.id);
+        if (!canInteract(target.permission ?? 'everyone', facts)) {
+          continue;
+        }
+        const notification = await this.notifications.create(tx, {
+          recipientId: target.id,
+          actorId,
+          type: 'mention',
+          dedupeKey: `mention:${commentId}:${target.id}`,
+          publicationId,
+          commentId,
+        });
+        if (notification) {
+          delivered.push(notification);
+        }
+      }
+    }
+
+    const tags = extractHashtags(body);
+    if (tags.length > 0) {
+      await tx
+        .insert(hashtags)
+        .values(tags.map((tag) => ({ tag, usageCount: 1 })))
+        .onConflictDoUpdate({
+          target: hashtags.tag,
+          set: { usageCount: sql`${hashtags.usageCount} + 1`, updatedAt: new Date() },
+        });
+    }
+    return delivered;
+  }
+
   private async loadCommentView(commentId: string, viewerId: string): Promise<CommentView> {
     const { dislikes, score } = commentScoreSql();
     const [row] = await this.db
@@ -919,6 +1003,7 @@ export class PublicationsService {
         author: this.authorFields(),
         dislikeCount: dislikes,
         score,
+        ...followStateSql(viewerId, comments.authorId),
         viewerLiked: sql<boolean>`exists (
           select 1 from ${commentLikes}
           where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${viewerId}
@@ -940,7 +1025,7 @@ export class PublicationsService {
       parentId: row.comment.parentId,
       body: row.comment.body,
       createdAt: row.comment.createdAt,
-      author: row.author,
+      author: { ...row.author, following: row.following, followedBy: row.followedBy },
       likeCount: row.comment.likeCount,
       replyCount: row.comment.replyCount,
       viewerLiked: row.viewerLiked,

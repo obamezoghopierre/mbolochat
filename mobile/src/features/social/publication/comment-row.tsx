@@ -1,6 +1,7 @@
+import { router } from 'expo-router';
 import { Heart, ThumbsDown } from 'lucide-react-native';
-import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Linking, Pressable, StyleSheet, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
@@ -11,6 +12,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatListTimestamp } from '@/lib/format';
 import type { PublicationComment } from '@/lib/types';
+import { parseSocialText } from './rich-text';
 
 /** Nombre de lignes affichées avant « voir plus », comme sur Instagram. */
 const COLLAPSED_LINES = 2;
@@ -32,7 +34,7 @@ export function CommentRow({
   /** Pseudo du commentaire parent, affiché en gris devant une réponse. */
   replyToName?: string;
 }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const theme = useTheme();
   const [override, setOverride] = useState<{
     liked: boolean;
@@ -42,16 +44,26 @@ export function CommentRow({
     score: number;
   } | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [followOverride, setFollowOverride] = useState<{
+    following: boolean;
+    followedBy: boolean;
+    pending?: boolean;
+  } | null>(null);
   // La largeur de la feuille est connue et stable : au-delà de ~100 caractères
   // ou 2 lignes explicites, le texte sera coupé par `numberOfLines`.
   const isLong =
     comment.body.length > 100 || comment.body.split('\n').length > COLLAPSED_LINES;
+  const segments = useMemo(() => parseSocialText(comment.body), [comment.body]);
 
   const liked = override?.liked ?? comment.viewerLiked;
   const likeCount = override?.count ?? comment.likeCount;
   const disliked = override?.disliked ?? comment.viewerDisliked;
   const dislikeCount = override?.dislikes ?? comment.dislikeCount;
   const score = override?.score ?? comment.score;
+  const following = followOverride?.following ?? comment.author.following ?? false;
+  const followedBy = followOverride?.followedBy ?? comment.author.followedBy ?? false;
+  const pending = followOverride?.pending ?? false;
+  const isOwnComment = user?.id === comment.author.id;
 
   const toggleLike = useCallback(async () => {
     if (!token) {
@@ -109,6 +121,46 @@ export function CommentRow({
     }
   }, [comment.id, token, likeCount, liked, disliked, dislikeCount]);
 
+  const openMention = useCallback(
+    async (username: string) => {
+      if (!token) {
+        return;
+      }
+      const result = await api.search(token, username, 'users');
+      const found = result.users.items.find(
+        (item) => item.username.toLowerCase() === username,
+      );
+      if (found) {
+        router.push(`/user/${found.id}`);
+      }
+    },
+    [token],
+  );
+
+  const openHashtag = useCallback((tag: string) => {
+    router.push({ pathname: '/(tabs)/discover', params: { q: tag } });
+  }, []);
+
+  const toggleFollow = useCallback(async () => {
+    if (!token || isOwnComment) {
+      return;
+    }
+    const next = !following;
+    setFollowOverride({ following: next, followedBy });
+    try {
+      const state = next
+        ? await api.followUser(token, comment.author.id)
+        : await api.unfollowUser(token, comment.author.id);
+      setFollowOverride({
+        following: state.status !== 'none',
+        followedBy,
+        pending: state.status === 'pending',
+      });
+    } catch {
+      setFollowOverride(null);
+    }
+  }, [token, isOwnComment, following, followedBy, comment.author.id]);
+
   return (
     <View style={[styles.row, indented ? styles.indented : null]}>
       <Avatar
@@ -125,11 +177,59 @@ export function CommentRow({
               {fr.social.replyToPrefix(replyToName)}
             </ThemedText>
           ) : null}
+          {!isOwnComment && following && followedBy ? (
+            <ThemedText type="caption" themeColor="textSecondary">
+              {fr.social.mutualFollow}
+            </ThemedText>
+          ) : null}
+          {!isOwnComment && !following ? (
+            <Pressable
+              onPress={() => void toggleFollow()}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={
+                followedBy ? fr.social.followBack : fr.social.followInline
+              }>
+              <ThemedText type="caption" style={{ color: FeedSurface.like, fontWeight: '600' }}>
+                {pending
+                  ? fr.social.requested
+                  : followedBy
+                    ? fr.social.followBack
+                    : fr.social.followInline}
+              </ThemedText>
+            </Pressable>
+          ) : null}
         </View>
         <ThemedText
           style={styles.text}
           numberOfLines={isLong && !expanded ? COLLAPSED_LINES : undefined}>
-          {comment.body}
+          {segments.map((segment, index) => {
+            if (segment.kind === 'text') {
+              return <ThemedText key={index}>{segment.value}</ThemedText>;
+            }
+            if (segment.kind === 'link') {
+              return (
+                <ThemedText
+                  key={index}
+                  onPress={() => void Linking.openURL(segment.url).catch(() => undefined)}
+                  style={{ color: theme.accent, textDecorationLine: 'underline' }}>
+                  {segment.value}
+                </ThemedText>
+              );
+            }
+            return (
+              <ThemedText
+                key={index}
+                onPress={() =>
+                  segment.kind === 'mention'
+                    ? void openMention(segment.username)
+                    : openHashtag(segment.tag)
+                }
+                style={{ color: theme.accent, fontWeight: '600' }}>
+                {segment.value}
+              </ThemedText>
+            );
+          })}
         </ThemedText>
         {isLong ? (
           <Pressable
