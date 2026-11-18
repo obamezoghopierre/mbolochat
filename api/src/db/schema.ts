@@ -1190,6 +1190,21 @@ export const commentLikes = pgTable(
   (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
 );
 
+/** « Je n'aime pas » sur un commentaire (PK composite : un seul par couple). */
+export const commentDislikes = pgTable(
+  'comment_dislikes',
+  {
+    commentId: text('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
+);
+
 /** Réaction à une publication : une seule par utilisateur, type modifiable. */
 export const publicationReactions = pgTable(
   'publication_reactions',

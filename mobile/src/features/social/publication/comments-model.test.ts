@@ -20,6 +20,9 @@ function comment(overrides: Partial<PublicationComment> = {}): PublicationCommen
     likeCount: 0,
     replyCount: 0,
     viewerLiked: false,
+    viewerDisliked: false,
+    dislikeCount: 0,
+    score: 0,
     ...overrides,
   };
 }

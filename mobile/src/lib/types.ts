@@ -539,6 +539,12 @@ export interface PublicationComment {
   replyCount: number;
   /** Le visiteur a aimé ce commentaire. */
   viewerLiked: boolean;
+  /** Le visiteur a marqué ce commentaire « Je n'aime pas ». */
+  viewerDisliked: boolean;
+  /** Nombre de « Je n'aime pas ». */
+  dislikeCount: number;
+  /** Pertinence : likes − dislikes, plancher à 0 (sert au classement serveur). */
+  score: number;
 }
 
 export interface CommentPage {

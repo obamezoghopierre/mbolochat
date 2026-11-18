@@ -295,6 +295,13 @@
       "when": 1794886217515,
       "tag": "0041_feed_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1795015358904,
+      "tag": "0042_equal_lyja",
+      "breakpoints": true
     }
   ]
 }

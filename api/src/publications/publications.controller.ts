@@ -128,4 +128,15 @@ export class CommentsController {
   async unlike(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
     return this.publications.likeComment(id, current.sub, false);
   }
+
+  @Post(':id/dislike')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async dislike(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.dislikeComment(id, current.sub, true);
+  }
+
+  @Delete(':id/dislike')
+  async undislike(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.dislikeComment(id, current.sub, false);
+  }
 }

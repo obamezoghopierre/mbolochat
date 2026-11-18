@@ -663,6 +663,8 @@ export const fr = {
     commentsTitle: 'Commentaires',
     commentsCount: (count: number) => `${count} commentaire${count > 1 ? 's' : ''}`,
     likesCount: (count: number) => `${count} J’aime`,
+    dislike: 'Je n’aime pas',
+    undislike: 'Retirer « Je n’aime pas »',
     commentsEmpty: 'Aucun commentaire pour le moment.',
     reply: 'Répondre',
     replyingTo: (name: string) => `Répondre à ${name}`,

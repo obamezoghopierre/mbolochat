@@ -5,11 +5,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.js';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
+  commentDislikes,
   commentLikes,
   comments,
   mediaAssets,
@@ -90,6 +90,38 @@ export interface CommentView {
   replyCount: number;
   /** Le visiteur a aimé ce commentaire. */
   viewerLiked: boolean;
+  /** Le visiteur a marqué ce commentaire « Je n'aime pas ». */
+  viewerDisliked: boolean;
+  /** Nombre de « Je n'aime pas ». */
+  dislikeCount: number;
+  /** Pertinence : likes − dislikes, plancher à 0. Sert au classement. */
+  score: number;
+}
+
+/** Compteurs « courant » d'un commentaire : likes − dislikes, plancher à 0. */
+function commentScoreSql() {
+  const dislikes = sql<number>`(
+    select count(*)::int from ${commentDislikes}
+    where ${commentDislikes.commentId} = ${comments.id}
+  )`;
+  return { dislikes, score: sql<number>`greatest(${comments.likeCount} - ${dislikes}, 0)` };
+}
+
+function encodeCommentCursor(score: number, createdAtText: string, id: string): string {
+  return Buffer.from(`${score}|${createdAtText}|${id}`, 'utf8').toString('base64url');
+}
+
+function decodeCommentCursor(cursor: string): { score: number; createdAtText: string; id: string } {
+  const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+  if (parts.length !== 3) {
+    throw new BadRequestException('Curseur invalide.');
+  }
+  const [scoreText, createdAtText, id] = parts;
+  const score = Number(scoreText);
+  if (!Number.isInteger(score) || !id || Number.isNaN(new Date(createdAtText).getTime())) {
+    throw new BadRequestException('Curseur invalide.');
+  }
+  return { score, createdAtText, id };
 }
 
 export interface CommentPage {
@@ -652,14 +684,17 @@ export class PublicationsService {
     await this.assertVisible(publicationId, viewerId);
     const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
 
+    const { dislikes, score } = commentScoreSql();
     const conditions = [eq(comments.publicationId, publicationId), isNull(comments.deletedAt)];
     if (cursor) {
-      // Ordre croissant : on reprend strictement après le curseur, en gardant
-      // la précision PostgreSQL (cf. common/keyset-cursor.ts).
-      const decoded = decodeKeysetCursor(cursor);
-      conditions.push(
-        sql`(${comments.createdAt}, ${comments.id}) > (${decoded.raw}::timestamptz, ${decoded.id})`,
-      );
+      // Tri par score décroissant, puis par date/id croissants : le curseur
+      // garde les trois composantes pour une pagination sans doublon.
+      const after = decodeCommentCursor(cursor);
+      conditions.push(sql`(
+        ${score} < ${after.score}
+        or (${score} = ${after.score}
+          and (${comments.createdAt}, ${comments.id}) > (${after.createdAtText}::timestamptz, ${after.id}))
+      )`);
     }
 
     const rows = await this.db
@@ -667,21 +702,27 @@ export class PublicationsService {
         comment: comments,
         author: this.authorFields(),
         createdAtText: sql<string>`${comments.createdAt}::text`,
+        dislikeCount: dislikes,
+        score,
         viewerLiked: sql<boolean>`exists (
           select 1 from ${commentLikes}
           where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${viewerId}
+        )`,
+        viewerDisliked: sql<boolean>`exists (
+          select 1 from ${commentDislikes}
+          where ${commentDislikes.commentId} = ${comments.id} and ${commentDislikes.userId} = ${viewerId}
         )`,
       })
       .from(comments)
       .innerJoin(users, eq(users.id, comments.authorId))
       .where(and(...conditions))
-      .orderBy(asc(comments.createdAt), asc(comments.id))
+      .orderBy(desc(score), asc(comments.createdAt), asc(comments.id))
       .limit(bounded + 1);
 
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
     return {
-      items: page.map(({ comment, author, viewerLiked }) => ({
+      items: page.map(({ comment, author, viewerLiked, viewerDisliked, dislikeCount, score }) => ({
         id: comment.id,
         publicationId: comment.publicationId,
         parentId: comment.parentId,
@@ -691,10 +732,13 @@ export class PublicationsService {
         likeCount: comment.likeCount,
         replyCount: comment.replyCount,
         viewerLiked,
+        viewerDisliked,
+        dislikeCount,
+        score,
       })),
       nextCursor:
         rows.length > bounded && last
-          ? encodeKeysetCursor(last.createdAtText, last.comment.id)
+          ? encodeCommentCursor(last.score, last.createdAtText, last.comment.id)
           : null,
     };
   }
@@ -868,13 +912,20 @@ export class PublicationsService {
   }
 
   private async loadCommentView(commentId: string, viewerId: string): Promise<CommentView> {
+    const { dislikes, score } = commentScoreSql();
     const [row] = await this.db
       .select({
         comment: comments,
         author: this.authorFields(),
+        dislikeCount: dislikes,
+        score,
         viewerLiked: sql<boolean>`exists (
           select 1 from ${commentLikes}
           where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${viewerId}
+        )`,
+        viewerDisliked: sql<boolean>`exists (
+          select 1 from ${commentDislikes}
+          where ${commentDislikes.commentId} = ${comments.id} and ${commentDislikes.userId} = ${viewerId}
         )`,
       })
       .from(comments)
@@ -893,6 +944,9 @@ export class PublicationsService {
       likeCount: row.comment.likeCount,
       replyCount: row.comment.replyCount,
       viewerLiked: row.viewerLiked,
+      viewerDisliked: row.viewerDisliked,
+      dislikeCount: row.dislikeCount,
+      score: row.score,
     };
   }
 
@@ -913,6 +967,10 @@ export class PublicationsService {
         .from(commentLikes)
         .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
       if (liked && !existing) {
+        // J'aime et « Je n'aime pas » s'excluent mutuellement.
+        await tx
+          .delete(commentDislikes)
+          .where(and(eq(commentDislikes.commentId, commentId), eq(commentDislikes.userId, viewerId)));
         await tx.insert(commentLikes).values({ commentId, userId: viewerId });
         await tx
           .update(comments)
@@ -926,6 +984,51 @@ export class PublicationsService {
           .update(comments)
           .set({ likeCount: sql`greatest(${comments.likeCount} - 1, 0)` })
           .where(eq(comments.id, commentId));
+      }
+    });
+
+    return this.loadCommentView(commentId, viewerId);
+  }
+
+  /** « Je n'aime pas » sur un commentaire, idempotent et exclusif du j'aime. */
+  async dislikeComment(commentId: string, viewerId: string, disliked: boolean): Promise<CommentView> {
+    const [row] = await this.db
+      .select({ publicationId: comments.publicationId })
+      .from(comments)
+      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+    if (!row) {
+      throw new NotFoundException('Commentaire introuvable.');
+    }
+    await this.assertVisible(row.publicationId, viewerId);
+
+    await this.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ userId: commentDislikes.userId })
+        .from(commentDislikes)
+        .where(
+          and(eq(commentDislikes.commentId, commentId), eq(commentDislikes.userId, viewerId)),
+        );
+      if (disliked && !existing) {
+        await tx.insert(commentDislikes).values({ commentId, userId: viewerId });
+        const [liked] = await tx
+          .select({ userId: commentLikes.userId })
+          .from(commentLikes)
+          .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
+        if (liked) {
+          await tx
+            .delete(commentLikes)
+            .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
+          await tx
+            .update(comments)
+            .set({ likeCount: sql`greatest(${comments.likeCount} - 1, 0)` })
+            .where(eq(comments.id, commentId));
+        }
+      } else if (!disliked && existing) {
+        await tx
+          .delete(commentDislikes)
+          .where(
+            and(eq(commentDislikes.commentId, commentId), eq(commentDislikes.userId, viewerId)),
+          );
       }
     });
 

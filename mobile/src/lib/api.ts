@@ -208,6 +208,14 @@ export const api = {
     });
   },
 
+  /** « Je n'aime pas » sur un commentaire, idempotent et exclusif du j'aime. */
+  dislikeComment(token: string, commentId: string, disliked: boolean) {
+    return request<PublicationComment>(`/comments/${commentId}/dislike`, {
+      method: disliked ? 'POST' : 'DELETE',
+      token,
+    });
+  },
+
   /** Ajout d'un commentaire, idempotent par `clientId`. */
   addComment(
     token: string,
