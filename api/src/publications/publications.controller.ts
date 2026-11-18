@@ -117,4 +117,15 @@ export class CommentsController {
   async remove(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
     return this.publications.removeComment(id, current.sub);
   }
+
+  @Post(':id/like')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async like(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.likeComment(id, current.sub, true);
+  }
+
+  @Delete(':id/like')
+  async unlike(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.likeComment(id, current.sub, false);
+  }
 }

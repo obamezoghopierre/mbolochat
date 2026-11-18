@@ -19,6 +19,44 @@ export function appendComment(
   return next;
 }
 
+/**
+ * Sépare les commentaires racines des réponses, en conservant l'ordre reçu.
+ * Les réponses sont regroupées par parent pour un affichage façon Instagram
+ * (une ligne par fil, réponses repliables en dessous).
+ */
+export function groupComments(comments: PublicationComment[]): {
+  roots: PublicationComment[];
+  repliesByParent: Map<string, PublicationComment[]>;
+} {
+  const roots: PublicationComment[] = [];
+  const repliesByParent = new Map<string, PublicationComment[]>();
+  for (const item of comments) {
+    if (!item.parentId) {
+      roots.push(item);
+      continue;
+    }
+    const replies = repliesByParent.get(item.parentId) ?? [];
+    replies.push(item);
+    repliesByParent.set(item.parentId, replies);
+  }
+  return { roots, repliesByParent };
+}
+
+/** Ajoute une réponse au fil et met à jour le compteur du commentaire parent. */
+export function appendReply(
+  current: PublicationComment[],
+  reply: PublicationComment,
+): PublicationComment[] {
+  const replay = current.some((item) => item.id === reply.id);
+  const next = appendComment(current, reply);
+  if (!reply.parentId || replay) {
+    return next;
+  }
+  return next.map((item) =>
+    item.id === reply.parentId ? { ...item, replyCount: item.replyCount + 1 } : item,
+  );
+}
+
 /** Fusionne une page de commentaires sans doublon, en gardant l'ordre reçu. */
 export function mergeCommentPage(
   current: PublicationComment[],

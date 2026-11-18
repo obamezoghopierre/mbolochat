@@ -200,6 +200,14 @@ export const api = {
     return request<CommentPage>(`/publications/${publicationId}/comments${query}`, { token });
   },
 
+  /** J'aime sur un commentaire, idempotent côté serveur. */
+  likeComment(token: string, commentId: string, liked: boolean) {
+    return request<PublicationComment>(`/comments/${commentId}/like`, {
+      method: liked ? 'POST' : 'DELETE',
+      token,
+    });
+  },
+
   /** Ajout d'un commentaire, idempotent par `clientId`. */
   addComment(
     token: string,

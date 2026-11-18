@@ -535,6 +535,10 @@ export interface PublicationComment {
   createdAt: string;
   author: SocialAuthor;
   likeCount: number;
+  /** Nombre de réponses directes. */
+  replyCount: number;
+  /** Le visiteur a aimé ce commentaire. */
+  viewerLiked: boolean;
 }
 
 export interface CommentPage {

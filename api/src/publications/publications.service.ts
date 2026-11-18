@@ -10,6 +10,7 @@ import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
+  commentLikes,
   comments,
   mediaAssets,
   publicationMedia,
@@ -85,6 +86,10 @@ export interface CommentView {
   createdAt: Date;
   author: AuthorCard;
   likeCount: number;
+  /** Nombre de réponses directes, maintenu par le serveur. */
+  replyCount: number;
+  /** Le visiteur a aimé ce commentaire. */
+  viewerLiked: boolean;
 }
 
 export interface CommentPage {
@@ -625,7 +630,7 @@ export class PublicationsService {
     }
 
     if (inserted) {
-      return this.loadCommentView(inserted.id);
+      return this.loadCommentView(inserted.id, viewerId);
     }
     const [existing] = await this.db
       .select()
@@ -634,7 +639,7 @@ export class PublicationsService {
     if (!existing) {
       throw new ForbiddenException('Commentaire en conflit.');
     }
-    return this.loadCommentView(existing.id);
+    return this.loadCommentView(existing.id, viewerId);
   }
 
   /** Commentaires d'une publication, paginés par curseur (ordre chronologique). */
@@ -662,6 +667,10 @@ export class PublicationsService {
         comment: comments,
         author: this.authorFields(),
         createdAtText: sql<string>`${comments.createdAt}::text`,
+        viewerLiked: sql<boolean>`exists (
+          select 1 from ${commentLikes}
+          where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${viewerId}
+        )`,
       })
       .from(comments)
       .innerJoin(users, eq(users.id, comments.authorId))
@@ -672,7 +681,7 @@ export class PublicationsService {
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
     return {
-      items: page.map(({ comment, author }) => ({
+      items: page.map(({ comment, author, viewerLiked }) => ({
         id: comment.id,
         publicationId: comment.publicationId,
         parentId: comment.parentId,
@@ -680,6 +689,8 @@ export class PublicationsService {
         createdAt: comment.createdAt,
         author,
         likeCount: comment.likeCount,
+        replyCount: comment.replyCount,
+        viewerLiked,
       })),
       nextCursor:
         rows.length > bounded && last
@@ -856,9 +867,16 @@ export class PublicationsService {
     };
   }
 
-  private async loadCommentView(commentId: string): Promise<CommentView> {
+  private async loadCommentView(commentId: string, viewerId: string): Promise<CommentView> {
     const [row] = await this.db
-      .select({ comment: comments, author: this.authorFields() })
+      .select({
+        comment: comments,
+        author: this.authorFields(),
+        viewerLiked: sql<boolean>`exists (
+          select 1 from ${commentLikes}
+          where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${viewerId}
+        )`,
+      })
       .from(comments)
       .innerJoin(users, eq(users.id, comments.authorId))
       .where(eq(comments.id, commentId));
@@ -873,7 +891,45 @@ export class PublicationsService {
       createdAt: row.comment.createdAt,
       author: row.author,
       likeCount: row.comment.likeCount,
+      replyCount: row.comment.replyCount,
+      viewerLiked: row.viewerLiked,
     };
+  }
+
+  /** J'aime sur un commentaire, idempotent et transactionnel. */
+  async likeComment(commentId: string, viewerId: string, liked: boolean): Promise<CommentView> {
+    const [row] = await this.db
+      .select({ publicationId: comments.publicationId })
+      .from(comments)
+      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+    if (!row) {
+      throw new NotFoundException('Commentaire introuvable.');
+    }
+    await this.assertVisible(row.publicationId, viewerId);
+
+    await this.db.transaction(async (tx) => {
+      const [existing] = await tx
+        .select({ userId: commentLikes.userId })
+        .from(commentLikes)
+        .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
+      if (liked && !existing) {
+        await tx.insert(commentLikes).values({ commentId, userId: viewerId });
+        await tx
+          .update(comments)
+          .set({ likeCount: sql`${comments.likeCount} + 1` })
+          .where(eq(comments.id, commentId));
+      } else if (!liked && existing) {
+        await tx
+          .delete(commentLikes)
+          .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
+        await tx
+          .update(comments)
+          .set({ likeCount: sql`greatest(${comments.likeCount} - 1, 0)` })
+          .where(eq(comments.id, commentId));
+      }
+    });
+
+    return this.loadCommentView(commentId, viewerId);
   }
 
   /**

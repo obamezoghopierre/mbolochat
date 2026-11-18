@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { appendComment, mergeCommentPage } from './comments-model';
+import { appendComment, appendReply, groupComments, mergeCommentPage } from './comments-model';
 import type { PublicationComment } from '@/lib/types';
 
 function comment(overrides: Partial<PublicationComment> = {}): PublicationComment {
@@ -18,6 +18,8 @@ function comment(overrides: Partial<PublicationComment> = {}): PublicationCommen
       verified: false,
     },
     likeCount: 0,
+    replyCount: 0,
+    viewerLiked: false,
     ...overrides,
   };
 }
@@ -35,6 +37,39 @@ describe('appendComment', () => {
     );
     expect(result).toHaveLength(1);
     expect(result[0].body).toBe('serveur');
+  });
+});
+
+describe('groupComments', () => {
+  it('sépare les racines des réponses par parent', () => {
+    const { roots, repliesByParent } = groupComments([
+      comment({ id: 'a' }),
+      comment({ id: 'r1', parentId: 'a' }),
+      comment({ id: 'b' }),
+      comment({ id: 'r2', parentId: 'a' }),
+    ]);
+    expect(roots.map((item) => item.id)).toEqual(['a', 'b']);
+    expect(repliesByParent.get('a')?.map((item) => item.id)).toEqual(['r1', 'r2']);
+    expect(repliesByParent.has('b')).toBe(false);
+  });
+});
+
+describe('appendReply', () => {
+  it('ajoute la réponse et incrémente le compteur du parent', () => {
+    const result = appendReply(
+      [comment({ id: 'a', replyCount: 1 })],
+      comment({ id: 'r', parentId: 'a' }),
+    );
+    expect(result.map((item) => item.id)).toEqual(['a', 'r']);
+    expect(result[0].replyCount).toBe(2);
+  });
+
+  it('ne modifie pas le compteur quand la réponse existe déjà', () => {
+    const parent = comment({ id: 'a', replyCount: 1 });
+    const reply = comment({ id: 'r', parentId: 'a' });
+    const result = appendReply([parent, reply], reply);
+    expect(result).toHaveLength(2);
+    expect(result[0].replyCount).toBe(1);
   });
 });
 

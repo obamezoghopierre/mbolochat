@@ -2,37 +2,45 @@ import BottomSheet, {
   BottomSheetBackdrop,
   type BottomSheetBackdropProps,
   BottomSheetFlatList,
-  BottomSheetView,
 } from '@gorhom/bottom-sheet';
-import { router } from 'expo-router';
+import { SendHorizontal, X } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Dimensions,
+  Keyboard,
   Pressable,
   StyleSheet,
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
-import { Radii, Spacing, Type } from '@/constants/theme';
+import { Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
-import { applyReaction } from '@/features/social/feed/feed-model';
-import { PostCard } from '@/features/social/feed/post-card';
-import { appendComment, mergeCommentPage } from '@/features/social/publication/comments-model';
+import { CommentRow } from '@/features/social/publication/comment-row';
+import {
+  appendComment,
+  appendReply,
+  groupComments,
+  mergeCommentPage,
+} from '@/features/social/publication/comments-model';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { newClientId } from '@/lib/client-id';
-import { formatListTimestamp } from '@/lib/format';
 import type { FeedPost, PublicationComment } from '@/lib/types';
 
 /** Hauteur de la feuille, partagée avec `FeedScreen` pour dimensionner le feed réduit. */
 export const COMMENTS_SHEET_SNAP_RATIO = 0.72;
 
+/** Marge minimale sous le composeur quand la barre système ne remonte pas `insets.bottom`. */
+const COMPOSER_SYSTEM_BAR_FALLBACK = 48;
+
 /**
- * Feuille de commentaires façon TikTok / Instagram.
+ * Feuille de commentaires façon Instagram.
  *
  * Le glissement, le suivi du doigt, les snap points et la fermeture sont gérés
  * par `@gorhom/bottom-sheet` (la même approche que les bottom sheets natives).
@@ -45,8 +53,11 @@ export function CommentsSheet({
   post: FeedPost;
   onClose: () => void;
 }) {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
+  const screenHeight = useMemo(() => Dimensions.get('window').height, []);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const [current, setCurrent] = useState<FeedPost>(post);
   const [comments, setComments] = useState<PublicationComment[]>([]);
@@ -55,11 +66,34 @@ export function CommentsSheet({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
-  const pending = useRef<{ clientId: string; body: string } | null>(null);
+  const [replyTo, setReplyTo] = useState<PublicationComment | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const pending = useRef<{ clientId: string; body: string; parentId?: string } | null>(null);
+
+  const grouped = useMemo(() => groupComments(comments), [comments]);
 
   // Un seul snap point : la feuille s'ouvre à 72 % et ne peut pas monter plus
   // haut. Le drag vers le bas la ferme (enablePanDownToClose).
-  const snapPoints = useMemo(() => [`${COMMENTS_SHEET_SNAP_RATIO * 100}%`], []);
+  const snapPoints = useMemo(
+    () =>
+      keyboardHeight > 0
+        ? [Math.max(240, screenHeight - keyboardHeight)]
+        : [`${COMMENTS_SHEET_SNAP_RATIO * 100}%`],
+    [keyboardHeight, screenHeight],
+  );
+
+  // Le clavier se superpose à la fenêtre sur Waydroid : on remonte la feuille
+  // de sa hauteur et on réduit son snap point pour garder le composeur visible.
+  useEffect(() => {
+    const shown = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates.height);
+    });
+    const hidden = Keyboard.addListener('keyboardDidHide', () => setKeyboardHeight(0));
+    return () => {
+      shown.remove();
+      hidden.remove();
+    };
+  }, []);
 
   // Tap sur le feed réduit derrière la feuille : elle se ferme, comme Instagram.
   const renderBackdrop = useCallback(
@@ -115,38 +149,25 @@ export function CommentsSheet({
     }
   }, [comments, cursor, current.id, token]);
 
-  const toggleLike = useCallback(async () => {
-    if (!token) {
-      return;
-    }
-    const removing = current.viewer.reaction !== null;
-    setCurrent((value) =>
-      applyReaction([value], value.id, removing ? null : 'like')[0] ?? value,
-    );
-    try {
-      if (removing) {
-        await api.removeReaction(token, current.id);
-      } else {
-        await api.reactToPublication(token, current.id, 'like');
-      }
-    } catch {
-      setCurrent(post);
-      setError(fr.social.reactionError);
-    }
-  }, [current, post, token]);
-
   const send = useCallback(async () => {
     const body = draft.trim();
     if (!token || body.length === 0 || sending) {
       return;
     }
-    const clientId = pending.current?.body === body ? pending.current.clientId : newClientId();
-    pending.current = { clientId, body };
+    const parentId = replyTo?.id;
+    const reusable = pending.current?.body === body && pending.current.parentId === parentId;
+    const clientId = reusable ? (pending.current?.clientId ?? newClientId()) : newClientId();
+    pending.current = { clientId, body, parentId };
     setSending(true);
     try {
-      const created = await api.addComment(token, current.id, body, clientId);
+      const created = await api.addComment(token, current.id, body, clientId, parentId);
       const replay = comments.some((item) => item.id === created.id);
-      setComments((items) => appendComment(items, created));
+      setComments((items) =>
+        parentId ? appendReply(items, created) : appendComment(items, created),
+      );
+      if (parentId && !replay) {
+        setExpanded((ids) => new Set(ids).add(parentId));
+      }
       if (!replay) {
         setCurrent((value) => ({
           ...value,
@@ -154,6 +175,7 @@ export function CommentsSheet({
         }));
       }
       setDraft('');
+      setReplyTo(null);
       pending.current = null;
       setError(null);
     } catch {
@@ -161,7 +183,30 @@ export function CommentsSheet({
     } finally {
       setSending(false);
     }
-  }, [comments, current.id, draft, sending, token]);
+  }, [comments, current.id, draft, replyTo, sending, token]);
+
+  const handleReply = useCallback(
+    (target: PublicationComment) => {
+      // Une seule ligne de réponses est affichée : on répond toujours au fil racine.
+      const root = target.parentId
+        ? comments.find((item) => item.id === target.parentId) ?? target
+        : target;
+      setReplyTo(root);
+    },
+    [comments],
+  );
+
+  const toggleReplies = useCallback((id: string) => {
+    setExpanded((ids) => {
+      const next = new Set(ids);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <BottomSheet
@@ -173,118 +218,159 @@ export function CommentsSheet({
       backdropComponent={renderBackdrop}
       backgroundStyle={{ backgroundColor: theme.backgroundElement }}
       handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}
+      containerStyle={{ transform: [{ translateY: -keyboardHeight }] }}
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore">
-      <BottomSheetView style={styles.content}>
-        <View style={styles.header}>
-          <ThemedText style={styles.title}>{fr.social.commentsTitle}</ThemedText>
+      {/* En-tête hors de la liste : il reste fixe pendant le défilement. */}
+      <View style={styles.header}>
+        <View style={styles.headerSide} />
+        <ThemedText type="sectionTitle">
+          {fr.social.commentsCount(current.counters.comments)}
+        </ThemedText>
+        <Pressable
+          onPress={onClose}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={fr.common.close}
+          style={styles.close}>
+          <X size={20} color={theme.text} />
+        </Pressable>
+      </View>
+
+      <BottomSheetFlatList
+          data={grouped.roots}
+          keyExtractor={(item) => item.id}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={
+            status === 'loading' && comments.length === 0 ? (
+              <View style={styles.center}>
+                <ActivityIndicator color={theme.accent} />
+              </View>
+            ) : status === 'error' && comments.length === 0 ? (
+              <View style={styles.center}>
+                <ThemedText type="small" style={{ color: theme.danger }}>
+                  {error}
+                </ThemedText>
+              </View>
+            ) : (
+              <View style={styles.center}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {fr.social.commentsEmpty}
+                </ThemedText>
+              </View>
+            )
+          }
+          renderItem={({ item }) => {
+            const replies = grouped.repliesByParent.get(item.id) ?? [];
+            const open = expanded.has(item.id);
+            return (
+              <View>
+                <CommentRow comment={item} onReply={handleReply} />
+                {replies.length > 0 ? (
+                  <Pressable
+                    onPress={() => toggleReplies(item.id)}
+                    accessibilityRole="button"
+                    style={styles.repliesToggle}>
+                    <ThemedText type="caption" themeColor="textSecondary">
+                      {open
+                        ? fr.social.hideReplies
+                        : fr.social.viewReplies(Math.max(item.replyCount, replies.length))}
+                    </ThemedText>
+                  </Pressable>
+                ) : null}
+                {open
+                  ? replies.map((reply) => (
+                      <CommentRow
+                        key={reply.id}
+                        comment={reply}
+                        onReply={handleReply}
+                        indented
+                        replyToName={
+                          grouped.roots.find((root) => root.id === reply.parentId)?.author.username
+                        }
+                      />
+                    ))
+                  : null}
+              </View>
+            );
+          }}
+          onEndReached={() => void loadMore()}
+          onEndReachedThreshold={0.4}
+        />
+
+      {replyTo ? (
+        <View style={[styles.replyBanner, { borderTopColor: theme.border }]}>
+          <ThemedText type="caption" themeColor="textSecondary">
+            {fr.social.replyingTo(replyTo.author.displayName)}
+          </ThemedText>
           <Pressable
-            onPress={() => router.push(`/post/${current.id}`)}
+            onPress={() => setReplyTo(null)}
+            hitSlop={8}
             accessibilityRole="button"
-            accessibilityLabel={fr.social.seeFullPost}>
-            <ThemedText type="caption" style={styles.fullPost}>
-              {fr.social.seeFullPost}
-            </ThemedText>
+            accessibilityLabel={fr.common.close}>
+            <X size={14} color={theme.textSecondary} />
           </Pressable>
         </View>
+      ) : null}
 
-        {status === 'loading' && comments.length === 0 ? (
-          <View style={styles.center}>
-            <ActivityIndicator color={theme.accent} />
-          </View>
-        ) : status === 'error' && comments.length === 0 ? (
-          <View style={styles.center}>
-            <ThemedText type="small" style={{ color: theme.danger }}>
-              {error}
-            </ThemedText>
-          </View>
-        ) : (
-          <BottomSheetFlatList
-            data={comments}
-            keyExtractor={(item) => item.id}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.list}
-            ListHeaderComponent={
-              <View style={styles.postBlock}>
-                <PostCard post={current} onToggleLike={() => void toggleLike()} />
-              </View>
-            }
-            renderItem={({ item }) => (
-              <View style={styles.comment}>
-                <Avatar name={item.author.displayName} uri={item.author.avatarUrl} size={32} />
-                <View style={styles.commentBody}>
-                  <View style={styles.commentMeta}>
-                    <ThemedText type="small" style={styles.commentAuthor}>
-                      {item.author.displayName}
-                    </ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {formatListTimestamp(item.createdAt)}
-                    </ThemedText>
-                  </View>
-                  <ThemedText style={styles.commentText}>{item.body}</ThemedText>
-                </View>
-              </View>
-            )}
-            onEndReached={() => void loadMore()}
-            onEndReachedThreshold={0.4}
-          />
-        )}
-
-        <View
+      <View
+        style={[
+          styles.composer,
+          {
+            borderTopColor: theme.border,
+            backgroundColor: theme.backgroundElement,
+            paddingBottom: Math.max(insets.bottom, COMPOSER_SYSTEM_BAR_FALLBACK),
+          },
+        ]}>
+        <Avatar
+          name={user?.displayName ?? ''}
+          uri={user?.avatarUrl}
+          gender={user?.gender}
+          size={34}
+        />
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          placeholder={fr.social.commentPlaceholder}
+          placeholderTextColor={theme.textSecondary}
           style={[
-            styles.composer,
+            styles.input,
+            { color: theme.text, backgroundColor: theme.backgroundSelected },
+          ]}
+          maxLength={1000}
+          multiline
+          accessibilityLabel={fr.social.commentPlaceholder}
+        />
+        <Pressable
+          onPress={() => void send()}
+          disabled={sending || draft.trim().length === 0}
+          accessibilityRole="button"
+          accessibilityLabel={fr.social.commentSend}
+          style={[
+            styles.send,
             {
-              borderTopColor: theme.border,
-              backgroundColor: theme.backgroundElement,
+              backgroundColor:
+                draft.trim().length === 0 ? theme.backgroundSelected : theme.accent,
             },
           ]}>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            placeholder={fr.social.commentPlaceholder}
-            placeholderTextColor={theme.textSecondary}
-            style={[
-              styles.input,
-              { color: theme.text, backgroundColor: theme.backgroundSelected },
-            ]}
-            maxLength={1000}
-            multiline
-            accessibilityLabel={fr.social.commentPlaceholder}
-          />
-          <Pressable
-            onPress={() => void send()}
-            disabled={sending || draft.trim().length === 0}
-            accessibilityRole="button"
-            accessibilityLabel={fr.social.commentSend}
-            style={[
-              styles.send,
-              {
-                backgroundColor:
-                  draft.trim().length === 0 ? theme.backgroundSelected : theme.accent,
-              },
-            ]}>
-            {sending ? (
-              <ActivityIndicator color={theme.onAccent} size="small" />
-            ) : (
-              <ThemedText
-                type="small"
-                style={{
-                  color: draft.trim().length === 0 ? theme.textSecondary : theme.onAccent,
-                  fontWeight: '600',
-                }}>
-                {fr.social.commentSend}
-              </ThemedText>
-            )}
-          </Pressable>
-        </View>
-      </BottomSheetView>
+          {sending ? (
+            <ActivityIndicator color={theme.onAccent} size="small" />
+          ) : (
+            <SendHorizontal
+              size={18}
+              color={draft.trim().length === 0 ? theme.textSecondary : theme.onAccent}
+              strokeWidth={2.2}
+            />
+          )}
+        </Pressable>
+      </View>
     </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
-  content: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -292,20 +378,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.two,
   },
-  title: { ...Type.sectionTitle, fontWeight: '700' },
-  fullPost: { color: '#3C87F7' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  headerSide: { width: 28 },
+  close: { padding: Spacing.one },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 120 },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.four },
-  postBlock: { paddingBottom: Spacing.three },
-  comment: {
+  repliesToggle: { paddingLeft: 42, paddingTop: Spacing.half, paddingBottom: Spacing.one },
+  replyBanner: {
     flexDirection: 'row',
-    gap: Spacing.two,
-    paddingVertical: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  commentBody: { flex: 1, gap: Spacing.half },
-  commentMeta: { flexDirection: 'row', gap: Spacing.two, alignItems: 'baseline' },
-  commentAuthor: { fontWeight: '600' },
-  commentText: { ...Type.body },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -319,15 +404,15 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 40,
     maxHeight: 96,
-    borderRadius: Radii.md,
-    paddingHorizontal: Spacing.two,
+    borderRadius: Radii.full,
+    paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     fontSize: 15,
   },
   send: {
-    minHeight: 40,
-    paddingHorizontal: Spacing.three,
-    borderRadius: Radii.button,
+    width: 40,
+    height: 40,
+    borderRadius: Radii.full,
     alignItems: 'center',
     justifyContent: 'center',
   },

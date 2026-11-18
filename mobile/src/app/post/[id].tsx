@@ -13,19 +13,18 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Radii, Spacing, Type } from '@/constants/theme';
 import { PostCard } from '@/features/social/feed/post-card';
 import { applyReaction } from '@/features/social/feed/feed-model';
+import { CommentRow } from '@/features/social/publication/comment-row';
 import { appendComment, mergeCommentPage } from '@/features/social/publication/comments-model';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { newClientId } from '@/lib/client-id';
-import { formatListTimestamp } from '@/lib/format';
 import { fr } from '@/i18n/fr';
 import type { FeedPost, PublicationComment } from '@/lib/types';
 
@@ -231,20 +230,14 @@ export default function PostDetailScreen() {
             </View>
           }
           renderItem={({ item }) => (
-            <View style={styles.comment}>
-              <Avatar name={item.author.displayName} uri={item.author.avatarUrl} size={32} />
-              <View style={styles.commentBody}>
-                <View style={styles.commentMeta}>
-                  <ThemedText type="small" style={styles.commentAuthor}>
-                    {item.author.displayName}
-                  </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {formatListTimestamp(item.createdAt)}
-                  </ThemedText>
-                </View>
-                <ThemedText style={styles.commentText}>{item.body}</ThemedText>
-              </View>
-            </View>
+            <CommentRow
+              comment={item}
+              replyToName={
+                item.parentId
+                  ? comments.find((candidate) => candidate.id === item.parentId)?.author.username
+                  : undefined
+              }
+            />
           )}
           onEndReached={() => void loadMore()}
           onEndReachedThreshold={0.4}
@@ -335,15 +328,6 @@ const styles = StyleSheet.create({
   },
   headerBlock: { gap: Spacing.three },
   sectionTitle: { ...Type.sectionTitle, marginTop: Spacing.two },
-  comment: {
-    flexDirection: 'row',
-    gap: Spacing.two,
-    alignItems: 'flex-start',
-  },
-  commentBody: { flex: 1, gap: 2 },
-  commentMeta: { flexDirection: 'row', gap: Spacing.two, alignItems: 'baseline' },
-  commentAuthor: { fontWeight: '600' },
-  commentText: { ...Type.body },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
