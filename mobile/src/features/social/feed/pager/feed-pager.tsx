@@ -57,6 +57,8 @@ export interface FeedPagerActions {
   follow: (post: FeedPost) => Promise<void>;
   remove: (post: FeedPost) => Promise<void>;
   report: (post: FeedPost) => void;
+  /** Ouvre les commentaires dans une feuille au-dessus du feed. */
+  onOpenComments: (post: FeedPost) => void;
   notifyError: (message: string) => void;
 }
 
@@ -184,10 +186,6 @@ export function FeedPager({
     },
     [actions, likeScale],
   );
-
-  const openComments = useCallback((post: FeedPost) => {
-    router.push(`/post/${post.id}`);
-  }, []);
 
   const openProfile = useCallback((post: FeedPost) => {
     router.push(`/user/${post.author.id}`);
@@ -418,7 +416,7 @@ export function FeedPager({
                   actions={{
                     onToggleLike: () => void actions.toggleLike(item),
                     onPickReaction: () => setReactionTarget(item),
-                    onOpenComments: () => openComments(item),
+                    onOpenComments: () => actions.onOpenComments(item),
                     onToggleSave: () => void actions.toggleSave(item),
                     onToggleRepost: () => void actions.toggleRepost(item),
                     onShare: () => void share(item),

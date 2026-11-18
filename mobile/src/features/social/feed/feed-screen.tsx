@@ -1,5 +1,5 @@
 import { Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
-import { router, useFocusEffect } from 'expo-router';
+import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,6 +14,12 @@ import {
   type NativeSyntheticEvent,
   type ScrollViewInstance,
 } from 'react-native';
+import ReAnimated, {
+  interpolate,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { useNetworkState } from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -29,11 +35,12 @@ import {
   Type,
 } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
+import type { FeedPost, FeedTab } from '@/lib/types';
+import { CommentsSheet } from './pager/comments-sheet';
 import { FeedPager } from './pager/feed-pager';
 import { OnMediaShadow } from './pager/feed-tokens';
 import { useFeed } from './use-feed';
 import { useReportPublication } from './use-report-publication';
-import type { FeedTab } from '@/lib/types';
 
 const TABS: { id: FeedTab; label: string }[] = [
   { id: 'local', label: fr.social.feedTabs.local },
@@ -58,7 +65,36 @@ export function FeedScreen() {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const [tab, setTab] = useState<FeedTab>(DEFAULT_TAB);
+  const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
   const pager = useRef<ScrollViewInstance | null>(null);
+  const navigation = useNavigation();
+
+  // Instagram masque la barre d'onglets quand une feuille est ouverte.
+  useEffect(() => {
+    navigation.setOptions({ tabBarHidden: commentsPost !== null } as never);
+    return () => {
+      navigation.setOptions({ tabBarHidden: false } as never);
+    };
+  }, [commentsPost, navigation]);
+
+  // Quand la feuille de commentaires s'ouvre, le feed se réduit et remonte
+  // pour rester visible au-dessus du clavier, comme sur TikTok.
+  // Tout (scale, translation et rayon) est animé sur le thread UI via Reanimated.
+  const sheetProgress = useSharedValue(0);
+  useEffect(() => {
+    sheetProgress.value = withTiming(commentsPost ? 1 : 0, { duration: 260 });
+  }, [commentsPost, sheetProgress]);
+
+  const feedTransformStyle = useAnimatedStyle(() => ({
+    transform: [
+      { scale: interpolate(sheetProgress.value, [0, 1], [1, 0.78]) },
+      { translateY: interpolate(sheetProgress.value, [0, 1], [0, -72]) },
+    ],
+  }));
+  const feedRadiusStyle = useAnimatedStyle(() => ({
+    borderRadius: interpolate(sheetProgress.value, [0, 1], [0, 18]),
+    overflow: 'hidden',
+  }));
 
   // Le fil doit se taire dès qu'il n'est plus l'écran visible ou que l'app passe
   // en arrière-plan. `Tabs` garde les écrans montés : sans ces deux signaux, la
@@ -115,6 +151,7 @@ export function FeedScreen() {
 
   return (
     <View style={styles.screen}>
+      <ReAnimated.View style={[styles.screen, feedTransformStyle, feedRadiusStyle]}>
       <ScrollView
         ref={pager}
         testID="feed-horizontal-pager"
@@ -130,15 +167,23 @@ export function FeedScreen() {
             <FeedSurfaceView
               tab={entry.id}
               topInset={insets.top}
+              onOpenComments={setCommentsPost}
               playbackActive={entry.id === tab && screenFocused && appActive}
             />
           </View>
         ))}
       </ScrollView>
+      </ReAnimated.View>
 
       {/* Barre du haut FIXE : posée une seule fois au-dessus du pager, elle ne
           glisse pas pendant le swipe horizontal (comportement TikTok). */}
-      <FeedTopBar tab={tab} onTabChange={changeTab} topInset={insets.top} />
+      {commentsPost ? null : (
+        <FeedTopBar tab={tab} onTabChange={changeTab} topInset={insets.top} />
+      )}
+
+      {commentsPost ? (
+        <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />
+      ) : null}
     </View>
   );
 }
@@ -214,10 +259,12 @@ function FeedTopBar({
 function FeedSurfaceView({
   tab,
   topInset,
+  onOpenComments,
   playbackActive,
 }: {
   tab: FeedTab;
   topInset: number;
+  onOpenComments: (post: FeedPost) => void;
   playbackActive: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -287,6 +334,7 @@ function FeedSurfaceView({
             follow: feed.follow,
             remove: feed.remove,
             report: (post) => report.open(post),
+            onOpenComments,
             notifyError: feed.notifyError,
           }}
         />

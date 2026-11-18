@@ -67,6 +67,12 @@ export const TAB_COLORS = {
  * re-rend jamais quand un onglet change d'état visuel.
  */
 export function CustomTabBar({ state, descriptors, emitter, navigateToTab, insets }: BottomTabBarProps) {
+  // Une feuille ouverte (commentaires, etc.) masque la barre, comme Instagram.
+  const activeOptions = descriptors[state.routes[state.index]?.key ?? '']?.options as
+    | { tabBarHidden?: boolean }
+    | undefined;
+  const barHidden = activeOptions?.tabBarHidden === true;
+
   const onFeed = state.routes[state.index]?.name === FEED_ROUTE;
 
   // Une seule valeur partagée pilote le fond ET le filet.
@@ -95,6 +101,11 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
       ['rgba(255,255,255,0)', TabBarSurface.border],
     ),
   }));
+
+  // Après tous les hooks : une feuille ouverte masque la barre, comme Instagram.
+  if (barHidden) {
+    return null;
+  }
 
   return (
     <Animated.View
