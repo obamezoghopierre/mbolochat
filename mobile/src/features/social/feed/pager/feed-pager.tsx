@@ -86,6 +86,7 @@ export function FeedPager({
   playbackActive,
   refreshing,
   hasMore,
+  hideOverlays,
   actions,
   onLoadMore,
   onRefresh,
@@ -108,6 +109,8 @@ export function FeedPager({
   refreshing: boolean;
   /** Reste-t-il des pages à charger ? */
   hasMore: boolean;
+  /** Feuille ouverte : le média réduit s'affiche sans rail ni infos. */
+  hideOverlays: boolean;
   actions: FeedPagerActions;
   onLoadMore: () => void;
   /** Recharge le fil depuis le début. */
@@ -330,6 +333,7 @@ export function FeedPager({
             burstKey: burst.id === item.id ? burst.key : 0,
             burstPoint: burst.id === item.id ? burst.point : null,
             likeScale,
+            hideOverlays,
           };
           const doubleTap = (point?: { x: number; y: number } | null) =>
             handleDoubleTap(item, point ?? null);
@@ -386,46 +390,47 @@ export function FeedPager({
 
               <OverlayScrim />
 
-              {/* Bloc infos et rail partagent la même ancre basse : la tab bar
-                  occupe déjà `TabBarInset` sous le contenu, donc on ne
-                  rajoute que le petit écart optique au-dessus d'elle. */}
-              <View
-                style={[styles.bottom, { paddingBottom }]}
-                pointerEvents="box-none">
-                <View style={styles.infoColumn} pointerEvents="box-none">
-                  <PostInfoBlock
+              {/* Sur Instagram, le média réduit s'affiche seul quand la feuille
+                  est ouverte : ni rail d'actions, ni infos auteur/son. */}
+              {!hideOverlays ? (
+                <View
+                  style={[styles.bottom, { paddingBottom }]}
+                  pointerEvents="box-none">
+                  <View style={styles.infoColumn} pointerEvents="box-none">
+                    <PostInfoBlock
+                      post={item}
+                      following={item.viewer.followingAuthor}
+                      followState="idle"
+                      showCaption={item.format !== 'text'}
+                      onFollow={() => void actions.follow(item)}
+                      onOpenProfile={() => openProfile(item)}
+                    />
+                  </View>
+
+                  <FeedActionRail
                     post={item}
-                    following={item.viewer.followingAuthor}
-                    followState="idle"
-                    showCaption={item.format !== 'text'}
-                    onFollow={() => void actions.follow(item)}
-                    onOpenProfile={() => openProfile(item)}
+                    likeScale={likeScale}
+                    state={{
+                      reacted: item.viewer.reaction !== null,
+                      saved: Boolean(item.viewer.saved),
+                      reposted: Boolean(item.viewer.reposted),
+                      following: item.viewer.followingAuthor,
+                      toast: null,
+                    }}
+                    actions={{
+                      onToggleLike: () => void actions.toggleLike(item),
+                      onPickReaction: () => setReactionTarget(item),
+                      onOpenComments: () => actions.onOpenComments(item),
+                      onToggleSave: () => void actions.toggleSave(item),
+                      onToggleRepost: () => void actions.toggleRepost(item),
+                      onShare: () => void share(item),
+                      onMore: () => setMenuTarget(item),
+                      onOpenProfile: () => openProfile(item),
+                      onFollow: item.viewer.followingAuthor ? null : () => void actions.follow(item),
+                    }}
                   />
                 </View>
-
-                <FeedActionRail
-                  post={item}
-                  likeScale={likeScale}
-                  state={{
-                    reacted: item.viewer.reaction !== null,
-                    saved: Boolean(item.viewer.saved),
-                    reposted: Boolean(item.viewer.reposted),
-                    following: item.viewer.followingAuthor,
-                    toast: null,
-                  }}
-                  actions={{
-                    onToggleLike: () => void actions.toggleLike(item),
-                    onPickReaction: () => setReactionTarget(item),
-                    onOpenComments: () => actions.onOpenComments(item),
-                    onToggleSave: () => void actions.toggleSave(item),
-                    onToggleRepost: () => void actions.toggleRepost(item),
-                    onShare: () => void share(item),
-                    onMore: () => setMenuTarget(item),
-                    onOpenProfile: () => openProfile(item),
-                    onFollow: item.viewer.followingAuthor ? null : () => void actions.follow(item),
-                  }}
-                />
-              </View>
+              ) : null}
             </View>
           );
         }}

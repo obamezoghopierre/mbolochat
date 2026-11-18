@@ -36,7 +36,7 @@ import {
 } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import type { FeedPost, FeedTab } from '@/lib/types';
-import { CommentsSheet } from './pager/comments-sheet';
+import { COMMENTS_SHEET_SNAP_RATIO, CommentsSheet } from './pager/comments-sheet';
 import { FeedPager } from './pager/feed-pager';
 import { OnMediaShadow } from './pager/feed-tokens';
 import { useFeed } from './use-feed';
@@ -63,7 +63,7 @@ const NOTICE_DURATION = 2600;
  */
 export function FeedScreen() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, height: screenHeight } = useWindowDimensions();
   const [tab, setTab] = useState<FeedTab>(DEFAULT_TAB);
   const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
   const pager = useRef<ScrollViewInstance | null>(null);
@@ -71,9 +71,18 @@ export function FeedScreen() {
 
   // Instagram masque la barre d'onglets quand une feuille est ouverte.
   useEffect(() => {
-    navigation.setOptions({ tabBarHidden: commentsPost !== null } as never);
+    const hidden = commentsPost !== null;
+    navigation.setOptions({
+      tabBarHidden: hidden,
+      // Le conteneur du tab bar doit aussi se rétracter, sinon React
+      // Navigation réserve 58 px vides sous la feuille.
+      tabBarStyle: hidden ? { display: 'none', height: 0 } : undefined,
+    } as never);
     return () => {
-      navigation.setOptions({ tabBarHidden: false } as never);
+      navigation.setOptions({
+        tabBarHidden: false,
+        tabBarStyle: undefined,
+      } as never);
     };
   }, [commentsPost, navigation]);
 
@@ -85,10 +94,25 @@ export function FeedScreen() {
     sheetProgress.value = withTiming(commentsPost ? 1 : 0, { duration: 260 });
   }, [commentsPost, sheetProgress]);
 
+  // Le feed réduit doit tenir ENTIÈREMENT dans l'espace au-dessus de la
+  // feuille (comme Instagram) : on déduit l'échelle et la translation de la
+  // hauteur réelle du pager et du snap point de la feuille.
+  const feedHeight = Math.max(1, screenHeight - insets.bottom);
+  const spaceAboveSheet = screenHeight * (1 - COMMENTS_SHEET_SNAP_RATIO);
+  const targetScale = Math.max(
+    0.2,
+    Math.min(0.78, (spaceAboveSheet - Spacing.two) / feedHeight),
+  );
+  // Avec une origine de transformation au centre, on remonte la vue réduite
+  // pour que son bas arrive juste au-dessus de la feuille.
+  const targetTranslateY =
+    spaceAboveSheet - Spacing.two - (screenHeight + feedHeight * targetScale) / 2;
   const feedTransformStyle = useAnimatedStyle(() => ({
+    // `translateY` AVANT `scale` : sinon la translation est multipliée par
+    // l'échelle et le feed ne monte pas assez.
     transform: [
-      { scale: interpolate(sheetProgress.value, [0, 1], [1, 0.78]) },
-      { translateY: interpolate(sheetProgress.value, [0, 1], [0, -72]) },
+      { translateY: interpolate(sheetProgress.value, [0, 1], [0, targetTranslateY]) },
+      { scale: interpolate(sheetProgress.value, [0, 1], [1, targetScale]) },
     ],
   }));
   const feedRadiusStyle = useAnimatedStyle(() => ({
@@ -168,6 +192,7 @@ export function FeedScreen() {
               tab={entry.id}
               topInset={insets.top}
               onOpenComments={setCommentsPost}
+              hideOverlays={commentsPost !== null}
               playbackActive={entry.id === tab && screenFocused && appActive}
             />
           </View>
@@ -260,11 +285,13 @@ function FeedSurfaceView({
   tab,
   topInset,
   onOpenComments,
+  hideOverlays,
   playbackActive,
 }: {
   tab: FeedTab;
   topInset: number;
   onOpenComments: (post: FeedPost) => void;
+  hideOverlays: boolean;
   playbackActive: boolean;
 }) {
   const insets = useSafeAreaInsets();
@@ -322,6 +349,7 @@ function FeedSurfaceView({
           playbackActive={playbackActive}
           refreshing={feed.refreshing}
           hasMore={feed.hasMore}
+          hideOverlays={hideOverlays}
           onLoadMore={feed.loadMore}
           onRefresh={feed.refresh}
           actions={{

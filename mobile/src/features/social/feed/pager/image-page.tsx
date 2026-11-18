@@ -68,7 +68,7 @@ export function ImagePage({
 
       <HeartBurstOverlay burstKey={chrome.burstKey} point={chrome.burstPoint} />
 
-      {total > 1 ? (
+      {total > 1 && !chrome.hideOverlays ? (
         <View style={styles.counterPill}>
           <ThemedText style={[feedText.pill, OnMediaShadow]}>
             {index + 1} / {total}
@@ -77,7 +77,7 @@ export function ImagePage({
       ) : null}
 
       {/* Points de pagination, comme TikTok : lisibles sans interaction. */}
-      {total > 1 ? (
+      {total > 1 && !chrome.hideOverlays ? (
         <View style={styles.dots} pointerEvents="none">
           {media.map((entry, dotIndex) => (
             <View

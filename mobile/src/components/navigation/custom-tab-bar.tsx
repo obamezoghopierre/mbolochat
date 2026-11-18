@@ -103,8 +103,10 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
   }));
 
   // Après tous les hooks : une feuille ouverte masque la barre, comme Instagram.
+  // On rend une vue de hauteur nulle plutôt que `null` : React Navigation
+  // continuerait sinon à réserver l'ancienne hauteur (54 px) sous la feuille.
   if (barHidden) {
-    return null;
+    return <View style={styles.hidden} />;
   }
 
   return (
@@ -303,6 +305,7 @@ function pressTab(
 }
 
 const styles = StyleSheet.create({
+  hidden: { height: 0 },
   bar: {
     position: 'absolute',
     left: 0,

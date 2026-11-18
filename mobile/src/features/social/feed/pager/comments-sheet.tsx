@@ -28,6 +28,9 @@ import { newClientId } from '@/lib/client-id';
 import { formatListTimestamp } from '@/lib/format';
 import type { FeedPost, PublicationComment } from '@/lib/types';
 
+/** Hauteur de la feuille, partagée avec `FeedScreen` pour dimensionner le feed réduit. */
+export const COMMENTS_SHEET_SNAP_RATIO = 0.72;
+
 /**
  * Feuille de commentaires façon TikTok / Instagram.
  *
@@ -56,7 +59,7 @@ export function CommentsSheet({
 
   // Un seul snap point : la feuille s'ouvre à 72 % et ne peut pas monter plus
   // haut. Le drag vers le bas la ferme (enablePanDownToClose).
-  const snapPoints = useMemo(() => ['72%'], []);
+  const snapPoints = useMemo(() => [`${COMMENTS_SHEET_SNAP_RATIO * 100}%`], []);
 
   // Tap sur le feed réduit derrière la feuille : elle se ferme, comme Instagram.
   const renderBackdrop = useCallback(

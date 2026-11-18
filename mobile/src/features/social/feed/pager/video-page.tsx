@@ -30,6 +30,8 @@ export interface FeedPageChrome {
   /** Point du double-tap, pour faire naître le cœur sous le doigt. */
   burstPoint: { x: number; y: number } | null;
   likeScale: Animated.Value;
+  /** Feuille de commentaires ouverte : le média s'affiche sans contrôles. */
+  hideOverlays: boolean;
 }
 
 /** Cadence des `timeUpdate` en lecture normale : la barre n'a pas besoin de plus. */
@@ -266,39 +268,40 @@ export function VideoPage({
 
       <HeartBurstOverlay burstKey={chrome.burstKey} point={chrome.burstPoint} />
 
-      {/* Icône centrale et bouton son partagent `isPaused` : les deux
-          apparaissent sur une pause volontaire et disparaissent dès la reprise
-          (l'ancienne version laissait le volume visible en lecture). */}
-      {isPaused ? (
-        <View pointerEvents="none" style={styles.playBadge}>
-          <Icon icon={Play} size={34} color={FeedSurface.onMedia} fill={FeedSurface.onMedia} />
-        </View>
-      ) : null}
+      {/* Contrôles masqués quand la feuille est ouverte : comme sur Instagram,
+          seul le média réduit reste visible au-dessus de la feuille. */}
+      {!chrome.hideOverlays ? (
+        <>
+          {isPaused ? (
+            <View pointerEvents="none" style={styles.playBadge}>
+              <Icon icon={Play} size={34} color={FeedSurface.onMedia} fill={FeedSurface.onMedia} />
+            </View>
+          ) : null}
 
-      {isPaused ? (
-        // Décalé sous la barre d'onglets du haut : sans les insets, le bouton
-        // son passait dessous et devenait intouchable.
-        <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
-          <Pressable
-            onPress={onToggleSound}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityState={{ selected: muted }}
-            accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
-            style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-            <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
-          </Pressable>
-        </View>
-      ) : null}
+          {isPaused ? (
+            <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
+              <Pressable
+                onPress={onToggleSound}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityState={{ selected: muted }}
+                accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
+                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+                <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
+              </Pressable>
+            </View>
+          ) : null}
 
-      <ProgressBar
-        player={player}
-        bottomInset={chrome.barInset}
-        active={chrome.isActive && !failed}
-        onSeekStart={handleSeekStart}
-        onSeekEnd={handleSeekEnd}
-        onScrubStateChange={onScrubStateChange}
-      />
+          <ProgressBar
+            player={player}
+            bottomInset={chrome.barInset}
+            active={chrome.isActive && !failed}
+            onSeekStart={handleSeekStart}
+            onSeekEnd={handleSeekEnd}
+            onScrubStateChange={onScrubStateChange}
+          />
+        </>
+      ) : null}
     </View>
   );
 }
