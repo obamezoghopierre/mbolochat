@@ -4,6 +4,16 @@ import { MAX_CLIENT_ID_LENGTH, MAX_COMMENT_LENGTH } from './create-publication.d
 
 export const REACTION_KINDS = ['like', 'love', 'fire', 'clap'] as const;
 
+/** Réactions emoji sur un commentaire, façon Instagram. */
+export const COMMENT_REACTION_KINDS = ['heart', 'laugh', 'wow', 'fire', 'clap'] as const;
+export type CommentReactionKind = (typeof COMMENT_REACTION_KINDS)[number];
+
+/** Réaction emoji à un commentaire : le type est modifiable, une seule par compte. */
+export class CommentReactDto {
+  @IsIn(COMMENT_REACTION_KINDS)
+  kind!: CommentReactionKind;
+}
+
 /** Commentaire ou réponse. `parentId` désigne le commentaire auquel on répond. */
 export class CreateCommentDto {
   @IsString({ message: 'Le commentaire doit être un texte.' })

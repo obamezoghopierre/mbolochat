@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { appendComment, appendReply, groupComments, mergeCommentPage } from './comments-model';
-import type { PublicationComment } from '@/lib/types';
+import {
+  appendComment,
+  appendReply,
+  applyCommentReaction,
+  groupComments,
+  mergeCommentPage,
+} from './comments-model';
+import type { CommentPage, PublicationComment } from '@/lib/types';
 
 function comment(overrides: Partial<PublicationComment> = {}): PublicationComment {
   return {
@@ -23,8 +29,15 @@ function comment(overrides: Partial<PublicationComment> = {}): PublicationCommen
     viewerDisliked: false,
     dislikeCount: 0,
     score: 0,
+    pinned: false,
+    reactions: [],
+    viewerReaction: null,
     ...overrides,
   };
+}
+
+function page(items: PublicationComment[], nextCursor: string | null = null): CommentPage {
+  return { pinned: [], items, nextCursor };
 }
 
 describe('appendComment', () => {
@@ -78,19 +91,54 @@ describe('appendReply', () => {
 
 describe('mergeCommentPage', () => {
   it('conserve l’ordre et le curseur', () => {
-    const merged = mergeCommentPage([comment({ id: 'a' })], {
-      items: [comment({ id: 'b' })],
-      nextCursor: 'suite',
-    });
+    const merged = mergeCommentPage([comment({ id: 'a' })], page([comment({ id: 'b' })], 'suite'));
     expect(merged.items.map((item) => item.id)).toEqual(['a', 'b']);
     expect(merged.nextCursor).toBe('suite');
   });
 
   it('ne duplique pas un commentaire déjà chargé', () => {
-    const merged = mergeCommentPage([comment({ id: 'a' })], {
-      items: [comment({ id: 'a' })],
-      nextCursor: null,
-    });
+    const merged = mergeCommentPage([comment({ id: 'a' })], page([comment({ id: 'a' })]));
     expect(merged.items).toHaveLength(1);
+  });
+});
+
+describe('applyCommentReaction', () => {
+  it('ajoute une réaction et incrémente son compteur', () => {
+    const result = applyCommentReaction(
+      comment({ reactions: [{ kind: 'heart', count: 2 }] }),
+      'laugh',
+    );
+    expect(result.viewerReaction).toBe('laugh');
+    expect(result.reactions).toEqual([
+      { kind: 'heart', count: 2 },
+      { kind: 'laugh', count: 1 },
+    ]);
+  });
+
+  it('remplace la réaction précédente en déplaçant le vote', () => {
+    const result = applyCommentReaction(
+      comment({
+        viewerReaction: 'heart',
+        reactions: [
+          { kind: 'heart', count: 2 },
+          { kind: 'fire', count: 1 },
+        ],
+      }),
+      'fire',
+    );
+    expect(result.viewerReaction).toBe('fire');
+    expect(result.reactions).toEqual([
+      { kind: 'heart', count: 1 },
+      { kind: 'fire', count: 2 },
+    ]);
+  });
+
+  it('retire la réaction quand on repose le même kind', () => {
+    const result = applyCommentReaction(
+      comment({ viewerReaction: 'wow', reactions: [{ kind: 'wow', count: 1 }] }),
+      null,
+    );
+    expect(result.viewerReaction).toBeNull();
+    expect(result.reactions).toEqual([]);
   });
 });

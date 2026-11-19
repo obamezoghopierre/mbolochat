@@ -3,8 +3,9 @@ import BottomSheet, {
   type BottomSheetBackdropProps,
   BottomSheetFlatList,
 } from '@gorhom/bottom-sheet';
-import { SendHorizontal, Smile, X } from 'lucide-react-native';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, SendHorizontal, Smile, X } from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
+import type { SharedValue } from 'react-native-reanimated';
 import {
   ActivityIndicator,
   Dimensions,
@@ -20,6 +21,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ActionSheet, type SheetAction } from '@/components/action-sheet';
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { Radii, Spacing } from '@/constants/theme';
@@ -28,8 +30,10 @@ import { CommentRow } from '@/features/social/publication/comment-row';
 import {
   appendComment,
   appendReply,
+  applyCommentReaction,
   groupComments,
   mergeCommentPage,
+  upsertComment,
 } from '@/features/social/publication/comments-model';
 import { detectAutocompleteToken } from '@/features/social/publication/rich-text';
 import { useReportComment } from '@/features/social/publication/use-report-comment';
@@ -37,10 +41,15 @@ import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { newClientId } from '@/lib/client-id';
-import type { FeedPost, PublicationComment } from '@/lib/types';
+import type {
+  CommentReactionKind,
+  CommentSort,
+  FeedPost,
+  PublicationComment,
+} from '@/lib/types';
 
-/** Hauteur de la feuille, partagée avec `FeedScreen` pour dimensionner le feed réduit. */
-export const COMMENTS_SHEET_SNAP_RATIO = 0.72;
+/** Hauteur de la feuille : le post réduit reste lisible au-dessus, comme Instagram. */
+export const COMMENTS_SHEET_SNAP_RATIO = 0.75;
 
 /** Marge minimale sous le composeur quand la barre système ne remonte pas `insets.bottom`. */
 const COMPOSER_SYSTEM_BAR_FALLBACK = 48;
@@ -68,9 +77,12 @@ if (Platform.OS === 'android') {
 export function CommentsSheet({
   post,
   onClose,
+  sheetPosition,
 }: {
   post: FeedPost;
   onClose: () => void;
+  /** Position Y du bord haut de la feuille, partagée avec le feed réduit. */
+  sheetPosition?: SharedValue<number>;
 }) {
   const { token, user } = useAuth();
   const theme = useTheme();
@@ -92,9 +104,19 @@ export function CommentsSheet({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [sort, setSort] = useState<CommentSort>('top');
+  const [pinned, setPinned] = useState<PublicationComment[]>([]);
+  const [sortSheetOpen, setSortSheetOpen] = useState(false);
+  const [replyBusy, setReplyBusy] = useState<Set<string>>(() => new Set());
   const pending = useRef<{ clientId: string; body: string; parentId?: string } | null>(null);
+  const replyCursors = useRef(new Map<string, string | null>());
+  const replyPrefill = useRef<{ parentId: string; text: string } | null>(null);
+  const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
 
   const grouped = useMemo(() => groupComments(comments), [comments]);
+  // Les épinglés sont des racines : ils passent avant les commentaires paginés
+  // et bénéficient des mêmes réponses repliables.
+  const allRoots = useMemo(() => [...pinned, ...grouped.roots], [pinned, grouped]);
 
   // Un seul snap point : la feuille s'ouvre à 72 % et ne peut pas monter plus
   // haut. Le drag vers le bas la ferme (enablePanDownToClose).
@@ -127,7 +149,7 @@ export function CommentsSheet({
         disappearsOnIndex={-1}
         appearsOnIndex={0}
         pressBehavior="close"
-        opacity={0.35}
+        opacity={0.3}
       />
     ),
     [],
@@ -138,8 +160,9 @@ export function CommentsSheet({
       return;
     }
     try {
-      const page = await api.comments(token, current.id);
+      const page = await api.comments(token, current.id, { sort });
       setComments(page.items);
+      setPinned(page.pinned ?? []);
       setCursor(page.nextCursor);
       setError(null);
       setStatus('ready');
@@ -151,7 +174,7 @@ export function CommentsSheet({
       );
       setStatus('error');
     }
-  }, [current.id, token]);
+  }, [current.id, sort, token]);
 
   useEffect(() => {
     // Les états sont posés après la réponse réseau, pas pendant le montage.
@@ -165,16 +188,17 @@ export function CommentsSheet({
     }
     setLoadingMore(true);
     try {
-      const page = await api.comments(token, current.id, cursor);
+      const page = await api.comments(token, current.id, { cursor, sort });
       const merged = mergeCommentPage(comments, page);
       setComments(merged.items);
+      setPinned(page.pinned ?? []);
       setCursor(merged.nextCursor);
     } catch {
       setError(fr.social.commentsError);
     } finally {
       setLoadingMore(false);
     }
-  }, [comments, cursor, current.id, loadingMore, token]);
+  }, [comments, cursor, current.id, loadingMore, sort, token]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -184,9 +208,11 @@ export function CommentsSheet({
 
   const updateScore = useCallback((commentId: string, score: number) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    const apply = (item: PublicationComment) =>
+      item.id === commentId ? { ...item, score } : item;
     setComments((items) =>
       items
-        .map((item) => (item.id === commentId ? { ...item, score } : item))
+        .map(apply)
         .sort(
           (a, b) =>
             b.score - a.score ||
@@ -194,6 +220,7 @@ export function CommentsSheet({
             a.id.localeCompare(b.id),
         ),
     );
+    setPinned((items) => items.map(apply));
   }, []);
 
   const send = useCallback(async () => {
@@ -208,11 +235,24 @@ export function CommentsSheet({
     setSending(true);
     try {
       const created = await api.addComment(token, current.id, body, clientId, parentId);
-      const replay = comments.some((item) => item.id === created.id);
+      const replay =
+        comments.some((item) => item.id === created.id) ||
+        pinned.some((item) => item.id === created.id);
+      const replayPinned = pinned.some((item) => item.id === created.id);
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setComments((items) =>
-        parentId ? appendReply(items, created) : appendComment(items, created),
-      );
+      setComments((items) => {
+        if (parentId) {
+          return appendReply(items, created);
+        }
+        if (items.some((item) => item.id === created.id)) {
+          return appendComment(items, created);
+        }
+        // En tri « Récents », le nouveau commentaire ouvre le fil.
+        return sort === 'recent' ? [created, ...items] : appendComment(items, created);
+      });
+      if (replayPinned) {
+        setPinned((items) => upsertComment(items, created));
+      }
       if (parentId && !replay) {
         setExpanded((ids) => new Set(ids).add(parentId));
       }
@@ -224,6 +264,7 @@ export function CommentsSheet({
       }
       setDraft('');
       setReplyTo(null);
+      replyPrefill.current = null;
       pending.current = null;
       setError(null);
     } catch {
@@ -231,7 +272,7 @@ export function CommentsSheet({
     } finally {
       setSending(false);
     }
-  }, [comments, current.id, draft, replyTo, sending, token]);
+  }, [comments, current.id, draft, pinned, replyTo, sending, sort, token]);
 
   const handleReply = useCallback(
     (target: PublicationComment) => {
@@ -240,23 +281,155 @@ export function CommentsSheet({
         ? comments.find((item) => item.id === target.parentId) ?? target
         : target;
       setReplyTo(root);
+      // Comme Instagram : la mention est préremplie et le clavier ouvert.
+      const text = `@${root.author.username} `;
+      const previous = replyPrefill.current;
+      setDraft((current) =>
+        current.trim().length === 0 || current === previous?.text ? text : current,
+      );
+      replyPrefill.current = { parentId: root.id, text };
+      inputRef.current?.focus();
     },
     [comments],
   );
 
-  const toggleReplies = useCallback((id: string) => {
-    setExpanded((ids) => {
-      const next = new Set(ids);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
+  /**
+   * Charge les réponses d'un fil jusqu'à couvrir `replyCount` (ou épuiser le
+   * curseur). Les réponses déjà présentes dans la liste principale sont
+   * fusionnées sans doublon ; le curseur par fil est mémorisé.
+   */
+  const ensureReplies = useCallback(
+    async (root: PublicationComment) => {
+      if (!token || replyBusy.has(root.id)) {
+        return;
       }
-      return next;
-    });
-  }, []);
+      // Curseur par fil : absent = pas commencé, `null` = épuisé.
+      if (replyCursors.current.get(root.id) === null) {
+        return;
+      }
+      setReplyBusy((ids) => new Set(ids).add(root.id));
+      try {
+        // La liste principale couvre déjà une partie du fil : on fusionne dans
+        // un accumulateur local pour ne pas perdre les pages déjà chargées.
+        let items = comments;
+        let cursor: string | null | undefined = replyCursors.current.get(root.id) ?? undefined;
+        for (let page = 0; page < 10; page += 1) {
+          const loaded = items.filter((item) => item.parentId === root.id).length;
+          if (loaded >= root.replyCount || cursor === null) {
+            break;
+          }
+          const result = await api.commentReplies(token, root.id, cursor);
+          const merged = mergeCommentPage(items, result);
+          items = merged.items;
+          cursor = result.nextCursor;
+          replyCursors.current.set(root.id, result.nextCursor);
+        }
+        setComments(items);
+      } catch {
+        setError(fr.social.commentsError);
+      } finally {
+        setReplyBusy((ids) => {
+          const next = new Set(ids);
+          next.delete(root.id);
+          return next;
+        });
+      }
+    },
+    [comments, replyBusy, token],
+  );
+
+  const toggleReplies = useCallback(
+    (root: PublicationComment) => {
+      const opening = !expanded.has(root.id);
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+      setExpanded((ids) => {
+        const next = new Set(ids);
+        if (next.has(root.id)) {
+          next.delete(root.id);
+        } else {
+          next.add(root.id);
+        }
+        return next;
+      });
+      if (opening) {
+        const replies = grouped.repliesByParent.get(root.id) ?? [];
+        if (replies.length < root.replyCount) {
+          void ensureReplies(root);
+        }
+      }
+    },
+    [expanded, grouped, ensureReplies],
+  );
 
   const report = useReportComment(setNotice);
+
+  /** Réaction emoji : optimiste puis remplacée par la vue serveur. */
+  const reactToComment = useCallback(
+    async (target: PublicationComment, kind: CommentReactionKind | null) => {
+      if (!token) {
+        return;
+      }
+      const optimistic = (item: PublicationComment) =>
+        item.id === target.id ? applyCommentReaction(item, kind) : item;
+      setComments((items) => items.map(optimistic));
+      setPinned((items) => items.map(optimistic));
+      try {
+        const updated = await api.reactComment(token, target.id, kind);
+        const replace = (items: PublicationComment[]) =>
+          items.some((item) => item.id === updated.id) ? upsertComment(items, updated) : items;
+        setComments(replace);
+        setPinned(replace);
+      } catch {
+        setError(fr.social.commentActionError);
+      }
+    },
+    [token],
+  );
+
+  /** Épingle/désépingle : le commentaire change de liste (flux ↔ tête). */
+  const togglePin = useCallback(
+    async (target: PublicationComment, pinnedFlag: boolean) => {
+      if (!token) {
+        return;
+      }
+      try {
+        const updated = await api.pinComment(token, target.id, pinnedFlag);
+        setComments((items) => items.filter((item) => item.id !== target.id));
+        setPinned((items) => {
+          const rest = items.filter((item) => item.id !== target.id);
+          return updated.pinned ? [updated, ...rest] : rest;
+        });
+        if (!updated.pinned) {
+          // Désépinglé : il reprend sa place dans le flux, triée par score.
+          setComments((items) =>
+            [...items, updated].sort(
+              (a, b) =>
+                b.score - a.score ||
+                a.createdAt.localeCompare(b.createdAt) ||
+                a.id.localeCompare(b.id),
+            ),
+          );
+        }
+      } catch {
+        setNotice(fr.social.commentActionError);
+      }
+    },
+    [token],
+  );
+
+  const changeSort = useCallback(
+    (next: CommentSort) => {
+      setSortSheetOpen(false);
+      if (next === sort) {
+        return;
+      }
+      // Le curseur encode le tri : on repart de zéro pour éviter un refus.
+      replyCursors.current.clear();
+      setCursor(null);
+      setSort(next);
+    },
+    [sort],
+  );
 
   useEffect(() => {
     const active = detectAutocompleteToken(draft);
@@ -333,12 +506,29 @@ export function CommentsSheet({
       current.size > 0
         ? new Set()
         : new Set(
-            grouped.roots
+            allRoots
               .filter((root) => grouped.repliesByParent.has(root.id))
               .map((root) => root.id),
           ),
     );
-  }, [grouped]);
+  }, [allRoots, grouped]);
+
+  const isPublicationAuthor = user?.id === current.author.id;
+
+  const sortActions: SheetAction[] = [
+    {
+      key: 'top',
+      label: fr.social.commentsSortTop,
+      selected: sort === 'top',
+      onPress: () => changeSort('top'),
+    },
+    {
+      key: 'recent',
+      label: fr.social.commentsSortRecent,
+      selected: sort === 'recent',
+      onPress: () => changeSort('recent'),
+    },
+  ];
 
   // Les confirmations (copie, signalement, suppression) sont éphémères.
   useEffect(() => {
@@ -357,12 +547,11 @@ export function CommentsSheet({
       try {
         await api.deleteComment(token, comment.id);
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-        setComments((items) =>
-          items.filter((item) => item.id !== comment.id && item.parentId !== comment.id),
-        );
-        const removed = comments.filter(
-          (item) => item.id === comment.id || item.parentId === comment.id,
-        ).length;
+        const isRemoved = (item: PublicationComment) =>
+          item.id === comment.id || item.parentId === comment.id;
+        setComments((items) => items.filter((item) => !isRemoved(item)));
+        setPinned((items) => items.filter((item) => !isRemoved(item)));
+        const removed = [...comments, ...pinned].filter(isRemoved).length;
         setCurrent((value) => ({
           ...value,
           counters: {
@@ -375,7 +564,7 @@ export function CommentsSheet({
         setNotice(fr.social.commentDeleteError);
       }
     },
-    [comments, token],
+    [comments, pinned, token],
   );
 
   return (
@@ -387,11 +576,16 @@ export function CommentsSheet({
       enableDynamicSizing={false}
       onClose={onClose}
       backdropComponent={renderBackdrop}
-      backgroundStyle={{ backgroundColor: theme.backgroundElement }}
+      backgroundStyle={{
+        backgroundColor: theme.backgroundElement,
+        borderTopLeftRadius: Radii.sheet,
+        borderTopRightRadius: Radii.sheet,
+      }}
       handleIndicatorStyle={{ backgroundColor: theme.textSecondary }}
       containerStyle={{ transform: [{ translateY: -keyboardHeight }] }}
       keyboardBehavior="interactive"
-      keyboardBlurBehavior="restore">
+      keyboardBlurBehavior="restore"
+      animatedPosition={sheetPosition}>
       {/* En-tête hors de la liste : il reste fixe pendant le défilement. */}
       <View style={styles.header}>
         {repliesCount > 0 ? (
@@ -410,18 +604,33 @@ export function CommentsSheet({
         <ThemedText type="sectionTitle">
           {fr.social.commentsCount(current.counters.comments)}
         </ThemedText>
-        <Pressable
-          onPress={onClose}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={fr.common.close}
-          style={styles.close}>
-          <X size={20} color={theme.text} />
-        </Pressable>
+        <View style={styles.headerRight}>
+          <Pressable
+            onPress={() => setSortSheetOpen(true)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={
+              sort === 'top' ? fr.social.commentsSortTop : fr.social.commentsSortRecent
+            }
+            style={styles.sortButton}>
+            <ThemedText type="caption" themeColor="textSecondary">
+              {sort === 'top' ? fr.social.commentsSortTop : fr.social.commentsSortRecent}
+            </ThemedText>
+            <ChevronDown size={12} color={theme.textSecondary} />
+          </Pressable>
+          <Pressable
+            onPress={onClose}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={fr.common.close}
+            style={styles.close}>
+            <X size={20} color={theme.text} />
+          </Pressable>
+        </View>
       </View>
 
       <BottomSheetFlatList
-          data={grouped.roots}
+          data={allRoots}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -476,10 +685,13 @@ export function CommentsSheet({
                   onDelete={(target) => void deleteComment(target)}
                   onNotice={setNotice}
                   onScoreChange={updateScore}
+                  onPin={(target, pinnedFlag) => void togglePin(target, pinnedFlag)}
+                  onReact={(target, kind) => void reactToComment(target, kind)}
+                  isPublicationAuthor={isPublicationAuthor}
                 />
                 {replies.length > 0 ? (
                   <Pressable
-                    onPress={() => toggleReplies(item.id)}
+                    onPress={() => toggleReplies(item)}
                     accessibilityRole="button"
                     style={styles.repliesToggle}>
                     <ThemedText type="caption" themeColor="textSecondary">
@@ -499,13 +711,29 @@ export function CommentsSheet({
                         onDelete={(target) => void deleteComment(target)}
                         onNotice={setNotice}
                         onScoreChange={updateScore}
+                        onReact={(target, kind) => void reactToComment(target, kind)}
                         indented
                         replyToName={
-                          grouped.roots.find((root) => root.id === reply.parentId)?.author.username
+                          allRoots.find((root) => root.id === reply.parentId)?.author.username
                         }
                       />
                     ))
                   : null}
+                {open && replies.length < item.replyCount ? (
+                  <Pressable
+                    onPress={() => void ensureReplies(item)}
+                    disabled={replyBusy.has(item.id)}
+                    accessibilityRole="button"
+                    style={styles.repliesToggle}>
+                    {replyBusy.has(item.id) ? (
+                      <ActivityIndicator color={theme.accent} size="small" />
+                    ) : (
+                      <ThemedText type="caption" themeColor="textSecondary">
+                        {fr.social.loadMoreReplies}
+                      </ThemedText>
+                    )}
+                  </Pressable>
+                ) : null}
               </View>
             );
           }}
@@ -597,14 +825,8 @@ export function CommentsSheet({
           gender={user?.gender}
           size={34}
         />
-        <Pressable
-          onPress={() => setEmojiOpen((value) => !value)}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={fr.social.addEmoji}>
-          <Smile size={20} color={theme.textSecondary} />
-        </Pressable>
         <TextInput
+          ref={inputRef}
           value={draft}
           onChangeText={handleDraftChange}
           placeholder={fr.social.commentPlaceholder}
@@ -617,6 +839,13 @@ export function CommentsSheet({
           multiline
           accessibilityLabel={fr.social.commentPlaceholder}
         />
+        <Pressable
+          onPress={() => setEmojiOpen((value) => !value)}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel={fr.social.addEmoji}>
+          <Smile size={20} color={theme.textSecondary} />
+        </Pressable>
         <Pressable
           onPress={() => void send()}
           disabled={sending || draft.trim().length === 0}
@@ -642,6 +871,12 @@ export function CommentsSheet({
       </View>
     </BottomSheet>
     {report.sheet}
+    <ActionSheet
+      visible={sortSheetOpen}
+      title={fr.social.commentsTitle}
+      actions={sortActions}
+      onClose={() => setSortSheetOpen(false)}
+    />
     </>
   );
 }
@@ -654,7 +889,15 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.two,
   },
   headerSide: { position: 'absolute', left: Spacing.three },
-  close: { position: 'absolute', right: Spacing.three, padding: Spacing.one },
+  headerRight: {
+    position: 'absolute',
+    right: Spacing.three,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  sortButton: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half },
+  close: { padding: Spacing.one },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 120 },
   list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.four },
   repliesToggle: { paddingLeft: 42, paddingTop: Spacing.half, paddingBottom: Spacing.one },

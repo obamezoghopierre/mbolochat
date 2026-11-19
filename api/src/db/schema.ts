@@ -1162,6 +1162,8 @@ export const comments = pgTable(
     body: text('body').notNull(),
     likeCount: integer('like_count').notNull().default(0),
     replyCount: integer('reply_count').notNull().default(0),
+    /** Épinglé par l'auteur de la publication : affiché en tête de fil. */
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }),
     moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
     /** Clé d'idempotence fournie par l'appareil, unique par auteur. */
     clientId: text('client_id').notNull(),
@@ -1190,6 +1192,15 @@ export const commentLikes = pgTable(
   (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
 );
 
+/** Kinds de réaction emoji sur un commentaire (façon Instagram). */
+export const commentReactionKindEnum = pgEnum('comment_reaction_kind', [
+  'heart',
+  'laugh',
+  'wow',
+  'fire',
+  'clap',
+]);
+
 /** « Je n'aime pas » sur un commentaire (PK composite : un seul par couple). */
 export const commentDislikes = pgTable(
   'comment_dislikes',
@@ -1203,6 +1214,28 @@ export const commentDislikes = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
+);
+
+/**
+ * Réaction emoji sur un commentaire : une seule par utilisateur, modifiable.
+ * Distincte du j'aime/« Je n'aime pas » qui alimente le score de tri.
+ */
+export const commentReactions = pgTable(
+  'comment_reactions',
+  {
+    commentId: text('comment_id')
+      .notNull()
+      .references(() => comments.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: commentReactionKindEnum('kind').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.commentId, table.userId] }),
+    index('comment_reactions_comment_idx').on(table.commentId),
+  ],
 );
 
 /** Réaction à une publication : une seule par utilisateur, type modifiable. */

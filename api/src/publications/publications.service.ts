@@ -5,13 +5,25 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray, isNull, sql, type Column, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+  type Column,
+  type SQL,
+} from 'drizzle-orm';
 import { extractHashtags, extractMentions } from '../common/social-tags.js';
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   commentDislikes,
   commentLikes,
+  commentReactions,
   comments,
   follows,
   hashtags,
@@ -37,11 +49,12 @@ import {
   type SocialViewer,
 } from '../users/visibility.js';
 import type {
+  CommentReactionKind,
   CreateCommentDto,
   ReactDto,
   RecordViewDto,
 } from './dto/interactions.dto.js';
-import { MAX_WATCH_MS } from './dto/interactions.dto.js';
+import { COMMENT_REACTION_KINDS, MAX_WATCH_MS } from './dto/interactions.dto.js';
 import { loadPublicationMedia, type PublicationMediaView } from './publication-media.js';
 import type { CreatePublicationDto } from './dto/create-publication.dto.js';
 
@@ -102,6 +115,12 @@ export interface CommentView {
   dislikeCount: number;
   /** Pertinence : likes − dislikes, plancher à 0. Sert au classement. */
   score: number;
+  /** Épinglé par l'auteur de la publication (toujours un commentaire racine). */
+  pinned: boolean;
+  /** Réactions emoji agrégées, triées par kind pour une sortie stable. */
+  reactions: { kind: CommentReactionKind; count: number }[];
+  /** Réaction emoji du visiteur, `null` s'il n'a pas réagi. */
+  viewerReaction: CommentReactionKind | null;
 }
 
 /** Compteurs « courant » d'un commentaire : likes − dislikes, plancher à 0. */
@@ -131,27 +150,50 @@ function followStateSql(viewerId: string, authorId: SQL | Column) {
   };
 }
 
-function encodeCommentCursor(score: number, createdAtText: string, id: string): string {
-  return Buffer.from(`${score}|${createdAtText}|${id}`, 'utf8').toString('base64url');
+function encodeCommentCursor(
+  sort: CommentSort,
+  score: number,
+  createdAtText: string,
+  id: string,
+): string {
+  return Buffer.from(`${sort}|${score}|${createdAtText}|${id}`, 'utf8').toString('base64url');
 }
 
-function decodeCommentCursor(cursor: string): { score: number; createdAtText: string; id: string } {
+function decodeCommentCursor(
+  cursor: string,
+): { sort: CommentSort; score: number; createdAtText: string; id: string } {
   const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
-  if (parts.length !== 3) {
+  if (parts.length !== 4) {
     throw new BadRequestException('Curseur invalide.');
   }
-  const [scoreText, createdAtText, id] = parts;
+  const [sort, scoreText, createdAtText, id] = parts;
   const score = Number(scoreText);
-  if (!Number.isInteger(score) || !id || Number.isNaN(new Date(createdAtText).getTime())) {
+  if (
+    (sort !== 'top' && sort !== 'recent') ||
+    !Number.isInteger(score) ||
+    !id ||
+    Number.isNaN(new Date(createdAtText).getTime())
+  ) {
     throw new BadRequestException('Curseur invalide.');
   }
-  return { score, createdAtText, id };
+  return { sort, score, createdAtText, id };
 }
 
 export interface CommentPage {
+  /** Commentaires épinglés par l'auteur de la publication (racines uniquement). */
+  pinned: CommentView[];
   items: CommentView[];
   nextCursor: string | null;
 }
+
+/** Tri des commentaires : pertinence (défaut) ou plus récents d'abord. */
+export type CommentSort = 'top' | 'recent';
+
+/** Nombre maximal de commentaires épinglés renvoyés en tête de fil. */
+const MAX_PINNED_COMMENTS = 5;
+
+/** Ordre d'affichage stable des réactions emoji dans la vue. */
+const COMMENT_REACTION_ORDER = COMMENT_REACTION_KINDS;
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -702,30 +744,208 @@ export class PublicationsService {
     return this.loadCommentView(existing.id, viewerId);
   }
 
-  /** Commentaires d'une publication, paginés par curseur (ordre chronologique). */
+  /**
+   * Commentaires d'une publication, paginés par curseur.
+   *
+   * `sort=top` classe par pertinence (likes − dislikes, puis ancienneté) ;
+   * `sort=recent` renvoie les plus récents d'abord. Les commentaires épinglés
+   * par l'auteur de la publication sont exclus de la pagination et renvoyés à
+   * part dans `pinned`, pour rester collés en tête quel que soit le tri.
+   */
   async listComments(
     publicationId: string,
     viewerId: string,
     limit: number,
     cursor?: string,
+    sort: CommentSort = 'top',
   ): Promise<CommentPage> {
     await this.assertVisible(publicationId, viewerId);
     const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
 
-    const { dislikes, score } = commentScoreSql();
-    const conditions = [eq(comments.publicationId, publicationId), isNull(comments.deletedAt)];
+    const conditions: SQL[] = [
+      eq(comments.publicationId, publicationId),
+      isNull(comments.deletedAt),
+      isNull(comments.pinnedAt),
+    ];
     if (cursor) {
-      // Tri par score décroissant, puis par date/id croissants : le curseur
-      // garde les trois composantes pour une pagination sans doublon.
       const after = decodeCommentCursor(cursor);
-      conditions.push(sql`(
-        ${score} < ${after.score}
-        or (${score} = ${after.score}
-          and (${comments.createdAt}, ${comments.id}) > (${after.createdAtText}::timestamptz, ${after.id}))
-      )`);
+      if (after.sort !== sort) {
+        throw new BadRequestException('Curseur incompatible avec le tri demandé.');
+      }
+      if (sort === 'top') {
+        const { score } = commentScoreSql();
+        conditions.push(sql`(
+          ${score} < ${after.score}
+          or (${score} = ${after.score}
+            and (${comments.createdAt}, ${comments.id}) > (${after.createdAtText}::timestamptz, ${after.id}))
+        )`);
+      } else {
+        conditions.push(sql`(${comments.createdAt}, ${comments.id}) < (${after.createdAtText}::timestamptz, ${after.id})`);
+      }
     }
 
-    const rows = await this.db
+    const rows = await this.commentViewSelect(viewerId)
+      .where(and(...conditions))
+      .orderBy(
+        ...(sort === 'top'
+          ? [desc(commentScoreSql().score), asc(comments.createdAt), asc(comments.id)]
+          : [desc(comments.createdAt), desc(comments.id)]),
+      )
+      .limit(bounded + 1);
+
+    const page = rows.slice(0, bounded);
+    const last = page.at(-1);
+    return {
+      pinned: await this.pinnedComments(publicationId, viewerId),
+      items: await this.hydrateCommentViews(page, viewerId),
+      nextCursor:
+        rows.length > bounded && last
+          ? encodeCommentCursor(sort, last.score, last.createdAtText, last.comment.id)
+          : null,
+    };
+  }
+
+  /**
+   * Réponses directes d'un commentaire, paginées du plus ancien au plus récent
+   * (comme le fil de discussion Instagram). Le commentaire cible doit exister
+   * et sa publication être visible.
+   */
+  async listCommentReplies(
+    commentId: string,
+    viewerId: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<CommentPage> {
+    const [root] = await this.db
+      .select({ id: comments.id, publicationId: comments.publicationId })
+      .from(comments)
+      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+    if (!root) {
+      throw new NotFoundException('Commentaire introuvable.');
+    }
+    await this.assertVisible(root.publicationId, viewerId);
+    const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
+
+    const conditions: SQL[] = [
+      eq(comments.publicationId, root.publicationId),
+      eq(comments.parentId, commentId),
+      isNull(comments.deletedAt),
+    ];
+    if (cursor) {
+      const after = decodeCommentCursor(cursor);
+      conditions.push(
+        sql`(${comments.createdAt}, ${comments.id}) > (${after.createdAtText}::timestamptz, ${after.id})`,
+      );
+    }
+
+    const rows = await this.commentViewSelect(viewerId)
+      .where(and(...conditions))
+      .orderBy(asc(comments.createdAt), asc(comments.id))
+      .limit(bounded + 1);
+
+    const page = rows.slice(0, bounded);
+    const last = page.at(-1);
+    return {
+      pinned: [],
+      items: await this.hydrateCommentViews(page, viewerId),
+      nextCursor:
+        rows.length > bounded && last
+          ? encodeCommentCursor('recent', last.score, last.createdAtText, last.comment.id)
+          : null,
+    };
+  }
+
+  /**
+   * Épingle ou désépingle un commentaire racine. Réservé à l'auteur de la
+   * publication, idempotent : renvoyer le même état ne change rien.
+   */
+  async pinComment(commentId: string, viewerId: string, pinned: boolean): Promise<CommentView> {
+    const [row] = await this.db
+      .select({
+        id: comments.id,
+        parentId: comments.parentId,
+        publicationAuthorId: publications.authorId,
+        deletedAt: comments.deletedAt,
+      })
+      .from(comments)
+      .innerJoin(publications, eq(publications.id, comments.publicationId))
+      .where(eq(comments.id, commentId));
+    if (!row || row.deletedAt) {
+      throw new NotFoundException('Commentaire introuvable.');
+    }
+    if (row.publicationAuthorId !== viewerId) {
+      throw new ForbiddenException('Seul l’auteur de la publication peut épingler.');
+    }
+    if (row.parentId) {
+      throw new BadRequestException('Seule une réponse de premier niveau peut être épinglée.');
+    }
+    await this.db
+      .update(comments)
+      .set({ pinnedAt: pinned ? new Date() : null })
+      .where(eq(comments.id, commentId));
+    return this.loadCommentView(commentId, viewerId);
+  }
+
+  /** Réaction emoji sur un commentaire : une seule par compte, type modifiable. */
+  async reactComment(
+    commentId: string,
+    viewerId: string,
+    kind: CommentReactionKind | null,
+  ): Promise<CommentView> {
+    const [row] = await this.db
+      .select({ publicationId: comments.publicationId })
+      .from(comments)
+      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+    if (!row) {
+      throw new NotFoundException('Commentaire introuvable.');
+    }
+    await this.assertVisible(row.publicationId, viewerId);
+
+    await this.db.transaction(async (tx) => {
+      if (kind === null) {
+        await tx
+          .delete(commentReactions)
+          .where(
+            and(eq(commentReactions.commentId, commentId), eq(commentReactions.userId, viewerId)),
+          );
+        return;
+      }
+      await tx
+        .insert(commentReactions)
+        .values({ commentId, userId: viewerId, kind })
+        .onConflictDoUpdate({
+          target: [commentReactions.commentId, commentReactions.userId],
+          set: { kind },
+        });
+    });
+
+    return this.loadCommentView(commentId, viewerId);
+  }
+
+  /** Commentaires racines épinglés, du plus récemment épinglé au plus ancien. */
+  private async pinnedComments(publicationId: string, viewerId: string): Promise<CommentView[]> {
+    const rows = await this.commentViewSelect(viewerId)
+      .where(
+        and(
+          eq(comments.publicationId, publicationId),
+          isNull(comments.deletedAt),
+          isNull(comments.parentId),
+          isNotNull(comments.pinnedAt),
+        ),
+      )
+      .orderBy(desc(comments.pinnedAt), asc(comments.createdAt), asc(comments.id))
+      .limit(MAX_PINNED_COMMENTS);
+    return this.hydrateCommentViews(rows, viewerId);
+  }
+
+  /**
+   * Sélecteur commun des colonnes d'un commentaire enrichi (auteur, score,
+   * état like/dislike du visiteur). Les filtrages et tris restent à la charge
+   * de l'appelant.
+   */
+  private commentViewSelect(viewerId: string) {
+    const { dislikes, score } = commentScoreSql();
+    return this.db
       .select({
         comment: comments,
         author: this.authorFields(),
@@ -743,34 +963,77 @@ export class PublicationsService {
         )`,
       })
       .from(comments)
-      .innerJoin(users, eq(users.id, comments.authorId))
-      .where(and(...conditions))
-      .orderBy(desc(score), asc(comments.createdAt), asc(comments.id))
-      .limit(bounded + 1);
+      .innerJoin(users, eq(users.id, comments.authorId));
+  }
 
-    const page = rows.slice(0, bounded);
-    const last = page.at(-1);
-    return {
-      items: page.map(
-        ({ comment, author, viewerLiked, viewerDisliked, dislikeCount, score, following, followedBy }) => ({
-        id: comment.id,
-        publicationId: comment.publicationId,
-        parentId: comment.parentId,
-        body: comment.body,
-        createdAt: comment.createdAt,
-        author: { ...author, following, followedBy },
-        likeCount: comment.likeCount,
-        replyCount: comment.replyCount,
-        viewerLiked,
-        viewerDisliked,
-        dislikeCount,
-        score,
-      })),
-      nextCursor:
-        rows.length > bounded && last
-          ? encodeCommentCursor(last.score, last.createdAtText, last.comment.id)
-          : null,
-    };
+  /**
+   * Transforme les lignes du sélecteur en vues et joint les réactions emoji :
+   * compteurs agrégés par kind pour toute la page, plus la réaction du visiteur.
+   */
+  private async hydrateCommentViews<
+    T extends {
+      comment: typeof comments.$inferSelect;
+      author: AuthorCard;
+      viewerLiked: boolean;
+      viewerDisliked: boolean;
+      dislikeCount: number;
+      score: number;
+      following: boolean;
+      followedBy: boolean;
+    },
+  >(rows: T[], viewerId: string): Promise<CommentView[]> {
+    const ids = rows.map((row) => row.comment.id);
+    const counts = new Map<string, Map<CommentReactionKind, number>>();
+    const mine = new Map<string, CommentReactionKind>();
+    if (ids.length > 0) {
+      const grouped = await this.db
+        .select({
+          commentId: commentReactions.commentId,
+          kind: commentReactions.kind,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(commentReactions)
+        .where(inArray(commentReactions.commentId, ids))
+        .groupBy(commentReactions.commentId, commentReactions.kind);
+      for (const row of grouped) {
+        const byKind = counts.get(row.commentId) ?? new Map<CommentReactionKind, number>();
+        byKind.set(row.kind, row.count);
+        counts.set(row.commentId, byKind);
+      }
+      const own = await this.db
+        .select({ commentId: commentReactions.commentId, kind: commentReactions.kind })
+        .from(commentReactions)
+        .where(
+          and(inArray(commentReactions.commentId, ids), eq(commentReactions.userId, viewerId)),
+        );
+      for (const row of own) {
+        mine.set(row.commentId, row.kind);
+      }
+    }
+    return rows.map((row) => {
+      const byKind = counts.get(row.comment.id);
+      const reactions = COMMENT_REACTION_ORDER.flatMap((kind) => {
+        const count = byKind?.get(kind) ?? 0;
+        return count > 0 ? [{ kind, count }] : [];
+      });
+      return {
+        id: row.comment.id,
+        publicationId: row.comment.publicationId,
+        parentId: row.comment.parentId,
+        body: row.comment.body,
+        createdAt: row.comment.createdAt,
+        author: { ...row.author, following: row.following, followedBy: row.followedBy },
+        likeCount: row.comment.likeCount,
+        replyCount: row.comment.replyCount,
+        viewerLiked: row.viewerLiked,
+        viewerDisliked: row.viewerDisliked,
+        dislikeCount: row.dislikeCount,
+        score: row.score,
+        pinned: row.comment.pinnedAt !== null,
+        reactions,
+        viewerReaction: mine.get(row.comment.id) ?? null,
+      };
+    });
   }
 
   /** Suppression logique par l'auteur du commentaire ou de la publication. */
@@ -996,43 +1259,14 @@ export class PublicationsService {
   }
 
   private async loadCommentView(commentId: string, viewerId: string): Promise<CommentView> {
-    const { dislikes, score } = commentScoreSql();
-    const [row] = await this.db
-      .select({
-        comment: comments,
-        author: this.authorFields(),
-        dislikeCount: dislikes,
-        score,
-        ...followStateSql(viewerId, comments.authorId),
-        viewerLiked: sql<boolean>`exists (
-          select 1 from ${commentLikes}
-          where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${viewerId}
-        )`,
-        viewerDisliked: sql<boolean>`exists (
-          select 1 from ${commentDislikes}
-          where ${commentDislikes.commentId} = ${comments.id} and ${commentDislikes.userId} = ${viewerId}
-        )`,
-      })
-      .from(comments)
-      .innerJoin(users, eq(users.id, comments.authorId))
-      .where(eq(comments.id, commentId));
-    if (!row) {
+    const rows = await this.commentViewSelect(viewerId)
+      .where(eq(comments.id, commentId))
+      .limit(1);
+    const [view] = await this.hydrateCommentViews(rows, viewerId);
+    if (!view) {
       throw new NotFoundException('Commentaire introuvable.');
     }
-    return {
-      id: row.comment.id,
-      publicationId: row.comment.publicationId,
-      parentId: row.comment.parentId,
-      body: row.comment.body,
-      createdAt: row.comment.createdAt,
-      author: { ...row.author, following: row.following, followedBy: row.followedBy },
-      likeCount: row.comment.likeCount,
-      replyCount: row.comment.replyCount,
-      viewerLiked: row.viewerLiked,
-      viewerDisliked: row.viewerDisliked,
-      dislikeCount: row.dislikeCount,
-      score: row.score,
-    };
+    return view;
   }
 
   /** J'aime sur un commentaire, idempotent et transactionnel. */

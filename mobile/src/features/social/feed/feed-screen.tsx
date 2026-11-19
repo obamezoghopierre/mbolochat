@@ -86,39 +86,53 @@ export function FeedScreen() {
     };
   }, [commentsPost, navigation]);
 
-  // Quand la feuille de commentaires s'ouvre, le feed se réduit et remonte
-  // pour rester visible au-dessus du clavier, comme sur TikTok.
-  // Tout (scale, translation et rayon) est animé sur le thread UI via Reanimated.
-  const sheetProgress = useSharedValue(0);
+  // Quand la feuille de commentaires s'ouvre, le post se réduit en carte
+  // au-dessus d'elle, comme sur Instagram : le feed entier tient dans
+  // l'espace restant, calculé depuis le snap point de la feuille.
+  // La transformation suit `animatedPosition` — la position réelle de la
+  // feuille — pour que la carte grandisse/reduise PENDANT le glissement,
+  // pas seulement à l'ouverture/fermeture (sinon fond noir entre les deux).
+  const sheetPosition = useSharedValue(screenHeight);
+  // Le bouton X démonte la feuille sans animation de fermeture : on recale la
+  // position sur « fermé » pour que la carte du feed retrouve sa taille.
   useEffect(() => {
-    sheetProgress.value = withTiming(commentsPost ? 1 : 0, { duration: 260 });
-  }, [commentsPost, sheetProgress]);
-
-  // Le feed réduit doit tenir ENTIÈREMENT dans l'espace au-dessus de la
-  // feuille (comme Instagram) : on déduit l'échelle et la translation de la
-  // hauteur réelle du pager et du snap point de la feuille.
+    if (!commentsPost) {
+      sheetPosition.value = withTiming(screenHeight, { duration: 260 });
+    }
+  }, [commentsPost, screenHeight, sheetPosition]);
+  const sheetOpenTop = screenHeight * (1 - COMMENTS_SHEET_SNAP_RATIO);
   const feedHeight = Math.max(1, screenHeight - insets.bottom);
-  const spaceAboveSheet = screenHeight * (1 - COMMENTS_SHEET_SNAP_RATIO);
   const targetScale = Math.max(
     0.2,
-    Math.min(0.78, (spaceAboveSheet - Spacing.two) / feedHeight),
+    Math.min(0.78, (sheetOpenTop - Spacing.two) / feedHeight),
   );
   // Avec une origine de transformation au centre, on remonte la vue réduite
   // pour que son bas arrive juste au-dessus de la feuille.
   const targetTranslateY =
-    spaceAboveSheet - Spacing.two - (screenHeight + feedHeight * targetScale) / 2;
-  const feedTransformStyle = useAnimatedStyle(() => ({
-    // `translateY` AVANT `scale` : sinon la translation est multipliée par
-    // l'échelle et le feed ne monte pas assez.
-    transform: [
-      { translateY: interpolate(sheetProgress.value, [0, 1], [0, targetTranslateY]) },
-      { scale: interpolate(sheetProgress.value, [0, 1], [1, targetScale]) },
-    ],
-  }));
-  const feedRadiusStyle = useAnimatedStyle(() => ({
-    borderRadius: interpolate(sheetProgress.value, [0, 1], [0, 18]),
-    overflow: 'hidden',
-  }));
+    sheetOpenTop - Spacing.two - (screenHeight + feedHeight * targetScale) / 2;
+  const feedTransformStyle = useAnimatedStyle(() => {
+    // 0 = feuille fermée (position = hauteur écran), 1 = snap ouverte.
+    const progress = Math.min(
+      1,
+      Math.max(0, (screenHeight - sheetPosition.value) / (screenHeight - sheetOpenTop)),
+    );
+    return {
+      transform: [
+        { translateY: interpolate(progress, [0, 1], [0, targetTranslateY]) },
+        { scale: interpolate(progress, [0, 1], [1, targetScale]) },
+      ],
+    };
+  });
+  const feedRadiusStyle = useAnimatedStyle(() => {
+    const progress = Math.min(
+      1,
+      Math.max(0, (screenHeight - sheetPosition.value) / (screenHeight - sheetOpenTop)),
+    );
+    return {
+      borderRadius: interpolate(progress, [0, 1], [0, 18]),
+      overflow: 'hidden',
+    };
+  });
 
   // Le fil doit se taire dès qu'il n'est plus l'écran visible ou que l'app passe
   // en arrière-plan. `Tabs` garde les écrans montés : sans ces deux signaux, la
@@ -207,7 +221,11 @@ export function FeedScreen() {
       )}
 
       {commentsPost ? (
-        <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />
+        <CommentsSheet
+          post={commentsPost}
+          onClose={() => setCommentsPost(null)}
+          sheetPosition={sheetPosition}
+        />
       ) : null}
     </View>
   );

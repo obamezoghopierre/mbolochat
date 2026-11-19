@@ -16,8 +16,12 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/jwt-payload.js';
 import { CreatePublicationDto } from './dto/create-publication.dto.js';
-import { CreateCommentDto, ReactDto, RecordViewDto } from './dto/interactions.dto.js';
-import { COMMENT_LIST_DEFAULT_LIMIT, PublicationsService } from './publications.service.js';
+import { CreateCommentDto, CommentReactDto, ReactDto, RecordViewDto } from './dto/interactions.dto.js';
+import {
+  COMMENT_LIST_DEFAULT_LIMIT,
+  PublicationsService,
+  type CommentSort,
+} from './publications.service.js';
 
 @Controller('publications')
 @UseGuards(JwtAuthGuard)
@@ -102,8 +106,10 @@ export class PublicationsController {
     @Query('limit', new DefaultValuePipe(COMMENT_LIST_DEFAULT_LIMIT), ParseIntPipe)
     limit: number,
     @Query('cursor') cursor?: string,
+    @Query('sort') sort?: string,
   ) {
-    return this.publications.listComments(id, current.sub, limit, cursor);
+    const order: CommentSort = sort === 'recent' ? 'recent' : 'top';
+    return this.publications.listComments(id, current.sub, limit, cursor, order);
   }
 }
 
@@ -138,5 +144,40 @@ export class CommentsController {
   @Delete(':id/dislike')
   async undislike(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
     return this.publications.dislikeComment(id, current.sub, false);
+  }
+
+  /** Réponses directes d'un commentaire, paginées (fil de discussion). */
+  @Get(':id/replies')
+  async replies(
+    @CurrentUser() current: JwtPayload,
+    @Param('id') id: string,
+    @Query('limit', new DefaultValuePipe(COMMENT_LIST_DEFAULT_LIMIT), ParseIntPipe)
+    limit: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.publications.listCommentReplies(id, current.sub, limit, cursor);
+  }
+
+  /** Épingle un commentaire racine (auteur de la publication uniquement). */
+  @Post(':id/pin')
+  async pin(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.pinComment(id, current.sub, true);
+  }
+
+  @Delete(':id/pin')
+  async unpin(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.pinComment(id, current.sub, false);
+  }
+
+  /** Réaction emoji sur un commentaire (une seule par compte, type modifiable). */
+  @Post(':id/react')
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async react(@CurrentUser() current: JwtPayload, @Param('id') id: string, @Body() body: CommentReactDto) {
+    return this.publications.reactComment(id, current.sub, body?.kind ?? null);
+  }
+
+  @Delete(':id/react')
+  async unreact(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.reactComment(id, current.sub, null);
   }
 }

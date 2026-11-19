@@ -496,4 +496,228 @@ describe('Publications et interactions (e2e)', () => {
     // Le refus n'a laissé aucune trace sur la seconde publication.
     expect((await publicationRow(second.body.id)).commentCount).toBe(0);
   });
+
+  it('épingle un commentaire racine, réservé à l’auteur de la publication', async () => {
+    const alice = await register('Epingleuse');
+    const bob = await register('Epinglant');
+    const carol = await register('TemoinPin');
+    const post = await publish(alice).expect(201);
+
+    const first = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Premier', clientId: `c-${suffix}-pin-1` })
+      .expect(201);
+    const second = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${carol.token}`)
+      .send({ body: 'À épingler', clientId: `c-${suffix}-pin-2` })
+      .expect(201);
+    const reply = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Réponse', parentId: first.body.id, clientId: `c-${suffix}-pin-3` })
+      .expect(201);
+
+    // Un tiers ne peut pas épingler, pas plus qu'une réponse.
+    await request(app.getHttpServer())
+      .post(`/comments/${second.body.id}/pin`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/comments/${reply.body.id}/pin`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(400);
+
+    const pinned = await request(app.getHttpServer())
+      .post(`/comments/${second.body.id}/pin`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(201);
+    expect(pinned.body.pinned).toBe(true);
+
+    const list = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(list.body.pinned.map((item: { id: string }) => item.id)).toEqual([second.body.id]);
+    expect(list.body.items.map((item: { id: string }) => item.id)).not.toContain(second.body.id);
+
+    // Rejeu idempotent, puis désépinglage.
+    await request(app.getHttpServer())
+      .post(`/comments/${second.body.id}/pin`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(201);
+    const unpinned = await request(app.getHttpServer())
+      .delete(`/comments/${second.body.id}/pin`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(200);
+    expect(unpinned.body.pinned).toBe(false);
+
+    const after = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(after.body.pinned).toHaveLength(0);
+    expect(after.body.items.map((item: { id: string }) => item.id)).toContain(second.body.id);
+  });
+
+  it('réagit par emoji, change de kind et retire sa réaction', async () => {
+    const alice = await register('Reactive');
+    const bob = await register('Emojiste');
+    const carol = await register('SecondEmoji');
+    const post = await publish(alice).expect(201);
+    const comment = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Reacte-moi', clientId: `c-${suffix}-react-1` })
+      .expect(201);
+
+    const heart = await request(app.getHttpServer())
+      .post(`/comments/${comment.body.id}/react`)
+      .set('Authorization', `Bearer ${carol.token}`)
+      .send({ kind: 'heart' })
+      .expect(201);
+    expect(heart.body.viewerReaction).toBe('heart');
+    expect(heart.body.reactions).toEqual([{ kind: 'heart', count: 1 }]);
+
+    // Changer de kind déplace le vote, une seule réaction par compte.
+    const laugh = await request(app.getHttpServer())
+      .post(`/comments/${comment.body.id}/react`)
+      .set('Authorization', `Bearer ${carol.token}`)
+      .send({ kind: 'laugh' })
+      .expect(201);
+    expect(laugh.body.viewerReaction).toBe('laugh');
+    expect(laugh.body.reactions).toEqual([{ kind: 'laugh', count: 1 }]);
+
+    // Un second compte cumule les compteurs.
+    await request(app.getHttpServer())
+      .post(`/comments/${comment.body.id}/react`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ kind: 'laugh' })
+      .expect(201);
+    const seen = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(200);
+    const row = seen.body.items.find((item: { id: string }) => item.id === comment.body.id);
+    expect(row.reactions).toEqual([{ kind: 'laugh', count: 2 }]);
+    expect(row.viewerReaction).toBeNull();
+
+    const removed = await request(app.getHttpServer())
+      .delete(`/comments/${comment.body.id}/react`)
+      .set('Authorization', `Bearer ${carol.token}`)
+      .expect(200);
+    expect(removed.body.viewerReaction).toBeNull();
+
+    await request(app.getHttpServer())
+      .post(`/comments/${comment.body.id}/react`)
+      .set('Authorization', `Bearer ${carol.token}`)
+      .send({ kind: 'inconnu' })
+      .expect(400);
+  });
+
+  it('trie les commentaires par pertinence ou par date récente', async () => {
+    const alice = await register('Triage');
+    const bob = await register('LikeurTri');
+    const post = await publish(alice).expect(201);
+
+    const older = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Ancien mais aimé', clientId: `c-${suffix}-sort-1` })
+      .expect(201);
+    const newer = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ body: 'Récent sans like', clientId: `c-${suffix}-sort-2` })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/comments/${older.body.id}/like`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(201);
+
+    const top = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .query({ sort: 'top' })
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(top.body.items.map((item: { id: string }) => item.id)).toEqual([
+      older.body.id,
+      newer.body.id,
+    ]);
+
+    const recent = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .query({ sort: 'recent' })
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(recent.body.items.map((item: { id: string }) => item.id)).toEqual([
+      newer.body.id,
+      older.body.id,
+    ]);
+
+    // Un curseur d'un tri ne se réutilise pas dans l'autre.
+    const mixed = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .query({ sort: 'recent', limit: 1 })
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(mixed.body.nextCursor).toEqual(expect.any(String));
+    await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .query({ sort: 'top', cursor: mixed.body.nextCursor })
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(400);
+  });
+
+  it('pagine les réponses d’un fil dans l’ordre chronologique', async () => {
+    const alice = await register('FilMere');
+    const bob = await register('FilRepondeur');
+    const post = await publish(alice).expect(201);
+
+    const root = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ body: 'Fil principal', clientId: `c-${suffix}-thread-1` })
+      .expect(201);
+    const other = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Autre fil', clientId: `c-${suffix}-thread-2` })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Réponse à lautre', parentId: other.body.id, clientId: `c-${suffix}-thread-3` })
+      .expect(201);
+    const first = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Réponse 1', parentId: root.body.id, clientId: `c-${suffix}-thread-4` })
+      .expect(201);
+    const second = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ body: 'Réponse 2', parentId: root.body.id, clientId: `c-${suffix}-thread-5` })
+      .expect(201);
+
+    const replies = await request(app.getHttpServer())
+      .get(`/comments/${root.body.id}/replies`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    expect(replies.body.items.map((item: { id: string }) => item.id)).toEqual([
+      first.body.id,
+      second.body.id,
+    ]);
+    expect(replies.body.pinned).toEqual([]);
+
+    await request(app.getHttpServer())
+      .get(`/comments/${other.body.id}/replies`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/comments/inexistant/replies`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(404);
+  });
 });

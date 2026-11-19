@@ -529,6 +529,18 @@ export interface FeedPage {
 
 export type FeedTab = 'for-you' | 'following' | 'local';
 
+/** Kinds de réaction emoji sur un commentaire (alignés sur l'API). */
+export type CommentReactionKind = 'heart' | 'laugh' | 'wow' | 'fire' | 'clap';
+
+/** Réaction emoji agrégée sur un commentaire. */
+export interface CommentReaction {
+  kind: CommentReactionKind;
+  count: number;
+}
+
+/** Tri des commentaires : pertinence ou plus récents. */
+export type CommentSort = 'top' | 'recent';
+
 /** Commentaire ou réponse à une publication. */
 export interface PublicationComment {
   id: string;
@@ -548,9 +560,17 @@ export interface PublicationComment {
   dislikeCount: number;
   /** Pertinence : likes − dislikes, plancher à 0 (sert au classement serveur). */
   score: number;
+  /** Épinglé par l'auteur de la publication. */
+  pinned: boolean;
+  /** Réactions emoji agrégées. */
+  reactions: CommentReaction[];
+  /** Réaction emoji du visiteur, `null` s'il n'a pas réagi. */
+  viewerReaction: CommentReactionKind | null;
 }
 
 export interface CommentPage {
+  /** Commentaires racines épinglés, affichés en tête de fil. */
+  pinned: PublicationComment[];
   items: PublicationComment[];
   nextCursor: string | null;
 }

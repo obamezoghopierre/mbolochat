@@ -1,19 +1,33 @@
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { Copy, Flag, Heart, Link2, Reply, ThumbsDown, Trash2 } from 'lucide-react-native';
+import {
+  Copy,
+  Flag,
+  Heart,
+  Link2,
+  Pin,
+  PinOff,
+  Reply,
+  ThumbsDown,
+  Trash2,
+} from 'lucide-react-native';
 import { useCallback, useMemo, useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 
 import { ActionSheet, type SheetAction } from '@/components/action-sheet';
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
-import { FeedSurface, Spacing, Type } from '@/constants/theme';
+import { FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatListTimestamp } from '@/lib/format';
-import type { PublicationComment } from '@/lib/types';
+import type { CommentReactionKind, PublicationComment } from '@/lib/types';
+import {
+  COMMENT_REACTION_EMOJI,
+  COMMENT_REACTION_KINDS,
+} from './comment-reactions';
 import { parseSocialText } from './rich-text';
 
 /** Nombre de lignes affichées avant « voir plus », comme sur Instagram. */
@@ -31,8 +45,11 @@ export function CommentRow({
   onDelete,
   onNotice,
   onScoreChange,
+  onPin,
+  onReact,
   indented = false,
   replyToName,
+  isPublicationAuthor = false,
 }: {
   comment: PublicationComment;
   onReply?: (comment: PublicationComment) => void;
@@ -40,9 +57,15 @@ export function CommentRow({
   onDelete?: (comment: PublicationComment) => void;
   onNotice?: (message: string) => void;
   onScoreChange?: (commentId: string, score: number) => void;
+  /** Épingle/désépingle : visible uniquement pour l'auteur de la publication. */
+  onPin?: (comment: PublicationComment, pinned: boolean) => void;
+  /** Réaction emoji du visiteur (`null` retire sa réaction). */
+  onReact?: (comment: PublicationComment, kind: CommentReactionKind | null) => void;
   indented?: boolean;
   /** Pseudo du commentaire parent, affiché en gris devant une réponse. */
   replyToName?: string;
+  /** Le visiteur est l'auteur de la publication parente. */
+  isPublicationAuthor?: boolean;
 }) {
   const { token, user } = useAuth();
   const theme = useTheme();
@@ -204,6 +227,14 @@ export function CommentRow({
         onPress: () => onReply(comment),
       });
     }
+    if (onPin && isPublicationAuthor && !comment.parentId) {
+      actions.push({
+        key: 'pin',
+        label: comment.pinned ? fr.social.unpinComment : fr.social.pinComment,
+        icon: comment.pinned ? PinOff : Pin,
+        onPress: () => onPin(comment, !comment.pinned),
+      });
+    }
     actions.push({
       key: 'copy',
       label: fr.social.copyComment,
@@ -236,7 +267,7 @@ export function CommentRow({
       });
     }
     return actions;
-  }, [comment, copy, isOwnComment, onDelete, onReply, onReport, segments]);
+  }, [comment, copy, isPublicationAuthor, isOwnComment, onDelete, onPin, onReply, onReport, segments]);
 
   const row = (
     <Pressable
@@ -258,6 +289,14 @@ export function CommentRow({
         shape="rounded"
       />
       <View style={styles.body}>
+        {comment.pinned ? (
+          <View style={styles.pinnedBadge}>
+            <Pin size={11} color={theme.textSecondary} />
+            <ThemedText type="caption" themeColor="textSecondary">
+              {fr.social.commentPinned}
+            </ThemedText>
+          </View>
+        ) : null}
         <View style={styles.nameRow}>
           <ThemedText style={styles.author}>{comment.author.displayName}</ThemedText>
           {replyToName ? (
@@ -346,6 +385,49 @@ export function CommentRow({
             </ThemedText>
           ) : null}
         </View>
+        {comment.reactions.length > 0 ? (
+          <View style={styles.reactions}>
+            {COMMENT_REACTION_KINDS.flatMap((kind) => {
+              const reaction = comment.reactions.find((item) => item.kind === kind);
+              const count = reaction?.count ?? 0;
+              const mine = comment.viewerReaction === kind;
+              if (count === 0 && !mine) {
+                return [];
+              }
+              return [
+                <Pressable
+                  key={kind}
+                  onPress={() =>
+                    onReact?.(comment, mine ? null : kind)
+                  }
+                  disabled={!onReact}
+                  hitSlop={4}
+                  accessibilityRole="button"
+                  accessibilityLabel={fr.social.commentReactionNames[kind]}
+                  accessibilityState={{ selected: mine }}
+                  style={[
+                    styles.reactionChip,
+                    {
+                      backgroundColor: mine
+                        ? theme.accentSoft
+                        : theme.backgroundSelected,
+                    },
+                  ]}>
+                  <ThemedText style={styles.reactionEmoji}>
+                    {COMMENT_REACTION_EMOJI[kind]}
+                  </ThemedText>
+                  {count > 0 ? (
+                    <ThemedText
+                      type="caption"
+                      style={{ color: mine ? theme.accent : theme.textSecondary }}>
+                      {count}
+                    </ThemedText>
+                  ) : null}
+                </Pressable>,
+              ];
+            })}
+          </View>
+        ) : null}
       </View>
       <View style={styles.actions}>
         <Pressable
@@ -386,6 +468,28 @@ export function CommentRow({
       <ActionSheet
         visible={menuOpen}
         title={fr.social.commentActionsTitle}
+        header={
+          onReact ? (
+            <View style={styles.reactionBar}>
+              {COMMENT_REACTION_KINDS.map((kind) => (
+                <Pressable
+                  key={kind}
+                  onPress={() => {
+                    setMenuOpen(false);
+                    onReact(comment, comment.viewerReaction === kind ? null : kind);
+                  }}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityLabel={fr.social.commentReactionNames[kind]}
+                  style={styles.reactionBarItem}>
+                  <ThemedText style={styles.reactionBarEmoji}>
+                    {COMMENT_REACTION_EMOJI[kind]}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          ) : undefined
+        }
         actions={menuActions}
         onClose={() => setMenuOpen(false)}
       />
@@ -409,6 +513,35 @@ const styles = StyleSheet.create({
   author: { ...Type.body, fontSize: 15.5, fontWeight: '700' },
   replyPrefix: { ...Type.body, fontSize: 13, fontWeight: '400' },
   meta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, marginTop: Spacing.one },
+  pinnedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    marginBottom: Spacing.half,
+  },
+  reactions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.one,
+    marginTop: Spacing.one,
+  },
+  reactionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    borderRadius: Radii.full,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half,
+  },
+  reactionEmoji: { fontSize: 13 },
+  reactionBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  reactionBarItem: { padding: Spacing.two },
+  reactionBarEmoji: { fontSize: 26 },
   actions: { flexDirection: 'row', alignItems: 'center' },
   action: { paddingVertical: Spacing.half, paddingLeft: Spacing.one },
 });

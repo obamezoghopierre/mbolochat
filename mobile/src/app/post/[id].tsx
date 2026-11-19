@@ -20,13 +20,22 @@ import { Radii, Spacing, Type } from '@/constants/theme';
 import { PostCard } from '@/features/social/feed/post-card';
 import { applyReaction } from '@/features/social/feed/feed-model';
 import { CommentRow } from '@/features/social/publication/comment-row';
-import { appendComment, mergeCommentPage } from '@/features/social/publication/comments-model';
+import {
+  appendComment,
+  applyCommentReaction,
+  mergeCommentPage,
+  upsertComment,
+} from '@/features/social/publication/comments-model';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { newClientId } from '@/lib/client-id';
 import { fr } from '@/i18n/fr';
-import type { FeedPost, PublicationComment } from '@/lib/types';
+import type {
+  CommentReactionKind,
+  FeedPost,
+  PublicationComment,
+} from '@/lib/types';
 
 /**
  * Détail d'une publication et ses commentaires.
@@ -37,12 +46,13 @@ import type { FeedPost, PublicationComment } from '@/lib/types';
  */
 export default function PostDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
   const [post, setPost] = useState<FeedPost | null>(null);
   const [comments, setComments] = useState<PublicationComment[]>([]);
+  const [pinned, setPinned] = useState<PublicationComment[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +71,7 @@ export default function PostDetailScreen() {
       ]);
       setPost(publication);
       setComments(page.items);
+      setPinned(page.pinned ?? []);
       setCursor(page.nextCursor);
       setError(null);
       setStatus('ready');
@@ -86,12 +97,13 @@ export default function PostDetailScreen() {
       return;
     }
     try {
-      const page = await api.comments(token, id, cursor);
+      const page = await api.comments(token, id, { cursor });
       setComments((current) => {
         const merged = mergeCommentPage(current, page);
         setCursor(merged.nextCursor);
         return merged.items;
       });
+      setPinned(page.pinned ?? []);
     } catch {
       setError(fr.social.commentsError);
     }
@@ -119,6 +131,52 @@ export default function PostDetailScreen() {
       }
     },
     [post, token],
+  );
+
+  /** Réaction emoji sur un commentaire, optimiste puis confirmée par le serveur. */
+  const reactToComment = useCallback(
+    async (target: PublicationComment, kind: CommentReactionKind | null) => {
+      if (!token) {
+        return;
+      }
+      const optimistic = (item: PublicationComment) =>
+        item.id === target.id ? applyCommentReaction(item, kind) : item;
+      setComments((items) => items.map(optimistic));
+      setPinned((items) => items.map(optimistic));
+      try {
+        const updated = await api.reactComment(token, target.id, kind);
+        const replace = (items: PublicationComment[]) =>
+          items.some((item) => item.id === updated.id) ? upsertComment(items, updated) : items;
+        setComments(replace);
+        setPinned(replace);
+      } catch {
+        setError(fr.social.commentActionError);
+      }
+    },
+    [token],
+  );
+
+  /** Épingle/désépingle un commentaire racine (auteur de la publication). */
+  const togglePin = useCallback(
+    async (target: PublicationComment, pinnedFlag: boolean) => {
+      if (!token) {
+        return;
+      }
+      try {
+        const updated = await api.pinComment(token, target.id, pinnedFlag);
+        setComments((items) => items.filter((item) => item.id !== target.id));
+        setPinned((items) => {
+          const rest = items.filter((item) => item.id !== target.id);
+          return updated.pinned ? [updated, ...rest] : rest;
+        });
+        if (!updated.pinned) {
+          setComments((items) => [...items, updated]);
+        }
+      } catch {
+        setError(fr.social.commentActionError);
+      }
+    },
+    [token],
   );
 
   const send = async () => {
@@ -210,7 +268,7 @@ export default function PostDetailScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}>
         <FlatList
-          data={comments}
+          data={[...pinned, ...comments]}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
           ListHeaderComponent={
@@ -232,9 +290,14 @@ export default function PostDetailScreen() {
           renderItem={({ item }) => (
             <CommentRow
               comment={item}
+              onReact={(target, kind) => void reactToComment(target, kind)}
+              onPin={(target, pinnedFlag) => void togglePin(target, pinnedFlag)}
+              isPublicationAuthor={user?.id === post.author.id}
               replyToName={
                 item.parentId
-                  ? comments.find((candidate) => candidate.id === item.parentId)?.author.username
+                  ? [...pinned, ...comments].find(
+                      (candidate) => candidate.id === item.parentId,
+                    )?.author.username
                   : undefined
               }
             />

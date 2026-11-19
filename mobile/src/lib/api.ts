@@ -7,6 +7,8 @@ import { refreshAccessToken } from './token-refresh';
 import type {
   AuthResult,
   CommentPage,
+  CommentReactionKind,
+  CommentSort,
   ConversationLinkItem,
   ConversationMediaItem,
   ConversationSearchHit,
@@ -194,10 +196,44 @@ export const api = {
     });
   },
 
-  /** Commentaires d'une publication, du plus ancien au plus récent. */
-  comments(token: string, publicationId: string, cursor?: string) {
-    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+  /** Commentaires d'une publication : `top` (pertinence) ou `recent`. */
+  comments(
+    token: string,
+    publicationId: string,
+    options?: { cursor?: string; sort?: CommentSort },
+  ) {
+    const params = new URLSearchParams();
+    if (options?.cursor) {
+      params.set('cursor', options.cursor);
+    }
+    if (options?.sort && options.sort !== 'top') {
+      params.set('sort', options.sort);
+    }
+    const query = params.size > 0 ? `?${params.toString()}` : '';
     return request<CommentPage>(`/publications/${publicationId}/comments${query}`, { token });
+  },
+
+  /** Réponses directes d'un commentaire, du plus ancien au plus récent. */
+  commentReplies(token: string, commentId: string, cursor?: string) {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    return request<CommentPage>(`/comments/${commentId}/replies${query}`, { token });
+  },
+
+  /** Épingle ou désépingle un commentaire racine (auteur de la publication). */
+  pinComment(token: string, commentId: string, pinned: boolean) {
+    return request<PublicationComment>(`/comments/${commentId}/pin`, {
+      method: pinned ? 'POST' : 'DELETE',
+      token,
+    });
+  },
+
+  /** Réaction emoji sur un commentaire ; `null` retire la réaction du visiteur. */
+  reactComment(token: string, commentId: string, kind: CommentReactionKind | null) {
+    return request<PublicationComment>(`/comments/${commentId}/react`, {
+      method: kind === null ? 'DELETE' : 'POST',
+      token,
+      body: kind === null ? undefined : { kind },
+    });
   },
 
   /** Suppression d'un commentaire (auteur ou auteur de la publication). */
