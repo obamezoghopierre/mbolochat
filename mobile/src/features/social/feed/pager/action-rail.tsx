@@ -44,7 +44,7 @@ export interface FeedActionState {
 }
 
 /**
- * Rail d'actions vertical, à droite, calqué sur TikTok/Mbolo : avatar de
+ * Rail d'actions vertical, à droite, calqué sur les fils vidéo : avatar de
  * l'auteur surmonté d'une pastille « + », puis réaction, commentaires,
  * enregistrement, republication, partage et menu.
  *
@@ -99,7 +99,7 @@ export const FeedActionRail = memo(function FeedActionRail({
         onPress={actions.onOpenComments}
       />
 
-      {/* Libellé = compteur, comme TikTok : un mot complet (« Enregistrer »)
+      {/* Libellé = compteur : un mot complet (« Enregistrer »)
           ne tient pas dans 64 px dès que la police système est agrandie. */}
       <RailAction
         icon={Bookmark}

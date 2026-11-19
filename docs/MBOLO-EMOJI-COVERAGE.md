@@ -457,7 +457,7 @@ Les fichiers sont des WebP 96 px (inline/panneau) et 192 px (emoji seul). Les po
 - **1660 variantes de peau** sans illustration dédiée.
 - **2 visages de réaction humanoïdes** sans portrait dédié ; 20 autres visages (costume/chat/singe) sont hors périmètre de l'étape 1.
 
-La liste exhaustive est dans `docs/MBOLO-EMOJI-MISSING.csv`. La liste exploitable pour produire une illustration par concept de base est dans `docs/MBOLO-EMOJI-MISSING-BASE.csv` (1800 lignes). Le suivi facial est dans `docs/MBOLO-EMOJI-FACES.csv` et la liste des 2 visages restants dans `docs/MBOLO-EMOJI-FACES-MISSING.csv`.
+Le suivi des visages est dans `docs/MBOLO-EMOJI-FACES.csv`. Les listes de travail (concepts manquants, relances de production) ont été retirées une fois la vague livrée.
 
 Quelques exemples restants :
 

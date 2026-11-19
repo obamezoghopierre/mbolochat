@@ -88,7 +88,7 @@ export function toPublicUserView(user: User, relation: ViewerRelation): PublicUs
   };
 }
 
-/** Profil « façon Instagram » : infos publiques + âge/ville filtrés + stats. */
+/** Profil public : infos publiques + âge/ville filtrés + stats. */
 export interface UserProfile extends PublicUserView {
   isMe: boolean;
   /** Âge révolu calculé à la requête ; jamais la date de naissance. */

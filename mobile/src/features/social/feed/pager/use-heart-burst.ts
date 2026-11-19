@@ -4,7 +4,7 @@ import { Animated, Easing } from 'react-native';
 import { Motion } from '@/constants/theme';
 
 /**
- * Animation du cœur au double-tap, façon TikTok : le cœur apparaît gros,
+ * Animation du cœur au double-tap : le cœur apparaît gros,
  * remonte brièvement puis s'efface. Une seule `Animated.Value` par page, donc
  * aucun rendu React par image.
  *

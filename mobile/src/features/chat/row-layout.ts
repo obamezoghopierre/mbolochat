@@ -1,5 +1,5 @@
 /**
- * Disposition « WeChat » des rangées de message.
+ * Disposition en bulles des rangées de message.
  *
  * Seuls les messages reçus portent l'avatar de leur expéditeur :
  *

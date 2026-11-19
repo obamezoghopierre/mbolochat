@@ -115,7 +115,7 @@ type EmojiGridProps = {
   theme: PanelTheme;
 };
 
-/** Grille d'emojis défilant verticalement (comme WhatsApp). */
+/** Grille d'emojis défilant verticalement. */
 const EmojiGrid = memo(function EmojiGrid({
   items,
   cols,
@@ -321,7 +321,7 @@ export function EmojiPanel({
       );
   } else {
     // Un pager horizontal « page = catégorie » ; chaque page défile verticalement
-    // et la barre d'onglets se synchronise, comme WhatsApp.
+    // et la barre d'onglets se synchronise.
     content = (
       <FlatList
         ref={pagerRef}

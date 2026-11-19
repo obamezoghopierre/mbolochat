@@ -83,7 +83,7 @@ export function loadVoice(): Promise<VoiceComponents | null> {
   return loading;
 }
 
-/** « 1:07 » — la durée telle que WhatsApp l'écrit dans une bulle. */
+/** « 1:07 » — la durée affichée dans une bulle. */
 export function formatDuration(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;

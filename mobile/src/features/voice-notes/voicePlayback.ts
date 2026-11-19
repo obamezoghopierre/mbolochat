@@ -7,7 +7,7 @@ import { DEFAULT_VOICE_SPEED, type VoiceSpeed } from './voiceSpeed';
  * Lecture des notes vocales.
  *
  * Un SEUL lecteur natif pour toute l'app (au lieu d'un lecteur par bulle) :
- * - jamais deux notes en même temps (comme WeChat) ;
+ * - jamais deux notes en même temps ;
  * - mémoire maîtrisée dans une longue FlatList, même sur un téléphone modeste.
  */
 

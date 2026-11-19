@@ -27,7 +27,7 @@ import { useUserSettings } from '@/features/settings/useUserSettings';
 
 const BIO_MAX_LENGTH = 160;
 
-/** Page « Modifier le profil », sur le modèle d'Instagram. */
+/** Page « Modifier le profil ». */
 export default function EditProfileScreen() {
   const { token, user, setUser } = useAuth();
   const theme = useTheme();

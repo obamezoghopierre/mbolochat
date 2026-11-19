@@ -68,7 +68,7 @@ const TOAST_DURATION = 1600;
 const SOUND_TO_PROGRESS_GAP = 12;
 
 /**
- * Pager vertical plein écran, façon TikTok : une publication par écran, snap
+ * Pager vertical plein écran : une publication par écran, snap
  * exact sur la hauteur visible, seuls les voisins immédiats montés.
  *
  * Implémenté avec `FlatList` paginée plutôt que `react-native-pager-view` :
@@ -92,7 +92,7 @@ export function FeedPager({
   onRefresh,
 }: {
   items: FeedPost[];
-  /** Hauteur de l'écran entier : un item = un écran, comme TikTok. */
+  /** Hauteur de l'écran entier : un item = un écran. */
   height: number;
   /**
    * Hauteur de la barre de navigation du bas (inset système compris). Les
@@ -390,7 +390,7 @@ export function FeedPager({
 
               <OverlayScrim />
 
-              {/* Sur Instagram, le média réduit s'affiche seul quand la feuille
+              {/* Le média réduit s'affiche seul quand la feuille
                   est ouverte : ni rail d'actions, ni infos auteur/son. */}
               {!hideOverlays ? (
                 <View
@@ -465,7 +465,7 @@ export function FeedPager({
         onClose={() => setMenuTarget(null)}
       />
 
-      {/* Sélecteur de réaction : appui long sur le cœur du rail, comme TikTok. */}
+      {/* Sélecteur de réaction : appui long sur le cœur du rail. */}
       <ActionSheet
         visible={reactionTarget !== null}
         title={fr.social.reactionPickerTitle}

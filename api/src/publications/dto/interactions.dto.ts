@@ -4,7 +4,7 @@ import { MAX_CLIENT_ID_LENGTH, MAX_COMMENT_LENGTH } from './create-publication.d
 
 export const REACTION_KINDS = ['like', 'love', 'fire', 'clap'] as const;
 
-/** Réactions emoji sur un commentaire, façon Instagram. */
+/** Réactions emoji sur un commentaire. */
 export const COMMENT_REACTION_KINDS = ['heart', 'laugh', 'wow', 'fire', 'clap'] as const;
 export type CommentReactionKind = (typeof COMMENT_REACTION_KINDS)[number];
 

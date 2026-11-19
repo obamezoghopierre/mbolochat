@@ -487,7 +487,7 @@ export function ChatComposer({
           setSearchActive(false);
           searchActiveRef.current = false;
           // Pas de Keyboard.dismiss() : le champ reste monté/focus et le
-          // clavier ouvert pendant l'enregistrement (comportement WhatsApp).
+          // clavier ouvert pendant l'enregistrement.
           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
           dispatchGesture({ type: 'press' });
           longPressTimer.current = setTimeout(() => {

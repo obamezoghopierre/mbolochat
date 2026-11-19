@@ -11,8 +11,8 @@ en dehors de cet environnement (designer ou outil de génération d'images).
 - **Contenu : tête + socle de cou uniquement** — pas de pattes, pas de corps.
 - Détails sémantiques flottants acceptés et souhaités : larmes, goutte de sueur,
   Zzz, « ? », cœur, vapeur (ils sont protégés au recadrage via `rect_zones`).
-- Nommage : kebab-case, correspondre aux fichiers listés dans
-  `docs/MBOLO-EMOJI-FACES-VAGUE2-BRIEF.csv` (colonne `fichier`).
+- Nommage : kebab-case, en cohérence avec les fichiers déjà présents
+  dans ce répertoire et `mobile/scripts/mbolo-emoji-face-sources.json`.
 
 ## Branchement (fait par l'agent, pas à la main)
 

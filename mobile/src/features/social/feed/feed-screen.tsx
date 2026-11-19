@@ -52,7 +52,7 @@ const DEFAULT_TAB: FeedTab = 'for-you';
 const NOTICE_DURATION = 2600;
 
 /**
- * Fil social plein écran façon TikTok :
+ * Fil social plein écran :
  *
  * - onglets centrés en haut (Abonnements · Pour toi · Local) et recherche à
  *   droite, sur le média ;
@@ -69,7 +69,7 @@ export function FeedScreen() {
   const pager = useRef<ScrollViewInstance | null>(null);
   const navigation = useNavigation();
 
-  // Instagram masque la barre d'onglets quand une feuille est ouverte.
+  // La barre d'onglets est masquée quand une feuille est ouverte.
   useEffect(() => {
     const hidden = commentsPost !== null;
     navigation.setOptions({
@@ -87,7 +87,7 @@ export function FeedScreen() {
   }, [commentsPost, navigation]);
 
   // Quand la feuille de commentaires s'ouvre, le post se réduit en carte
-  // au-dessus d'elle, comme sur Instagram : le feed entier tient dans
+  // au-dessus d'elle, le feed entier tient dans
   // l'espace restant, calculé depuis le snap point de la feuille.
   // La transformation suit `animatedPosition` — la position réelle de la
   // feuille — pour que la carte grandisse/reduise PENDANT le glissement,
@@ -210,7 +210,7 @@ export function FeedScreen() {
       </ReAnimated.View>
 
       {/* Barre du haut FIXE : posée une seule fois au-dessus du pager, elle ne
-          glisse pas pendant le swipe horizontal (comportement TikTok). */}
+          glisse pas pendant le swipe horizontal. */}
       {commentsPost ? null : (
         <FeedTopBar tab={tab} onTabChange={changeTab} topInset={insets.top} />
       )}
@@ -315,7 +315,7 @@ function FeedSurfaceView({
   const network = useNetworkState();
   const offline = network.isConnected === false;
   // La vidéo ne passe jamais sous la barre système (Retour/Accueil/Récents) :
-  // l'item s'arrête juste au-dessus, comme sur TikTok. On retire donc l'inset
+  // l'item s'arrête juste au-dessus. On retire donc l'inset
   // du bas à la hauteur mesurée par `onLayout`.
   const height = Math.max(0, screenHeight - insets.bottom);
   // La barre d'onglets flotte au-dessus de la vidéo : elle occupe sa propre

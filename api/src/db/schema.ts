@@ -1142,7 +1142,7 @@ export const publicationMedia = pgTable(
   ],
 );
 
-/** Nature d'un commentaire : texte, vocal, photo ou sticker (façon TikTok). */
+/** Nature d'un commentaire : texte, vocal, photo ou sticker. */
 export const commentKindEnum = pgEnum('comment_kind', ['text', 'audio', 'image', 'sticker']);
 
 /** Commentaire ou réponse (`parentId`) à une publication. */
@@ -1207,7 +1207,7 @@ export const commentLikes = pgTable(
   (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
 );
 
-/** Kinds de réaction emoji sur un commentaire (façon Instagram). */
+/** Kinds de réaction emoji sur un commentaire. */
 export const commentReactionKindEnum = pgEnum('comment_reaction_kind', [
   'heart',
   'laugh',

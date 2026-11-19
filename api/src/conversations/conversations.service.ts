@@ -1469,7 +1469,7 @@ export class ConversationsService {
 
   /**
    * Accusés de réception des messages envoyés par `requesterId` dans cette
-   * conversation. Comme WhatsApp, seul l'expéditeur voit qui a reçu et lu.
+   * conversation. Seul l'expéditeur voit qui a reçu et lu.
    */
   /**
    * Médias et liens d'une conversation. Les pièces jointes sont lues dans

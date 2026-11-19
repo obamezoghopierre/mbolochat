@@ -72,7 +72,7 @@ export function formatListTimestamp(iso: string): string {
 }
 
 /**
- * Date relative compacte des commentaires, comme Instagram :
+ * Date relative compacte des commentaires :
  * « à l'instant » → « 12 min » → « 3 h » → « 2 j » → « 12 sept. » → « 12 sept. 2024 ».
  */
 export function formatCommentTimestamp(iso: string): string {
@@ -158,7 +158,7 @@ export type TickState = 'pending' | 'failed' | 'sent' | 'delivered' | 'read';
  * message est seulement parti — pas de supposition sur les messages antérieurs à
  * l'arrivée des accusés de réception. Tous l'ont reçu : double coche grise. Tous
  * l'ont lu : double coche bleue. Dans un groupe, on reste gris tant qu'un seul
- * n'a pas lu, comme WhatsApp.
+ * n'a pas lu.
  */
 export function tickState(receipts: MessageReceipt[]): TickState {
   if (receipts.length === 0) {

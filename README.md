@@ -119,14 +119,14 @@ WebSocket (Socket.IO, auth par `auth.token` avec access token 15 min) :
 - Profil : avatar uploadé sur disque, servi par URL signée, édition du nom affiché
 - Groupes : création, renommage, ajout/retrait de membres, **rôles administrateur/membre** (seul un admin pilote le groupe, et le dernier admin qui part en promeut un autre)
 - Messages : photos (galerie ou appareil photo), **messages vocaux** (enregistrement, durée, lecture), citations/réponses, copie
-- Émojis : pack **Fluent Emoji 3D** embarqué (images WebP), texte des messages en Unicode standard, panneau façon WeChat avec récents persistés
+- Émojis : pack **Fluent Emoji 3D** embarqué (images WebP), texte des messages en Unicode standard, panneau de style messagerie avec récents persistés
 - Stickers 100 % maison : références `pack/sticker` (aucun fichier envoyé), pack typographique « Mbolo » ; guide `docs/STICKERS.md`
-- Barre de saisie façon WeChat : `[voix ⇄ clavier] [champ] [emoji ⇄ clavier] [+ / Envoyer]`
+- Barre de saisie : `[voix ⇄ clavier] [champ] [emoji ⇄ clavier] [+ / Envoyer]`
 - Modération : suppression pour soi (masquée de la seule vue de l'auteur de la demande) ou pour tous (auteur uniquement, tombstone « Message supprimé »)
 - Fiabilité : **file d'envoi persistée sur l'appareil** (SQLite, survit à la coupure et à la fermeture de l'app), `clientId` idempotent côté serveur, rattrapage `GET /conversations/sync`
 - Accusés de réception message par message : reçu (double coche grise) et lu (double coche bleue), diffusés en temps réel
 - Notifications push (Expo/FCM) avec aperçu, avatar de l'expéditeur et nom du groupe ; filtrées quand la conversation est ouverte
-- Liste de conversations façon WhatsApp : sections, filtres, non-lus, épinglage, sourdine, **masquage**, actions sur appui long
+- Liste de conversations : sections, filtres, non-lus, épinglage, sourdine, **masquage**, actions sur appui long
 - Sécurité : URLs de médias signées et expirantes, rate limiting, en-têtes Helmet, CORS restreint par `CORS_ORIGINS`, jetons push liés à leur compte, blocage/déblocage d'utilisateurs
 - Paramètres : compte, notifications, confidentialité, utilisateurs bloqués, conversations masquées
 

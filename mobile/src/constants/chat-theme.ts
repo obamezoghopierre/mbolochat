@@ -15,7 +15,7 @@ export interface ChatPalette {
   composer: string;
   input: string;
   inputPlaceholder: string;
-  /** Icônes du compositeur (micro, emoji, +) : gris WeChat, pas du blanc pur. */
+  /** Icônes du compositeur (micro, emoji, +) : gris discret, pas du blanc pur. */
   composerIcon: string;
   send: string;
   sendText: string;

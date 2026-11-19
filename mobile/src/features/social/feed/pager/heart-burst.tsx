@@ -19,7 +19,7 @@ export function HeartBurstOverlay({
   point,
 }: {
   burstKey: number;
-  /** Point du double-tap : le cœur naît sous le doigt, comme sur TikTok. */
+  /** Point du double-tap : le cœur naît sous le doigt. */
   point?: { x: number; y: number } | null;
 }) {
   const { burst, opacity, scale, translateY } = useHeartBurst();

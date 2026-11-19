@@ -34,7 +34,7 @@ interface ExpoTicket {
 /**
  * Notification « data-only » : elle n'est pas affichée par le système, c'est
  * l'application (MessagingNotificationService côté Android) qui la construit,
- * pour obtenir le rendu WhatsApp (avatar rond + badge du logo).
+ * pour obtenir le rendu notification (avatar rond + badge du logo).
  */
 interface ExpoPushMessage {
   to: string;
@@ -224,7 +224,7 @@ export function notificationText(
 /**
  * Envoi des notifications push des nouveaux messages via le service Expo.
  *
- * Les destinataires sont filtrés comme sur WhatsApp :
+ * Les destinataires sont filtrés comme dans une messagerie :
  * - l'expéditeur n'est jamais notifié ;
  * - les comptes ayant coupé les notifications ou mis la discussion en
  *   sourdine ne reçoivent rien ;

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 
-/** Délai sous lequel deux taps comptent comme un double-tap (repère iOS/TikTok). */
+/** Délai sous lequel deux taps comptent comme un double-tap (repère iOS). */
 export const DOUBLE_TAP_DELAY = 280;
 
 /**
- * Gestes du feed plein écran, façon TikTok :
+ * Gestes du feed plein écran :
  *
  * - **deux taps rapides** → réaction (jamais retirée par un double-tap) ;
  * - **un seul tap** → lecture / pause ou flip du carrousel, après confirmation
@@ -13,7 +13,7 @@ export const DOUBLE_TAP_DELAY = 280;
  * - **appui long** → pause tant que le doigt reste posé.
  *
  * Le tap simple est différé de `DOUBLE_TAP_DELAY` : c'est le prix à payer pour
- * ne jamais mettre en pause au moment où l'utilisateur double-tape — TikTok fait
+ * ne jamais mettre en pause au moment où l'utilisateur double-tape — la référence fait
  * la même chose, reporter le simple tap d'une fraction de seconde est invisible.
  */
 export function FeedGestureLayer({

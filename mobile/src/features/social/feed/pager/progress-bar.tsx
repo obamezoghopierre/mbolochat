@@ -40,7 +40,7 @@ const RELEASE_IGNORE_MS = 150;
 const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 
 /**
- * Barre de progression du feed, façon TikTok : fin trait blanc en bas de la
+ * Barre de progression du feed : fin trait blanc en bas de la
  * page, alimenté par `timeUpdate` du lecteur, scrubbable au doigt.
  *
  * Toute la géométrie (largeur, position du doigt, visibilité du minuteur) vit

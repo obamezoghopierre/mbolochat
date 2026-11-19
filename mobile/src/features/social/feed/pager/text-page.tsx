@@ -67,7 +67,7 @@ function backdropColors(): string[] {
  * Page d'une publication sans média.
  *
  * Un post texte n'est plus un écran noir avec une ligne centrée : il prend la
- * même présence qu'une vidéo TikTok — fond coloré statique et carte de texte.
+ * même présence qu'une vidéo — fond coloré statique et carte de texte.
  * Le rythme visuel reste identique aux pages vidéo/photo pour que le pager
  * garde sa cohérence.
  */

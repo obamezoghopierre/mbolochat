@@ -59,7 +59,7 @@ import type {
   PublicationComment,
 } from '@/lib/types';
 
-/** Hauteur de la feuille : le post réduit reste lisible au-dessus, comme Instagram. */
+/** Hauteur de la feuille : le post réduit reste lisible au-dessus. */
 export const COMMENTS_SHEET_SNAP_RATIO = 0.75;
 
 /** Marge minimale sous le composeur quand la barre système ne remonte pas `insets.bottom`. */
@@ -84,7 +84,7 @@ if (Platform.OS === 'android') {
 }
 
 /**
- * Feuille de commentaires façon Instagram.
+ * Feuille de commentaires de type fil social.
  *
  * Le glissement, le suivi du doigt, les snap points et la fermeture sont gérés
  * par `@gorhom/bottom-sheet` (la même approche que les bottom sheets natives).
@@ -170,7 +170,7 @@ export function CommentsSheet({
   const allRoots = useMemo(() => [...pinned, ...grouped.roots], [pinned, grouped]);
 
   // Un seul snap « réduit » + un snap « ouvert » : la carte du feed suit la
-  // position réelle de la feuille (voir FeedScreen), comme sur Instagram.
+  // position réelle de la feuille (voir FeedScreen).
   // Clavier ouvert : deux détentes relatives à sa hauteur pour garder le
   // composeur visible sur Waydroid où le clavier recouvre la fenêtre.
   const snapPoints = useMemo(() => {
@@ -194,7 +194,7 @@ export function CommentsSheet({
     };
   }, []);
 
-  // Tap sur le feed réduit derrière la feuille : elle se ferme, comme Instagram.
+  // Tap sur le feed réduit derrière la feuille : elle se ferme.
   const renderBackdrop = useCallback(
     (props: BottomSheetBackdropProps) => (
       <BottomSheetBackdrop
@@ -499,7 +499,7 @@ export function CommentsSheet({
         ? comments.find((item) => item.id === target.parentId) ?? target
         : target;
       setReplyTo(root);
-      // Comme Instagram : la mention est préremplie et le clavier ouvert.
+      // La mention est préremplie et le clavier ouvert.
       const text = `@${root.author.username} `;
       const previous = replyPrefill.current;
       setDraft((current) =>
@@ -1277,7 +1277,7 @@ export function CommentsSheet({
             accessibilityLabel={fr.social.commentPlaceholder}
           />
         </View>
-        {/* Comme Instagram : « Publier » en texte accentué, visible seulement
+        {/* « Publier » en texte accentué, visible seulement
             quand il y a quelque chose à envoyer. */}
         {sending || uploading ? (
           <ActivityIndicator color={theme.accent} size="small" />

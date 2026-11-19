@@ -24,7 +24,7 @@ export interface GifMessageBubbleProps {
 
  /**
  * Bulle d'un GIF historique : aucun fond, l'animation est posée directement
- * dans la conversation (style WhatsApp). Le WebP animé est rendu directement
+ * dans la conversation. Le WebP animé est rendu directement
  * par `expo-image` ; plus aucun sélecteur GIPHY ne permet d'en envoyer.
  */
 export const GifMessageBubble = memo(function GifMessageBubble({

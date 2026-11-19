@@ -36,7 +36,7 @@ import {
 } from './comment-reactions';
 import { parseSocialText } from './rich-text';
 
-/** Nombre de lignes affichées avant « voir plus », comme sur Instagram. */
+/** Nombre de lignes affichées avant « voir plus ». */
 const COLLAPSED_LINES = 2;
 
 /** Retour haptique léger sur les actions du commentaire (best-effort). */
@@ -632,7 +632,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.one,
   },
   // Bulle média d'un commentaire photo : image + légende dans le même
-  // conteneur arrondi, comme une carte média façon TikTok.
+  // conteneur arrondi, comme une carte média.
   mediaBubble: {
     borderRadius: Radii.md,
     overflow: 'hidden',

@@ -86,7 +86,7 @@ export const EmojiText = memo(function EmojiText({
 
 type MessageTextProps = Omit<TextProps, 'children'> & { text: string };
 
-/** Texte d'un message : 1 à 3 emoji seuls s'affichent en grand, comme sur WeChat/WhatsApp. */
+/** Texte d'un message : 1 à 3 emoji seuls s'affichent en grand, comme dans une messagerie. */
 export const MessageText = memo(function MessageText({ text, style, ...rest }: MessageTextProps) {
   const segments = useMemo(() => parseFormattedText(text), [text]);
   const plain = useMemo(() => segments.map((segment) => segment.text).join(''), [segments]);

@@ -37,7 +37,7 @@ export interface User {
   createdAt: string;
 }
 
-/** Profil public « façon Instagram » : infos + âge/ville filtrés + statistiques. */
+/** Profil public : infos + âge/ville filtrés + statistiques. */
 export interface UserProfile extends User {
   isMe: boolean;
   /** Âge révolu calculé par le serveur ; null si masqué par la confidentialité. */

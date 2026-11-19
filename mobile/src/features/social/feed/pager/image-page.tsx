@@ -14,7 +14,7 @@ import type { FeedPost } from '@/lib/types';
 /**
  * Page photo ou carrousel, plein écran. Un tap passe à l'image suivante
  * (retour à la première après la dernière), le double-tap réagit — exactement
- * le comportement d'un carrousel TikTok.
+ * le comportement d'un carrousel.
  *
  * Le compteur `1/3` apparaît en haut à droite dès qu'il y a plusieurs médias.
  */
@@ -76,7 +76,7 @@ export function ImagePage({
         </View>
       ) : null}
 
-      {/* Points de pagination, comme TikTok : lisibles sans interaction. */}
+      {/* Points de pagination : lisibles sans interaction. */}
       {total > 1 && !chrome.hideOverlays ? (
         <View style={styles.dots} pointerEvents="none">
           {media.map((entry, dotIndex) => (

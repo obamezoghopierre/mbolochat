@@ -71,7 +71,7 @@ function targetInfo(target: ConversationSummary, userId: string | undefined): Ta
 /**
  * Panneau de partage d'une image, rendu dans la fenêtre de la visionneuse :
  * rangée horizontale d'interlocuteurs (envoi en message), Enregistrer et
- * partage externe, comme sur Instagram.
+ * partage externe.
  */
 export function ImageSharePanel({ imageUrl, onClose, onSent }: ImageSharePanelProps) {
   const router = useRouter();

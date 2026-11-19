@@ -35,7 +35,7 @@ export interface VoiceLayoutMetrics {
   barGap: number;
 }
 
-/** Largeur proportionnelle à la durée (comme WeChat), bornée. */
+/** Largeur proportionnelle à la durée, bornée. */
 export function voiceBubbleWidth(durationMs: number, screenW: number): number {
   const minW = 120;
   const maxW = Math.min(screenW * 0.72, 320);

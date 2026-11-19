@@ -66,7 +66,7 @@ export function ChatMessageRow({
   onAvatarPress?: () => void;
   children: ReactNode;
 }) {
-  // Disposition WeChat : chaque message porte l'avatar de son expéditeur —
+  // Disposition en bulles : chaque message porte l'avatar de son expéditeur —
   // à gauche pour les messages reçus, à droite pour les messages envoyés — et
   // la bulle est alignée du même côté. La logique de placement est pure et
   // testée à part (features/chat/row-layout.ts).

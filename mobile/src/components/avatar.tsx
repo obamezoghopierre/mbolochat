@@ -46,7 +46,7 @@ interface AvatarProps {
   gender?: Gender | null;
   /** Les groupes gardent les initiales ; les utilisateurs ont la mascotte. */
   variant?: 'user' | 'group';
-  /** 'circle' (défaut) ou 'rounded' : carré à coins arrondis, façon WeChat. */
+  /** 'circle' (défaut) ou 'rounded' : carré à coins arrondis. */
   shape?: 'circle' | 'rounded';
   /** Emoji d'identité d'un groupe, affiché quand il n'y a pas de photo. */
   emoji?: string | null;

@@ -105,7 +105,7 @@ test('deleteBackward : caractère après un emoji', () => {
   assert.deepEqual(deleteBackward('a😀b', 4, 4), { text: 'a😀', cursor: 3 });
 });
 
-test('décideur emoji seul : cas WhatsApp', () => {
+test('décideur emoji seul : cas messagerie', () => {
   const cases = [
     ['😀', 1, '😀'],
     [' 😀 ', 1, '😀'],

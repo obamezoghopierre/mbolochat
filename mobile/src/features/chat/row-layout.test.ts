@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { bubbleMaxWidth, messageRowLayout, ROW_AVATAR_SIZE } from './row-layout';
 
-describe('disposition WeChat des rangées', () => {
+describe('disposition en bulles des rangées', () => {
   it('message reçu : avatar à gauche, bulle alignée à gauche', () => {
     const layout = messageRowLayout(false, false);
     expect(layout).toMatchObject({

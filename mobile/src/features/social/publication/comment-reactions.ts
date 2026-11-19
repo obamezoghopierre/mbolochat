@@ -9,7 +9,7 @@ export const COMMENT_REACTION_KINDS: CommentReactionKind[] = [
   'clap',
 ];
 
-/** Emoji affiché pour chaque kind, aligné sur les réactions Instagram. */
+/** Emoji affiché pour chaque kind. */
 export const COMMENT_REACTION_EMOJI: Record<CommentReactionKind, string> = {
   heart: '❤️',
   laugh: '😂',

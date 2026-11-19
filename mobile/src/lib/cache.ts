@@ -3,7 +3,7 @@ import type { ConversationSummary, Message, UserProfile } from './types';
 /**
  * Cache persistant des données déjà chargées.
  *
- * Objectif : comme sur WhatsApp, ouvrir une page affiche directement son
+ * Objectif : ouvrir une page affiche directement son
  * contenu (récupéré sur le disque), sans squelette ni spinner. Le
  * rafraîchissement réseau se fait ensuite, en arrière-plan.
  *

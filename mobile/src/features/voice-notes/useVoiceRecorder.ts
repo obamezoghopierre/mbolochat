@@ -10,7 +10,7 @@ import {
 
 import { pushLiveLevel } from './voiceRecordingLevels';
 
-/** Durée max d'une note vocale (comme WeChat : 60 s). */
+/** Durée max d'une note vocale (60 s). */
 export const MAX_DURATION_MS = 60_000;
 /** En dessous, la note est jetée ("Message trop court"). */
 export const MIN_DURATION_MS = 1_000;

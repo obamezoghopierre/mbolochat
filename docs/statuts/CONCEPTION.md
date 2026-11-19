@@ -75,7 +75,7 @@ Audit et conception, **aucun code modifié**. Faits observés (section 1) sépar
 
 - **Navigation** : une seule pile racine, **pas d'onglets** (`_layout.tsx:147-171`) ; atterrissage `/chats` (`index.tsx:20`) ; `chats.tsx` = en-tête personnalisé + recherche + onglets de filtre + `FlatList` de `ListRow`/`SwipeableRow` ; superpositions globales montées hors navigateur (appels, notifications) (`_layout.tsx:44-66`).
 - **Bibliothèques** (mobile/package.json) : `expo-image-picker ~58.0.10` ✅, `expo-image-manipulator ~58.0.16` ✅, `expo-camera ~58.0.14` ✅, `expo-video ~58.0.13` ✅, `expo-audio ~58.0.10` ✅ (pas expo-av), `react-native-svg 15.16.0` ✅, `react-native-gesture-handler ~3.3.0` ✅, `react-native-reanimated 4.7.1` ✅, `expo-video-thumbnails ~58.0.2` ✅, `expo-secure-store ~58.0.2` ✅, `expo-sqlite ~58.0.14` ✅, `expo-haptics ~58.0.7` ✅. **Absentes** : `react-native-view-shot`, `@shopify/react-native-skia`, `expo-media-library`, `expo-screen-orientation`.
-- **Thème/i18n** : jetons `Colors.light/dark`, `Spacing`, `Radii`, `Type` (`constants/theme.ts:14-130`) ; palette chat WeChat `useChatColors()` (`constants/chat-theme.ts`) ; `useTheme()` (`hooks/use-theme.ts:4-7`) ; textes **import direct** `fr.settings.x` depuis `src/i18n/fr.ts` (objet imbriqué, pas de framework) ; `ThemedText`/`ThemedView`.
+- **Thème/i18n** : jetons `Colors.light/dark`, `Spacing`, `Radii`, `Type` (`constants/theme.ts:14-130`) ; palette chat `useChatColors()` (`constants/chat-theme.ts`) ; `useTheme()` (`hooks/use-theme.ts:4-7`) ; textes **import direct** `fr.settings.x` depuis `src/i18n/fr.ts` (objet imbriqué, pas de framework) ; `ThemedText`/`ThemedView`.
 - **Composants réutilisables** : `avatar.tsx` (size/shape circle|rounded/variant) ; sélection de médias `features/media/pickMedia.ts` (ImagePicker + document-picker) ; panneau emoji/stickers/GIF `features/emoji/EmojiStickerPanel.tsx` + bibliothèque de stickers locale (`features/stickers/stickerLibrary.ts`, AsyncStorage) ; visionneuses **maison** `features/media/MediaViewers.tsx` (Modal + pagination + expo-image / expo-video `useVideoPlayer`) ; `swipeable-bubble.tsx`, `quote-block.tsx`, `voice-recorder.tsx`, `attach-panel.tsx`, `action-sheet.tsx`, `choice-sheet.tsx`, `bottom-sheet.tsx`.
 - **Données** : `lib/api.ts` (client fetch + ApiError), `lib/socket.ts`, **outbox SQLite** (`lib/outbox.ts` + `store.ts`, `clientId` idempotent, reprise hors ligne) — chemin **classique uniquement** ; `lib/app-preferences.ts` (AsyncStorage, blob JSON typé, `useAppPreference`) ; `lib/config.ts` (API_URL).
 - **Stockage sécurisé** : `expo-secure-store` pour les jetons (`lib/token-storage.ts:4-5`) ; clés E2EE dans le Keystore Android via `E2eeKeyStore` (§1.2).
@@ -89,7 +89,7 @@ Audit et conception, **aucun code modifié**. Faits observés (section 1) sépar
 
 ### 2.1 Placement dans l'application
 
-- **A. Rangée en haut de `chats.tsx`** (« Mon statut » + avatars à anneau, comme WhatsApp) : aucune refonte de navigation (l'app n'a pas d'onglets), accès immédiat, la visionneuse et l'éditeur s'empilent au-dessus.
+- **A. Rangée en haut de `chats.tsx`** (« Mon statut » + avatars à anneau) : aucune refonte de navigation (l'app n'a pas d'onglets), accès immédiat, la visionneuse et l'éditeur s'empilent au-dessus.
 - B. Onglet dédié : impliquerait d'introduire un système d'onglets inexistant — refonte de `_layout.tsx` et de tous les écrans racine.
 - **Recommandation : A.** Risques : `chats.tsx` est déjà dense → extraire la rangée dans `features/statuses/StatusRow.tsx` pour ne pas grossir l'écran ; défilement horizontal à soigner (reactCompiler : pas de mutation d'état).
 
@@ -160,7 +160,7 @@ Modèle : média d'origine (préparé : ré-encodage image comme `reducePhoto`, 
 ### 2.7 Réponses et réactions
 
 - **Réponse privée** : message chiffré 1-1 existant, avec une **variante d'enveloppe dédiée** (`v:3` `{kind:'status_reply', statusId, statusAuthorId, preview, text}`) envoyée via le chemin `text.ts` (socket `message:send`, `clientId`). L'aperçu du statut voyage **dans** l'enveloppe : le serveur n'apprend rien (jamais `replyToId`). La conversation DIRECT auteur↔visionneur existe déjà dans la plupart des cas (audience = contacts) ; si elle n'existe pas, la créer via l'API existante avant l'envoi.
-- **Réaction rapide** : même canal, enveloppe `v:3` `{kind:'status_reaction', emoji, statusId}` — arrive dans la conversation 1-1, comme WhatsApp. Aucune table serveur de réactions aux statuts.
+- **Réaction rapide** : même canal, enveloppe `v:3` `{kind:'status_reaction', emoji, statusId}` — arrive dans la conversation 1-1, comme dans une messagerie. Aucune table serveur de réactions aux statuts.
 - **Risques** : `parsePayload` actuel rejette les versions inconnues → ajouter `v:3` sans toucher v1/v2 (anciens clients : erreur affichée proprement, jamais de crash) ; ne pas réutiliser `replyToId`.
 
 ### 2.8 Expiration

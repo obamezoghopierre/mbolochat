@@ -900,7 +900,7 @@ export class PublicationsService {
 
   /**
    * Réponses directes d'un commentaire, paginées du plus ancien au plus récent
-   * (comme le fil de discussion Instagram). Le commentaire cible doit exister
+   * (comme un fil de discussion). Le commentaire cible doit exister
    * et sa publication être visible.
    */
   async listCommentReplies(

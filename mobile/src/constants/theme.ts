@@ -96,7 +96,7 @@ export const Spacing = {
 export const Gutter = Spacing.three;
 
 /**
- * Échelle unique de rayons : des coins nets et sobres, façon WhatsApp/Messenger.
+ * Échelle unique de rayons : des coins nets et sobres.
  * `button` est le plus sobre (CTA) ; `full` est réservé aux cercles (avatars,
  * pastilles, boutons d'appel).
  */
@@ -166,7 +166,7 @@ export const GlassColors = {
 export const BlurIntensity = 72;
 
 /**
- * Feed plein écran (façon TikTok) : couleurs indépendantes du thème clair/sombre.
+ * Feed plein écran : couleurs indépendantes du thème clair/sombre.
  *
  * Le média occupe tout l'écran ; le texte est toujours blanc, la lisibilité
  * venant du dégradé et des ombres, jamais d'un fond opaque qui masquerait la
@@ -198,7 +198,7 @@ export const FeedSurface = {
 
 /** Mesures du feed plein écran : rail d'actions, avatar, pastille. */
 export const FeedMetrics = {
-  /** Icônes du rail d'action : taille TikTok (assez grandes pour être tactile). */
+  /** Icônes du rail d'action : taille généreuse (assez grandes pour être tactile). */
   actionIcon: 30,
   actionGap: Spacing.threeHalf,
   /** Largeur réservée à droite pour ne pas passer sous le rail. */
@@ -219,7 +219,7 @@ export const FeedMetrics = {
 
 /**
  * Publication texte présentée comme une vidéo : fond dégradé animé façon
- * « text post » TikTok. Le feed reste sombre quel que soit le thème ; ces
+ * « text post ». Le feed reste sombre quel que soit le thème ; ces
  * teintes vivantes donnent au post une présence visuelle sans image distante.
  */
 export const FeedTextPost = {

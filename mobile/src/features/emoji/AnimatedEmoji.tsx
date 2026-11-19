@@ -128,7 +128,7 @@ type Props = {
 
 /**
  * Message composé d'UN seul emoji : grand, SANS bulle, animé à l'arrivée,
- * et rejouable en le touchant (avec une petite vibration), comme sur WhatsApp.
+ * et rejouable en le touchant (avec une petite vibration).
  * L'animation est coupée si l'utilisateur a activé « réduire les animations ».
  */
 export const SingleEmojiMessage = memo(function SingleEmojiMessage({ emoji, messageId, fresh, size = 72 }: Props) {

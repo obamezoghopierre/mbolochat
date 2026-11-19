@@ -21,7 +21,7 @@ export function appendComment(
 
 /**
  * Sépare les commentaires racines des réponses, en conservant l'ordre reçu.
- * Les réponses sont regroupées par parent pour un affichage façon Instagram
+ * Les réponses sont regroupées par parent pour un affichage en fil
  * (une ligne par fil, réponses repliables en dessous).
  */
 export function groupComments(comments: PublicationComment[]): {
@@ -40,7 +40,7 @@ export function groupComments(comments: PublicationComment[]): {
     repliesByParent.set(item.parentId, replies);
   }
   // Les réponses d'un fil sont chronologiques (plus ancienne en haut), comme
-  // sur Instagram — la liste principale arrive triée par score, pas par date.
+  // la liste principale arrive triée par score, pas par date.
   for (const replies of repliesByParent.values()) {
     replies.sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),

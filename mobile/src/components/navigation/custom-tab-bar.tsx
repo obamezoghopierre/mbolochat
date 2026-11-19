@@ -38,7 +38,7 @@ const TAB_ICONS: Record<string, LucideIcon> = {
   profile: User,
 };
 
-/** Identifiant de route du fil : la barre y devient transparente (style TikTok). */
+/** Identifiant de route du fil : la barre y devient transparente. */
 export const FEED_ROUTE = 'index';
 
 /** Opacité du fond opaque, atteinte uniquement hors du fil. */
@@ -56,7 +56,7 @@ export const TAB_COLORS = {
 } as const;
 
 /**
- * Barre de navigation inférieure, façon TikTok.
+ * Barre de navigation inférieure.
  *
  * - sur le fil, elle est **transparente et superposée** à la vidéo ;
  * - ailleurs, elle a un **fond opaque** et un filet supérieur ;
@@ -67,7 +67,7 @@ export const TAB_COLORS = {
  * re-rend jamais quand un onglet change d'état visuel.
  */
 export function CustomTabBar({ state, descriptors, emitter, navigateToTab, insets }: BottomTabBarProps) {
-  // Une feuille ouverte (commentaires, etc.) masque la barre, comme Instagram.
+  // Une feuille ouverte (commentaires, etc.) masque la barre.
   const activeOptions = descriptors[state.routes[state.index]?.key ?? '']?.options as
     | { tabBarHidden?: boolean }
     | undefined;
@@ -102,7 +102,7 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
     ),
   }));
 
-  // Après tous les hooks : une feuille ouverte masque la barre, comme Instagram.
+  // Après tous les hooks : une feuille ouverte masque la barre.
   // On rend une vue de hauteur nulle plutôt que `null` : React Navigation
   // continuerait sinon à réserver l'ancienne hauteur (54 px) sous la feuille.
   if (barHidden) {
@@ -118,7 +118,7 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
       ]}>
       <View style={styles.row}>
         {/* Sur le fil, la barre est transparente et TOUTES les icônes sont
-            pleines, comme sur TikTok. Ailleurs, seul l'onglet actif est coloré. */}
+            pleines. Ailleurs, seul l'onglet actif est coloré. */}
         {state.routes.map((route, index) => {
           const { options } = descriptors[route.key];
           // Expo Router traduit `href: null` en `hidden`: la route reste dans
@@ -257,7 +257,7 @@ function AnimatedIcon({
     },
   );
 
-  // Sur le fil, toutes les icônes sont pleines comme sur TikTok ; ailleurs,
+  // Sur le fil, toutes les icônes sont pleines ; ailleurs,
   // elles restent en trait et seule la couleur distingue l'onglet actif.
   return (
     <Glyph
@@ -331,7 +331,7 @@ const styles = StyleSheet.create({
     paddingTop: 6,
     paddingHorizontal: 2,
   },
-  // Trait actif sous le libellé, façon TikTok : il s'ouvre depuis le centre.
+  // Trait actif sous le libellé : il s'ouvre depuis le centre.
   indicator: {
     height: 2.5,
     borderRadius: 1.25,

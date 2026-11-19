@@ -137,7 +137,7 @@ Avant cette étape, **31 correspondances faciales** existaient, **toutes avec un
 
 ## Reste à faire
 
-- **2 visages humanoïdes** sont encore en repli Unicode : `docs/MBOLO-EMOJI-FACES-MISSING.csv`.
+- **2 visages humanoïdes** sont encore en repli Unicode (voir `docs/MBOLO-EMOJI-FACES.csv`).
 - Le suivi complet des 132 visages (y compris costume/chat/singe) est dans `docs/MBOLO-EMOJI-FACES.csv`.
 - Prototype validé le 2026-10-27 (recadrages tête seule). Suite : production par vagues selon `docs/MBOLO-EMOJI-FACES-PLAN.md` — 2 visages restants.
 

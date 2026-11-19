@@ -16,7 +16,7 @@ export interface FeedNotice {
 /**
  * Mémoire des fils chargés, clé par (session, onglet).
  *
- * TikTok ne recharge pas un onglet déjà visité : il garde sa liste et son
+ * Le feed ne recharge pas un onglet déjà visité : il garde sa liste et son
  * curseur en mémoire et ne rajoute que de nouveaux éléments. On reproduit ce
  * comportement ici — sinon changer d'onglet repart d'un écran de chargement et
  * referme le fil courant.

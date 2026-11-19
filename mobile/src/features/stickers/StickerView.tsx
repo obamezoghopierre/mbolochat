@@ -59,7 +59,7 @@ export const StickerView = memo(function StickerView({ sticker, size = 96 }: Sti
 type StickerMessageProps = { stickerRef: string; size?: number };
 
 /**
- * Contenu d'un message sticker : SANS bulle, comme sur WeChat/WhatsApp.
+ * Contenu d'un message sticker : SANS bulle, comme dans une messagerie.
  * Si le pack est inconnu (appli plus ancienne que l'expéditeur), affiche un repli lisible.
  */
 export const StickerMessage = memo(function StickerMessage({ stickerRef, size = 140 }: StickerMessageProps) {

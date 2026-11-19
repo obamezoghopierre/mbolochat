@@ -40,7 +40,7 @@ const TIME_UPDATE_INTERVAL_S = 0.25;
 const SCRUB_TIME_UPDATE_INTERVAL_S = 0.05;
 
 /**
- * Page vidéo plein écran façon TikTok : la vidéo couvre l'écran, tap pour
+ * Page vidéo plein écran de type fil vertical : la vidéo couvre l'écran, tap pour
  * suspendre, double-tap pour réagir, appui long pour suspendre pendant le geste,
  * barre de progression scrubbable en bas.
  *
@@ -268,7 +268,7 @@ export function VideoPage({
 
       <HeartBurstOverlay burstKey={chrome.burstKey} point={chrome.burstPoint} />
 
-      {/* Contrôles masqués quand la feuille est ouverte : comme sur Instagram,
+      {/* Contrôles masqués quand la feuille est ouverte,
           seul le média réduit reste visible au-dessus de la feuille. */}
       {!chrome.hideOverlays ? (
         <>

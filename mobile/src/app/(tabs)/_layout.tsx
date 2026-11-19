@@ -23,7 +23,7 @@ export default function TabsLayout() {
   return (
     <Tabs
       // Barre maison (src/components/navigation/custom-tab-bar.tsx) : animations
-      // Reanimated et transparence sur le fil, façon TikTok.
+      // Reanimated et transparence sur le fil.
       tabBar={(props) => <CustomTabBar {...props} />}
       screenOptions={{
         headerShown: false,

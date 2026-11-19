@@ -34,7 +34,7 @@ export interface CommentVoiceRecorderProps {
 }
 
 /**
- * Enregistreur de commentaire vocal, façon TikTok :
+ * Enregistreur de commentaire vocal :
  * enregistrement avec pause/reprise, puis aperçu où l'on peut écouter,
  * avancer/reculer au doigt et republier ou recommencer.
  *

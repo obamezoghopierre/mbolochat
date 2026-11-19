@@ -15,7 +15,7 @@ const CAPTION_PREVIEW = 80;
 /** Mot-clé (`#`) ou mention (`@`) : coloré dans la légende, comme Mbolo. */
 const TOKEN_PATTERN = /(#[\w\u00C0-\u024F]+|@[\w\u00C0-\u024F]+)/g;
 
-/** Rotation d'un tour du disque « son original » (TikTok). */
+/** Rotation d'un tour du disque « son original ». */
 const DISC_PERIOD_MS = 3200;
 
 /**
@@ -111,7 +111,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
   );
 });
 
-/** Petit disque qui tourne, signature visuelle de la ligne « son » TikTok. */
+/** Petit disque qui tourne, signature visuelle de la ligne « son ». */
 function SpinningDisc() {
   const spin = useMemo(() => new Animated.Value(0), []);
 

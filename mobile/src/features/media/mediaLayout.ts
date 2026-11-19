@@ -30,7 +30,7 @@ const MAX_GIF_STICKER_HEIGHT = 220;
 
 /**
  * Taille d'un GIF GIPHY : plein cadre comme une photo (60 %), sticker animé
- * plus compact (45 %, style WhatsApp). Le ratio source est conservé.
+ * plus compact (45 %). Le ratio source est conservé.
  */
 export function gifDisplaySize(
   attachment: { width?: number; height?: number; sticker?: boolean },
@@ -53,7 +53,7 @@ export function gifDisplaySize(
   return { width: Math.max(width, 48), height: Math.max(height, 48) };
 }
 
-/** m:ss, comme la pastille de durée WeChat. */
+/** m:ss, comme une pastille de durée. */
 export function formatMediaDuration(durationMs: number | undefined): string {
   if (!durationMs || durationMs <= 0) return '';
   const total = Math.round(durationMs / 1000);
