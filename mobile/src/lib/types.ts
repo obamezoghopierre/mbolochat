@@ -489,6 +489,8 @@ export interface PublicationMedia {
   height: number | null;
   durationMs: number | null;
   url: string | null;
+  /** Variante basse qualité d'une vidéo (flux mobile). `null` si absente. */
+  lowUrl?: string | null;
   posterUrl: string | null;
   altText: string | null;
 }

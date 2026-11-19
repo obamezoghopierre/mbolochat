@@ -121,6 +121,9 @@ export function FeedPager({
   // page active suffit, et deux flux simultanés coûtent cher en données.
   const network = useNetworkState();
   const preloadNeighbors = network.type !== NetworkStateType.CELLULAR;
+  // En 3G/4G on préfère la variante basse qualité : moins de buffering, moins
+  // de données. Le Wi-Fi et l'Ethernet prennent le flux principal.
+  const preferLowQuality = network.type === NetworkStateType.CELLULAR;
   const { user } = useAuth();
   const [activeIndex, setActiveIndex] = useState(0);
 
@@ -162,6 +165,37 @@ export function FeedPager({
   }, []);
 
   const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 60 }), []);
+
+  // Position verticale du scroll : pilote l'échelle/fondu de chaque page pour
+  // une transition de type fil vidéo (la page entrante grandit légèrement,
+  // la sortante rétrécit). `useNativeDriver` : aucun rendu React par frame.
+  const scrollY = useMemo(() => new Animated.Value(0), []);
+  const scrollHandler = useMemo(
+    () =>
+      Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+        useNativeDriver: true,
+      }),
+    [scrollY],
+  );
+  const pageAnim = useCallback(
+    (index: number) => ({
+      transform: [
+        {
+          scale: scrollY.interpolate({
+            inputRange: [(index - 1) * height, index * height, (index + 1) * height],
+            outputRange: [0.94, 1, 0.94],
+            extrapolate: 'clamp',
+          }),
+        },
+      ],
+      opacity: scrollY.interpolate({
+        inputRange: [(index - 1) * height, index * height, (index + 1) * height],
+        outputRange: [0.55, 1, 0.55],
+        extrapolate: 'clamp',
+      }),
+    }),
+    [scrollY, height],
+  );
 
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
@@ -297,6 +331,8 @@ export function FeedPager({
         // Pendant un glissement sur la barre, le feed ne doit pas bouger.
         scrollEnabled={!scrubbing}
         getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
+        onScroll={scrollHandler}
+        scrollEventThrottle={16}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         // 3 = la page active et ses deux voisines. Seule la page active monte
@@ -338,7 +374,8 @@ export function FeedPager({
           const doubleTap = (point?: { x: number; y: number } | null) =>
             handleDoubleTap(item, point ?? null);
           const videoMode = videoPageMode(distance, preloadNeighbors);
-          const sourceUrl = videoMode === 'prefetch' ? videoSourceUrl(item) : null;
+          const sourceUrl =
+            videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
           // Le bloc infos et le rail partagent la même ancre basse. Ils remontent
           // de la hauteur de la barre, de la zone de la barre de progression
           // (24 px) et de 12 px de respiration : la ligne du son ne touche
@@ -351,12 +388,13 @@ export function FeedPager({
             (isVideoPost(item) ? FeedMetrics.progressTrackHeight + SOUND_TO_PROGRESS_GAP : 0);
 
           return (
-            <View style={[styles.page, { height, width: '100%' }]}>
+            <Animated.View style={[styles.page, { height, width: '100%' }, pageAnim(index)]}>
               {isVideoPost(item) ? (
                 videoMode === 'play' ? (
                   <VideoPage
                     post={item}
                     chrome={chrome}
+                    preferLowQuality={preferLowQuality}
                     onDoubleTapLike={doubleTap}
                     muted={muted}
                     scrubbing={scrubbing}
@@ -418,7 +456,12 @@ export function FeedPager({
                       toast: null,
                     }}
                     actions={{
-                      onToggleLike: () => void actions.toggleLike(item),
+                      onToggleLike: () => {
+                        // Retour haptique léger : le cœur du rail doit « répondre »
+                        // comme le double-tap, en plus discret.
+                        void Haptics.selectionAsync().catch(() => undefined);
+                        void actions.toggleLike(item);
+                      },
                       onPickReaction: () => setReactionTarget(item),
                       onOpenComments: () => actions.onOpenComments(item),
                       onToggleSave: () => void actions.toggleSave(item),
@@ -431,7 +474,7 @@ export function FeedPager({
                   />
                 </View>
               ) : null}
-            </View>
+            </Animated.View>
           );
         }}
       />

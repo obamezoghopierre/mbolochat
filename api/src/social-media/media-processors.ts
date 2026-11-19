@@ -15,6 +15,8 @@ export const IMAGE_VARIANTS = [
 
 export const POSTER_LABEL = 'poster';
 export const TRANSCODED_LABEL = 'mp4';
+/** Variante basse qualité servie sur réseau mobile (flux 3G/4G). */
+export const TRANSCODED_LOW_LABEL = 'mp4-low';
 
 const WEBP_QUALITY = 80;
 const POSTER_MAX_WIDTH = 720;
@@ -24,6 +26,12 @@ const POSTER_MAX_WIDTH = 720;
  * débit par quatre par rapport à l'original.
  */
 const VIDEO_MAX_WIDTH = 1080;
+/**
+ * Largeur de la variante basse qualité. 540 px reste lisible sur un téléphone
+ * et divise encore le débit par ~4 par rapport au rendu principal : sur réseau
+ * mobile, moins de buffering et moins de données consommées.
+ */
+const VIDEO_LOW_MAX_WIDTH = 540;
 /** Intervalle de keyframes : un seek au doigt doit trouver une image proche. */
 const VIDEO_GOP_FRAMES = 30;
 /** Borne basse du délai accordé à ffmpeg, même pour un clip très court. */
@@ -211,6 +219,58 @@ export async function processVideo(
         key,
         sizeBytes: transcoded.length,
       });
+
+      // Variante basse qualité : inutile si la source est déjà plus petite
+      // que la cible — la variante principale suffit alors.
+      const sourceWidth = Math.min(VIDEO_MAX_WIDTH, probe.width ?? VIDEO_MAX_WIDTH);
+      if (probe.width && probe.width > VIDEO_LOW_MAX_WIDTH) {
+        const lowPath = join(directory, 'output-low.mp4');
+        await runFfmpeg(
+          options.ffmpegPath,
+          [
+            '-y',
+            '-i',
+            inputPath,
+            '-vf',
+            `scale='min(${VIDEO_LOW_MAX_WIDTH},iw)':-2`,
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-crf',
+            '30',
+            '-pix_fmt',
+            'yuv420p',
+            '-g',
+            String(VIDEO_GOP_FRAMES),
+            '-keyint_min',
+            String(VIDEO_GOP_FRAMES),
+            '-sc_threshold',
+            '0',
+            '-c:a',
+            'aac',
+            '-b:a',
+            '96k',
+            '-movflags',
+            '+faststart',
+            lowPath,
+          ],
+          timeoutMs,
+        );
+        const low = await readFile(lowPath);
+        const lowKey = `social/videos/${options.assetId}-low.mp4`;
+        await options.storage.put(lowKey, low, 'video/mp4');
+        produced.push({
+          label: TRANSCODED_LOW_LABEL,
+          width: VIDEO_LOW_MAX_WIDTH,
+          height: probe.height
+            ? Math.round((probe.height * VIDEO_LOW_MAX_WIDTH) / sourceWidth)
+            : 0,
+          url: options.storage.publicUrl(lowKey) ?? lowKey,
+          key: lowKey,
+          sizeBytes: low.length,
+        });
+      }
     }
 
     return {

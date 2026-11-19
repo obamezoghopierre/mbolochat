@@ -14,6 +14,8 @@ export interface PublicationMediaView {
   height: number | null;
   durationMs: number | null;
   url: string | null;
+  /** Variante basse qualité d'une vidéo, pour les réseaux mobiles. */
+  lowUrl: string | null;
   /** Image fixe d'une vidéo (variante `poster`). */
   posterUrl: string | null;
   altText: string | null;
@@ -52,6 +54,7 @@ type AssetRow = typeof mediaAssets.$inferSelect;
 /** Variantes préférées selon le type, de la meilleure à la plus légère. */
 const IMAGE_PREFERENCE = ['medium', 'thumb'];
 const VIDEO_PREFERENCE = ['mp4'];
+const VIDEO_LOW_PREFERENCE = ['mp4-low'];
 const POSTER_PREFERENCE = ['poster'];
 
 function findVariant(asset: AssetRow, labels: string[]): MediaVariant | null {
@@ -80,27 +83,31 @@ async function resolveUrls(
   asset: AssetRow,
   resolver: MediaUrlResolver,
   access: MediaAccess,
-): Promise<{ url: string | null; posterUrl: string | null }> {
+): Promise<{ url: string | null; lowUrl: string | null; posterUrl: string | null }> {
   const main =
     asset.kind === 'video' ? findVariant(asset, VIDEO_PREFERENCE) : findVariant(asset, IMAGE_PREFERENCE);
+  const low = asset.kind === 'video' ? findVariant(asset, VIDEO_LOW_PREFERENCE) : null;
   const poster = asset.kind === 'video' ? findVariant(asset, POSTER_PREFERENCE) : null;
   // Sans variante (image sans worker, vidéo non transcodée) : l'original.
   const mainKey = main ? variantKey(main, resolver) : asset.storageKey;
+  const lowKey = low ? variantKey(low, resolver) : null;
   const posterKey = poster ? variantKey(poster, resolver) : null;
   const ready = asset.status === 'ready';
 
   if (access === 'public') {
     return {
       url: ready && mainKey ? resolver.publicUrl(mainKey) : null,
+      lowUrl: ready && lowKey ? resolver.publicUrl(lowKey) : null,
       posterUrl: posterKey ? resolver.publicUrl(posterKey) : null,
     };
   }
 
-  const [url, posterUrl] = await Promise.all([
+  const [url, lowUrl, posterUrl] = await Promise.all([
     ready && mainKey ? resolver.presignGet(mainKey) : Promise.resolve(null),
+    ready && lowKey ? resolver.presignGet(lowKey) : Promise.resolve(null),
     posterKey ? resolver.presignGet(posterKey) : Promise.resolve(null),
   ]);
-  return { url, posterUrl };
+  return { url, lowUrl, posterUrl };
 }
 
 /**
@@ -143,7 +150,7 @@ export async function loadPublicationMedia(
     const access = resolver ? accessFor(row.publicationId) : 'signed';
     const urls = resolver
       ? await resolveUrls(row.asset, resolver, access)
-      : { url: null, posterUrl: null };
+      : { url: null, lowUrl: null, posterUrl: null };
     const list = result.get(row.publicationId) ?? [];
     list.push({
       assetId: row.asset.id,
@@ -154,6 +161,7 @@ export async function loadPublicationMedia(
       height: row.asset.height,
       durationMs: row.asset.durationMs,
       url: urls.url,
+      lowUrl: urls.lowUrl,
       posterUrl: urls.posterUrl,
       altText: row.altText,
     });

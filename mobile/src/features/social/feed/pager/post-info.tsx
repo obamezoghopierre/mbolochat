@@ -6,6 +6,7 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FeedMetrics, FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
+import { formatCompactCount } from '@/lib/format';
 import { OnMediaShadow, feedText } from './feed-tokens';
 import type { FeedPost } from '@/lib/types';
 
@@ -106,6 +107,11 @@ export const PostInfoBlock = memo(function PostInfoBlock({
         <ThemedText numberOfLines={1} style={[feedText.sound, OnMediaShadow, styles.soundText]}>
           {fr.social.originalSound} · {post.author.displayName}
         </ThemedText>
+        {post.counters.views > 0 ? (
+          <ThemedText style={[feedText.sound, OnMediaShadow, styles.viewsText]}>
+            {formatCompactCount(post.counters.views)} {fr.social.viewsUnit}
+          </ThemedText>
+        ) : null}
       </View>
     </View>
   );
@@ -215,6 +221,10 @@ const styles = StyleSheet.create({
   },
   soundText: {
     flexShrink: 1,
+  },
+  viewsText: {
+    flexShrink: 0,
+    opacity: 0.85,
   },
   pressed: {
     opacity: 0.75,

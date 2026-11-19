@@ -36,6 +36,16 @@ const MONTHS = [
 
 const pad = (value: number) => (value < 10 ? `0${value}` : String(value));
 
+/** « 1,2 k » / « 3,4 M » : compteurs compacts du fil (vues, etc.). */
+const compactCount = new Intl.NumberFormat('fr-FR', {
+  notation: 'compact',
+  maximumFractionDigits: 1,
+});
+
+export function formatCompactCount(value: number): string {
+  return compactCount.format(value);
+}
+
 const clock = (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`;
 
 const startOfDay = (date: Date) =>

@@ -1,8 +1,17 @@
-import { useEvent } from 'expo';
+import { useEvent, useEventListener } from 'expo';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
-import { Play, Volume2, VolumeX } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
+import { Expand, Play, Volume2, VolumeX } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Image, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Image,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
@@ -38,6 +47,23 @@ export interface FeedPageChrome {
 const TIME_UPDATE_INTERVAL_S = 0.25;
 /** Cadence pendant un glissement sur la barre : le doigt veut du précis. */
 const SCRUB_TIME_UPDATE_INTERVAL_S = 0.05;
+/** Saut du double-tap latéral, en secondes (repère des fils vidéo courts). */
+const DOUBLE_TAP_SKIP_SECONDS = 10;
+/** Le centre de l'écran (fraction) reste réservé au like : ±Seek sur les bords. */
+const DOUBLE_TAP_CENTER_RATIO = 0.3;
+/** Vitesses proposées par la pastille, dans l'ordre du cycle. */
+const PLAYBACK_RATES = [1, 1.5, 2] as const;
+/** Reprises automatiques avant d'afficher l'état d'erreur. */
+const AUTO_RETRY_DELAYS_MS = [1200, 4000, 10000] as const;
+/** Position en dessous de laquelle on ne « reprend » pas (début de vidéo). */
+const RESUME_MIN_SECONDS = 3;
+
+/**
+ * Positions de lecture par publication : quitter une vidéo puis y revenir la
+ * reprend là où elle en était. Mémoire module : elle survit au démontage de la
+ * page (pager qui recycle les cellules) sans dépendre d'un store.
+ */
+const playbackPositions = new Map<string, number>();
 
 /**
  * Page vidéo plein écran de type fil vertical : la vidéo couvre l'écran, tap pour
@@ -63,10 +89,13 @@ export function VideoPage({
   onScrubStateChange,
   scrubbing,
   muted,
+  preferLowQuality = false,
 }: {
   post: FeedPost;
   chrome: FeedPageChrome;
-  onDoubleTapLike: () => void;
+  /** Réseau mobile : servir la variante basse qualité quand elle existe. */
+  preferLowQuality?: boolean;
+  onDoubleTapLike: (point: { x: number; y: number } | null) => void;
   /** Le son est global au fil : le pager décide, la page applique. */
   onToggleSound: () => void;
   /** Vrai dès que le doigt glisse sur la barre : le feed fige son scroll. */
@@ -77,14 +106,23 @@ export function VideoPage({
 }) {
   // Même résolution que le préchargement détaché : sans cela, deux URL
   // différentes (donc deux entrées de cache) pour la même vidéo.
-  const url = videoSourceUrl(post);
+  const url = videoSourceUrl(post, preferLowQuality);
   const posterUrl = videoPosterUrl(post);
   const insets = useSafeAreaInsets();
+  const { width: pageWidth } = useWindowDimensions();
+  const viewRef = useRef<VideoView>(null);
   const [userPaused, setUserPaused] = useState(false);
   // Source dont la première image a été décodée : le poster reste affiché page
   // par page tant que ce n'est pas le cas, pour éviter le flash noir.
   const [firstFrameSource, setFirstFrameSource] = useState<string | null>(null);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Pastille de vitesse : index dans PLAYBACK_RATES, cyclé au tap.
+  const [rateIndex, setRateIndex] = useState(0);
+  // Flash « +10 s / −10 s » du double-tap latéral.
+  const [skipFlash, setSkipFlash] = useState<{ dir: 1 | -1; key: number } | null>(null);
+  const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Reprises automatiques déjà tentées sur cette source en erreur.
+  const [autoRetries, setAutoRetries] = useState(0);
 
   // Le cache disque est activé sur la source (`useCaching`) : revenir sur une
   // vidéo déjà vue relit le cache local au lieu de re-télécharger. Le plafond de
@@ -126,6 +164,51 @@ export function VideoPage({
     // eslint-disable-next-line react-hooks/immutability
     player.timeUpdateEventInterval = interval;
   }, [player, scrubbing]);
+
+  // Vitesse de lecture : propriété impérative du lecteur natif.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
+    player.playbackRate = PLAYBACK_RATES[rateIndex];
+  }, [player, rateIndex]);
+
+  const cycleRate = useCallback(
+    () => setRateIndex((index) => (index + 1) % PLAYBACK_RATES.length),
+    [],
+  );
+
+  // Mémorise la position de lecture pour la reprise au retour sur la page.
+  // `useEventListener` maintient le dernier listener : pas de closure périmée.
+  useEventListener(player, 'timeUpdate', ({ currentTime }) => {
+    if (chrome.isActive) {
+      // Plafond : la map survit à tout le fil, on n'en garde que les plus
+      // récentes (itération dans l'ordre d'insertion de la Map).
+      if (playbackPositions.size >= 200) {
+        const oldest = playbackPositions.keys().next().value;
+        if (oldest !== undefined) {
+          playbackPositions.delete(oldest);
+        }
+      }
+      playbackPositions.set(post.id, currentTime);
+    }
+  });
+
+  // Au premier `readyToPlay`, reprend où la vidéo s'était arrêtée. Une seule
+  // fois par lecteur : après le seek initial, les `statusChange` suivants ne
+  // doivent pas ramener la tête en arrière.
+  const resumedFor = useRef<VideoPlayer | null>(null);
+  useEffect(() => {
+    if (status !== 'readyToPlay' || resumedFor.current === player) {
+      return;
+    }
+    resumedFor.current = player;
+    const saved = playbackPositions.get(post.id) ?? 0;
+    const duration = player.duration;
+    const tooCloseToEnd =
+      Number.isFinite(duration) && duration > 0 && saved > duration - 2;
+    if (saved >= RESUME_MIN_SECONDS && !tooCloseToEnd) {
+      seekExactly(player, saved);
+    }
+  }, [player, post.id, status]);
 
   // Devenir la page active réarme la lecture : une pause volontaire ne doit pas
   // survivre à la sortie de l'écran : dès que la page devient inactive, le
@@ -185,6 +268,10 @@ export function VideoPage({
         clearTimeout(resumeTimer.current);
         resumeTimer.current = null;
       }
+      if (skipTimer.current) {
+        clearTimeout(skipTimer.current);
+        skipTimer.current = null;
+      }
     },
     [],
   );
@@ -194,8 +281,59 @@ export function VideoPage({
       return;
     }
     setFirstFrameSource(null);
+    setAutoRetries(0);
     void player.replaceAsync({ uri: url, useCaching: true }).catch(() => undefined);
   }, [player, url]);
+
+  // Backoff automatique : une coupure réseau passagère ne doit pas imposer un
+  // appui sur « Réessayer ». Les délais croissent, l'état d'erreur n'apparaît
+  // qu'après épuisement — entre-temps le spinner de chargement reste visible.
+  useEffect(() => {
+    if (!failed || !url || autoRetries >= AUTO_RETRY_DELAYS_MS.length) {
+      return;
+    }
+    const delay = AUTO_RETRY_DELAYS_MS[autoRetries];
+    const timer = setTimeout(() => {
+      setAutoRetries((count) => count + 1);
+      setFirstFrameSource(null);
+      void player.replaceAsync({ uri: url, useCaching: true }).catch(() => undefined);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [failed, url, autoRetries, player]);
+
+  const exhausted = failed && autoRetries >= AUTO_RETRY_DELAYS_MS.length;
+
+  /**
+   * Double-tap : le centre like, les bords sautent de ±10 s. La fraction
+   * `DOUBLE_TAP_CENTER_RATIO` de chaque bord est la zone de seek ; sans point
+   * mesurable (accessibilité), on like comme avant.
+   */
+  const handleDoubleTap = useCallback(
+    (point: { x: number; y: number } | null) => {
+      if (point && pageWidth > 0) {
+        const edge = pageWidth * DOUBLE_TAP_CENTER_RATIO;
+        if (point.x < edge || point.x > pageWidth - edge) {
+          const dir = point.x < edge ? -1 : 1;
+          const duration = player.duration;
+          const current = player.currentTime;
+          const target =
+            Number.isFinite(duration) && duration > 0
+              ? Math.min(Math.max(current + dir * DOUBLE_TAP_SKIP_SECONDS, 0), duration)
+              : Math.max(current + dir * DOUBLE_TAP_SKIP_SECONDS, 0);
+          seekExactly(player, target);
+          void Haptics.selectionAsync().catch(() => undefined);
+          setSkipFlash((flash) => ({ dir, key: (flash?.key ?? 0) + 1 }));
+          if (skipTimer.current) {
+            clearTimeout(skipTimer.current);
+          }
+          skipTimer.current = setTimeout(() => setSkipFlash(null), 700);
+          return;
+        }
+      }
+      onDoubleTapLike(point);
+    },
+    [onDoubleTapLike, pageWidth, player],
+  );
 
   // Le poster reste affiché tant que la première image n'est pas décodée :
   // sans lui, chaque changement de vidéo laisserait voir un flash noir le
@@ -205,11 +343,13 @@ export function VideoPage({
   return (
     <View style={[styles.page, { height: chrome.height }]}>
       <VideoView
+        ref={viewRef}
         // Une clé par (publication, lecteur) : la vue native n'est jamais
         // réutilisée pour un autre lecteur.
         key={`${post.id}-${viewEpoch}`}
         player={player}
         style={styles.surface}
+        fullscreenOptions={{ enable: true, orientation: 'default' }}
         // `surfaceType="textureView"` : sur Android, une `SurfaceView` est
         // composée dans une couche native séparée. Quand la liste recycle les
         // cellules pendant le scroll, cette couche garde l'ancienne position
@@ -232,7 +372,7 @@ export function VideoPage({
         />
       ) : null}
 
-      {failed || !url ? (
+      {exhausted || !url ? (
         <View style={styles.errorSurface}>
           <ThemedText style={styles.errorTitle}>
             {url ? fr.social.videoErrorTitle : fr.social.videoUnavailable}
@@ -259,12 +399,29 @@ export function VideoPage({
       ) : (
         <FeedGestureLayer
           accessibilityLabel="Vidéo : deux taps pour réagir, un tap pour suspendre"
-          onDoubleTap={onDoubleTapLike}
+          onDoubleTap={handleDoubleTap}
           onTap={togglePlayback}
           onLongPressStart={pauseForLongPress}
           onLongPressEnd={resumeAfterLongPress}
         />
       )}
+
+      {/* Spinner tant que le lecteur charge ou retente après une erreur :
+          `status` repasse à `loading` pendant chaque `replaceAsync`. */}
+      {status === 'loading' && chrome.isActive && !chrome.hideOverlays ? (
+        <View pointerEvents="none" style={styles.buffering}>
+          <ActivityIndicator size="large" color={FeedSurface.onMedia} />
+        </View>
+      ) : null}
+
+      {/* Flash « +10 s / −10 s » du double-tap sur les bords. */}
+      {skipFlash ? (
+        <View key={skipFlash.key} pointerEvents="none" style={styles.skipFlash}>
+          <ThemedText style={styles.skipFlashText}>
+            {skipFlash.dir > 0 ? '» 10' : '« 10'}
+          </ThemedText>
+        </View>
+      ) : null}
 
       <HeartBurstOverlay burstKey={chrome.burstKey} point={chrome.burstPoint} />
 
@@ -278,19 +435,36 @@ export function VideoPage({
             </View>
           ) : null}
 
-          {isPaused ? (
-            <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
-              <Pressable
-                onPress={onToggleSound}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityState={{ selected: muted }}
-                accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
-                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-                <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
-              </Pressable>
-            </View>
-          ) : null}
+          {/* Contrôles supérieurs toujours visibles : vitesse, plein écran,
+              son. Le son n'est plus réservé à la pause — il doit pouvoir se
+              couper pendant la lecture, comme sur les fils vidéo courants. */}
+          <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
+            <Pressable
+              onPress={cycleRate}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={`Vitesse de lecture : ${PLAYBACK_RATES[rateIndex]}×`}
+              style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+              <ThemedText style={styles.rateText}>{PLAYBACK_RATES[rateIndex]}×</ThemedText>
+            </Pressable>
+            <Pressable
+              onPress={() => void viewRef.current?.enterFullscreen().catch(() => undefined)}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel="Plein écran"
+              style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+              <Icon icon={Expand} size={18} color={FeedSurface.onMedia} />
+            </Pressable>
+            <Pressable
+              onPress={onToggleSound}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityState={{ selected: muted }}
+              accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
+              style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+              <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
+            </Pressable>
+          </View>
 
           <ProgressBar
             player={player}
@@ -380,6 +554,36 @@ const styles = StyleSheet.create({
   topRight: {
     position: 'absolute',
     right: Spacing.three,
+    flexDirection: 'row',
+    gap: Spacing.two,
+  },
+  rateText: {
+    color: FeedSurface.onMedia,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  buffering: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  skipFlash: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: '40%',
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.two,
+    borderRadius: Radii.full,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  skipFlashText: {
+    color: FeedSurface.onMedia,
+    fontSize: 20,
+    fontWeight: '800',
   },
   roundButton: {
     width: 36,

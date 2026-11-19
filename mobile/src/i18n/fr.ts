@@ -754,6 +754,7 @@ export const fr = {
     /** Carte de post texte : ouvre le lecteur plein écran. */
     seeFullPost: 'Voir plus',
     originalSound: 'Son original',
+    viewsUnit: 'vues',
     notInterested: 'Pas intéressé',
     notInterestedDone: 'Moins de contenus comme celui-ci',
     muteAuthor: 'Masquer cet auteur',
