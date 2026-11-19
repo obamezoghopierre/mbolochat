@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
+  type FlatListProps,
   Image,
   Platform,
   RefreshControl,
@@ -63,6 +64,15 @@ export interface FeedPagerActions {
 }
 
 const TOAST_DURATION = 1600;
+
+/**
+ * `FlatList` animée : obligatoire pour un `onScroll` piloté par
+ * `Animated.event` en `useNativeDriver` — une liste simple crashe avec
+ * « VirtualizedList must be wrapped with Animated.createAnimatedComponent ».
+ */
+const AnimatedFlatList = Animated.createAnimatedComponent(
+  FlatList as new (props: FlatListProps<FeedPost>) => FlatList<FeedPost>,
+);
 
 /** Respiration entre la ligne du son et la barre de progression. */
 const SOUND_TO_PROGRESS_GAP = 12;
@@ -317,7 +327,7 @@ export function FeedPager({
   // la hauteur d'item, ce qui laisse apparaître la page suivante en bas.
   return (
     <View style={[styles.flex, { height }]}>
-      <FlatList
+      <AnimatedFlatList
         data={items}
         keyExtractor={(item) => item.id}
         style={styles.flex}
