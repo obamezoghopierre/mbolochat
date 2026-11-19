@@ -100,36 +100,31 @@ export function FeedScreen() {
       sheetPosition.value = withTiming(screenHeight, { duration: 260 });
     }
   }, [commentsPost, screenHeight, sheetPosition]);
-  const sheetOpenTop = screenHeight * (1 - COMMENTS_SHEET_SNAP_RATIO);
   const feedHeight = Math.max(1, screenHeight - insets.bottom);
-  const targetScale = Math.max(
-    0.2,
-    Math.min(0.78, (sheetOpenTop - Spacing.two) / feedHeight),
-  );
-  // Avec une origine de transformation au centre, on remonte la vue réduite
-  // pour que son bas arrive juste au-dessus de la feuille.
-  const targetTranslateY =
-    sheetOpenTop - Spacing.two - (screenHeight + feedHeight * targetScale) / 2;
+  // Espace au-dessus de la plus haute détentes : la carte est à sa plus petite.
+  const sheetOpenTop = screenHeight * (1 - COMMENTS_SHEET_SNAP_RATIO);
+  // En dessous de cette hauteur d'espace, l'échelle atteint 1 (feed intact).
+  const cardTopLimit = feedHeight + Spacing.two;
   const feedTransformStyle = useAnimatedStyle(() => {
-    // 0 = feuille fermée (position = hauteur écran), 1 = snap ouverte.
-    const progress = Math.min(
+    const spaceAbove = Math.min(Math.max(sheetPosition.value, 0), screenHeight);
+    // Échelle continue : 1 quand la feuille est fermée ou basse, ~0.25 en haut.
+    const scale = Math.min(1, Math.max(0.2, (spaceAbove - Spacing.two) / feedHeight));
+    // Poids du rétrécissement : 0 = feed plein écran, 1 = carte épinglée en haut.
+    const shrink = Math.min(
       1,
-      Math.max(0, (screenHeight - sheetPosition.value) / (screenHeight - sheetOpenTop)),
+      Math.max(0, (cardTopLimit - spaceAbove) / (cardTopLimit - sheetOpenTop)),
     );
+    // Bas de la carte visuelle au ras du bord haut de la feuille.
+    const pinnedTy = spaceAbove - Spacing.two - (screenHeight + feedHeight * scale) / 2;
     return {
-      transform: [
-        { translateY: interpolate(progress, [0, 1], [0, targetTranslateY]) },
-        { scale: interpolate(progress, [0, 1], [1, targetScale]) },
-      ],
+      transform: [{ translateY: pinnedTy * shrink }, { scale }],
     };
   });
   const feedRadiusStyle = useAnimatedStyle(() => {
-    const progress = Math.min(
-      1,
-      Math.max(0, (screenHeight - sheetPosition.value) / (screenHeight - sheetOpenTop)),
-    );
+    const spaceAbove = Math.min(Math.max(sheetPosition.value, 0), screenHeight);
+    const scale = Math.min(1, Math.max(0.2, (spaceAbove - Spacing.two) / feedHeight));
     return {
-      borderRadius: interpolate(progress, [0, 1], [0, 18]),
+      borderRadius: interpolate(scale, [1, 0.2], [0, 18]),
       overflow: 'hidden',
     };
   });

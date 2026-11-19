@@ -122,8 +122,8 @@ export class SocialNotificationsService {
       userId: notification.userId,
       notificationId: notification.id,
       kind: notification.type,
-      title: notificationTitle(notification.type, actor.displayName),
-      body: notificationTitle(notification.type, actor.displayName),
+      title: notificationTitle(notification.type, actor.displayName, notification.commentId !== null),
+      body: notificationTitle(notification.type, actor.displayName, notification.commentId !== null),
       publicationId: notification.publicationId,
       commentId: notification.commentId,
       actorId: notification.actorId,
@@ -200,10 +200,17 @@ export class SocialNotificationsService {
 }
 
 /** Libellé français, aligné sur ce que verra l'utilisateur. */
-export function notificationTitle(type: SocialNotificationType, actorName: string): string {
+export function notificationTitle(
+  type: SocialNotificationType,
+  actorName: string,
+  onComment = false,
+): string {
   switch (type) {
     case 'like':
-      return `${actorName} a réagi à ta publication`;
+      // J'aime et réactions emoji sur un commentaire partagent le type 'like'.
+      return onComment
+        ? `${actorName} a réagi à ton commentaire`
+        : `${actorName} a réagi à ta publication`;
     case 'comment':
       return `${actorName} a commenté ta publication`;
     case 'reply':

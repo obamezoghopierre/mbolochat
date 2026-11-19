@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { ArrowLeft } from 'lucide-react-native';
+import { ArrowLeft, MessageCircle } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -20,8 +20,10 @@ import { Radii, Spacing, Type } from '@/constants/theme';
 import { PostCard } from '@/features/social/feed/post-card';
 import { applyReaction } from '@/features/social/feed/feed-model';
 import { CommentRow } from '@/features/social/publication/comment-row';
+import { useCommentLiveEvents } from '@/features/social/publication/use-comment-live';
 import {
   appendComment,
+  appendReply,
   applyCommentReaction,
   mergeCommentPage,
   upsertComment,
@@ -59,6 +61,71 @@ export default function PostDetailScreen() {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const pending = useRef<{ clientId: string; body: string } | null>(null);
+  const liveRef = useRef<{ comments: PublicationComment[]; pinned: PublicationComment[] }>({
+    comments: [],
+    pinned: [],
+  });
+  useEffect(() => {
+    liveRef.current = { comments, pinned };
+  }, [comments, pinned]);
+
+  // Commentaires en direct : même salon socket que la feuille du fil.
+  useCommentLiveEvents({
+    token,
+    publicationId: id ?? '',
+    onCreated: (view) => {
+      const known = [...liveRef.current.comments, ...liveRef.current.pinned].some(
+        (item) => item.id === view.id,
+      );
+      if (known) {
+        return;
+      }
+      if (view.parentId) {
+        setComments((items) => appendReply(items, view));
+      } else {
+        setComments((items) => appendComment(items, view));
+      }
+      setPost((current) =>
+        current
+          ? {
+              ...current,
+              counters: { ...current.counters, comments: current.counters.comments + 1 },
+            }
+          : current,
+      );
+    },
+    onUpdated: (view) => {
+      if (view.pinned) {
+        setComments((items) => items.filter((item) => item.id !== view.id));
+        setPinned((items) => [view, ...items.filter((item) => item.id !== view.id)]);
+        return;
+      }
+      setPinned((items) => items.filter((item) => item.id !== view.id));
+      setComments((items) => upsertComment(items, view));
+    },
+    onDeleted: (commentId) => {
+      const isRemoved = (item: PublicationComment) =>
+        item.id === commentId || item.parentId === commentId;
+      const removed = [...liveRef.current.comments, ...liveRef.current.pinned].filter(
+        isRemoved,
+      ).length;
+      setComments((items) => items.filter((item) => !isRemoved(item)));
+      setPinned((items) => items.filter((item) => !isRemoved(item)));
+      if (removed > 0) {
+        setPost((current) =>
+          current
+            ? {
+                ...current,
+                counters: {
+                  ...current.counters,
+                  comments: Math.max(0, current.counters.comments - removed),
+                },
+              }
+            : current,
+        );
+      }
+    },
+  });
 
   const load = useCallback(async () => {
     if (!token || !id) {
@@ -191,7 +258,10 @@ export default function PostDetailScreen() {
     pending.current = { clientId, body };
     setSending(true);
     try {
-      const created = await api.addComment(token, id, body, clientId);
+      const created = await api.addComment(token, id, {
+        clientId,
+        body: body.length > 0 ? body : undefined,
+      });
       const replay = comments.some((item) => item.id === created.id);
       setComments((current) => appendComment(current, created));
       if (!replay) {
@@ -280,12 +350,18 @@ export default function PostDetailScreen() {
                   {error}
                 </ThemedText>
               ) : null}
-              {comments.length === 0 ? (
-                <ThemedText type="small" themeColor="textSecondary">
-                  {fr.social.commentsEmpty}
-                </ThemedText>
-              ) : null}
             </View>
+          }
+          ListEmptyComponent={
+            comments.length === 0 && !error ? (
+              <View style={styles.empty}>
+                <MessageCircle size={36} color={theme.textSecondary} />
+                <ThemedText type="sectionTitle">{fr.social.commentsEmptyTitle}</ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {fr.social.commentsEmptyHint}
+                </ThemedText>
+              </View>
+            ) : undefined
           }
           renderItem={({ item }) => (
             <CommentRow
@@ -293,13 +369,7 @@ export default function PostDetailScreen() {
               onReact={(target, kind) => void reactToComment(target, kind)}
               onPin={(target, pinnedFlag) => void togglePin(target, pinnedFlag)}
               isPublicationAuthor={user?.id === post.author.id}
-              replyToName={
-                item.parentId
-                  ? [...pinned, ...comments].find(
-                      (candidate) => candidate.id === item.parentId,
-                    )?.author.username
-                  : undefined
-              }
+              pinLimitReached={pinned.length >= 3 && !item.pinned}
             />
           )}
           onEndReached={() => void loadMore()}
@@ -390,6 +460,12 @@ const styles = StyleSheet.create({
     gap: Spacing.threeHalf,
   },
   headerBlock: { gap: Spacing.three },
+  empty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+    paddingVertical: Spacing.six,
+  },
   sectionTitle: { ...Type.sectionTitle, marginTop: Spacing.two },
   composer: {
     flexDirection: 'row',

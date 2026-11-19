@@ -169,6 +169,7 @@ Ces règles complètent la règle **UI** ci-dessus et s'appliquent à toute modi
 - `reactCompiler` est activé dans `app.json` : ne pas muter une valeur passée à un hook (règle `react-hooks/immutability`).
 - Le lint mobile peut déjà échouer sur des fichiers non liés (`chats.tsx`, `swipeable-row.tsx`, compositeur…). Comparer au bruit existant et ne pas corriger hors sujet.
 - Les tests mobiles Vitest ne montent pas de composants React Native ; l'UI se valide par `tsc`, `expo lint` et un test sur appareil.
+- **Waydroid/appareil** : ne jamais piloter l'appareil (adb, taps, captures, uiautomator) sans l'accord explicite de l'utilisateur pour cette action. Préférer `tsc` + `expo lint` et signaler ce qui reste à vérifier manuellement.
 
 ## Références
 

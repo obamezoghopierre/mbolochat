@@ -16,15 +16,33 @@ export class CommentReactDto {
 
 /** Commentaire ou réponse. `parentId` désigne le commentaire auquel on répond. */
 export class CreateCommentDto {
+  /** Corps texte ; optionnel pour un commentaire vocal, photo ou sticker. */
+  @IsOptional()
   @IsString({ message: 'Le commentaire doit être un texte.' })
   @MaxLength(MAX_COMMENT_LENGTH, {
     message: `Le commentaire ne peut pas dépasser ${MAX_COMMENT_LENGTH} caractères.`,
   })
-  body!: string;
+  body?: string;
 
   @IsOptional()
   @IsString()
   parentId?: string;
+
+  /** Photo ou vocal : asset `ready` du pipeline média social. */
+  @IsOptional()
+  @IsString()
+  mediaAssetId?: string;
+
+  /** Note vocale en légende d'une photo/sticker (asset audio `ready`). */
+  @IsOptional()
+  @IsString()
+  voiceMediaAssetId?: string;
+
+  /** Sticker de catalogue (« pack/sticker »). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  stickerRef?: string;
 
   @IsString({ message: 'clientId est requis.' })
   @Length(8, MAX_CLIENT_ID_LENGTH, {

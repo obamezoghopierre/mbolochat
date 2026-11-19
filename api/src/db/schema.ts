@@ -1142,6 +1142,9 @@ export const publicationMedia = pgTable(
   ],
 );
 
+/** Nature d'un commentaire : texte, vocal, photo ou sticker (façon TikTok). */
+export const commentKindEnum = pgEnum('comment_kind', ['text', 'audio', 'image', 'sticker']);
+
 /** Commentaire ou réponse (`parentId`) à une publication. */
 export const comments = pgTable(
   'comments',
@@ -1159,7 +1162,19 @@ export const comments = pgTable(
     parentId: text('parent_id').references((): AnyPgColumn => comments.id, {
       onDelete: 'cascade',
     }),
-    body: text('body').notNull(),
+    kind: commentKindEnum('kind').notNull().default('text'),
+    /** Corps texte ; vide pour un commentaire purement vocal, photo ou sticker. */
+    body: text('body').notNull().default(''),
+    /** Photo ou vocal : asset `ready` du pipeline média social. */
+    mediaAssetId: text('media_asset_id').references(() => mediaAssets.id, {
+      onDelete: 'set null',
+    }),
+    /** Note vocale jointe en légende d'une photo ou d'un sticker. */
+    voiceMediaAssetId: text('voice_media_asset_id').references(() => mediaAssets.id, {
+      onDelete: 'set null',
+    }),
+    /** Sticker de catalogue (« pack/sticker »), sans fichier à stocker. */
+    stickerRef: text('sticker_ref'),
     likeCount: integer('like_count').notNull().default(0),
     replyCount: integer('reply_count').notNull().default(0),
     /** Épinglé par l'auteur de la publication : affiché en tête de fil. */

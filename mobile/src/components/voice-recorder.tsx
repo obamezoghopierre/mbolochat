@@ -21,14 +21,20 @@ const MAX_SECONDS = 120;
 /** Le preset par défaut ne fournit pas le niveau : la waveform en a besoin. */
 const RECORDING_OPTIONS = { ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true };
 
-const WAVE_BARS = 36;
+const WAVE_BARS = 44;
 const WAVE_SLOTS = WAVE_BARS + 1;
 const WAVE_HEIGHT = 26;
-const BAR_WIDTH = 2.5;
+const BAR_WIDTH = 2;
 /** Une nouvelle mesure toutes les 90 ms : le défilement paraît continu. */
 const SAMPLE_MS = 90;
 /** Niveau mini : sans son, la piste reste un chapelet de petits traits. */
 const SILENT_LEVEL = 0.08;
+/**
+ * Le niveau est quantifié à 1/32 : deux mesures voisines au même cran
+ * produisent la même hauteur, ce qui permet aux barres mémoïsées de sauter
+ * leur rendu — l'essentiel des rendus à 90 ms disparaît en pratique.
+ */
+const LEVEL_STEPS = 32;
 
 /**
  * Le niveau du micro arrive en dBFS (-160 à 0). On garde une échelle
@@ -38,31 +44,39 @@ function levelOf(metering: number | undefined): number {
   if (metering === undefined || !Number.isFinite(metering)) {
     return SILENT_LEVEL;
   }
-  return Math.min(1, Math.max(SILENT_LEVEL, (metering + 55) / 55));
+  const level = Math.min(1, Math.max(SILENT_LEVEL, (metering + 55) / 55));
+  return Math.round(level * LEVEL_STEPS) / LEVEL_STEPS;
 }
 
 /**
  * Une barre de la piste : hauteur fixe, seule sa `scaleY` change.
+ * `memo` : une hauteur identique au cran précédent ne re-rend pas la barre.
  * Volontairement une vue simple, pas `Animated` : trente-sept valeurs partagées
  * se réévaluent à chaque image et plafonnaient la piste à 9 images/s sur
  * l'appareil testé, contre une quarantaine avec la ligne seule animée.
  */
-function Bar({ level, gap }: {
+const Bar = memo(function Bar({
+  level,
+  gap,
+}: {
   level: number;
   gap: number;
 }) {
   return <View style={[styles.waveBar, { marginRight: gap }, { transform: [{ scaleY: level }] }]} />;
-}
+});
 
 /**
  * La piste défilante. Elle est mémorisée : le chrono du parent se met à jour
  * régulièrement, mais la piste et sa boucle de frame ne doivent pas se
  * réenregistrer pour autant.
  */
-const WaveTrack = memo(function WaveTrack({
+export const WaveTrack = memo(function WaveTrack({
   recorder,
+  paused = false,
 }: {
   recorder: ReturnType<typeof useAudioRecorder>;
+  /** En pause : la piste gèle au lieu de défiler sur du silence. */
+  paused?: boolean;
 }) {
   const [width, setWidth] = useState(0);
   /** Niveaux (0..1) de la piste, décalés d'un cran à chaque nouvelle mesure. */
@@ -76,11 +90,15 @@ const WaveTrack = memo(function WaveTrack({
   const slot = useSharedValue(0);
 
   const advance = useCallback((steps: number, level: number): void => {
-    setLevels((prev) =>
-      steps >= WAVE_SLOTS
-        ? Array<number>(WAVE_SLOTS).fill(level)
-        : prev.slice(steps).concat(Array<number>(steps).fill(level))
-    );
+    setLevels((prev) => {
+      const next =
+        steps >= WAVE_SLOTS
+          ? Array<number>(WAVE_SLOTS).fill(level)
+          : prev.slice(steps).concat(Array<number>(steps).fill(level));
+      // Rien n'a bougé (silence, niveau stable) : renvoyer `prev` fait sauter
+      // tout le rendu de la piste pour cette mesure.
+      return next.every((value, index) => value === prev[index]) ? prev : next;
+    });
   }, []);
 
   const rowStyle = useAnimatedStyle(() => ({
@@ -105,11 +123,19 @@ const WaveTrack = memo(function WaveTrack({
     progress.value = next;
   }, [advance, latestLevel, progress, slot]);
 
-  useFrameCallback(onFrame, true);
+  const { setActive: setFrameActive } = useFrameCallback(onFrame, true);
+
+  // Pause : la boucle d'images s'arrête — ni défilement ni nouvelles barres.
+  useEffect(() => {
+    setFrameActive(!paused);
+  }, [paused, setFrameActive]);
 
   /** Le niveau du micro alimente la piste ; le défilement, lui, est sur le thread UI. */
   useEffect(() => {
     const sample = (): void => {
+      if (paused) {
+        return;
+      }
       let metering: number | undefined;
       try {
         metering = recorder.getStatus().metering;
@@ -123,7 +149,7 @@ const WaveTrack = memo(function WaveTrack({
     sample();
     const id = setInterval(sample, SAMPLE_MS);
     return () => clearInterval(id);
-  }, [latestLevel, recorder]);
+  }, [latestLevel, paused, recorder]);
 
   return (
     <View

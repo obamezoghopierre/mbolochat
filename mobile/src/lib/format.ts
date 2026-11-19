@@ -71,6 +71,34 @@ export function formatListTimestamp(iso: string): string {
   return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${pad(date.getFullYear() % 100)}`;
 }
 
+/**
+ * Date relative compacte des commentaires, comme Instagram :
+ * « à l'instant » → « 12 min » → « 3 h » → « 2 j » → « 12 sept. » → « 12 sept. 2024 ».
+ */
+export function formatCommentTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const diffMs = Date.now() - date.getTime();
+  const minutes = Math.floor(diffMs / 60_000);
+
+  if (minutes < 1) {
+    return "à l'instant";
+  }
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours} h`;
+  }
+  const days = Math.floor(hours / 24);
+  if (days < 7) {
+    return `${days} j`;
+  }
+  const year =
+    date.getFullYear() === new Date().getFullYear() ? '' : ` ${date.getFullYear()}`;
+  return `${date.getDate()} ${MONTHS[date.getMonth()]}${year}`;
+}
+
 export function formatDateLabel(iso: string): string {
   const date = new Date(iso);
   const days = daysAgo(date);

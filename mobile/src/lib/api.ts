@@ -29,6 +29,8 @@ import type {
   PresenceSettings,
   PublicationComment,
   PresenceSnapshot,
+  SocialMediaAsset,
+  SocialUploadTicket,
   ReportReason,
   ResetPasswordResult,
   SearchHashtag,
@@ -261,15 +263,84 @@ export const api = {
   addComment(
     token: string,
     publicationId: string,
-    body: string,
-    clientId: string,
-    parentId?: string,
+    input: {
+      clientId: string;
+      body?: string;
+      parentId?: string;
+      mediaAssetId?: string;
+      voiceMediaAssetId?: string;
+      stickerRef?: string;
+    },
   ) {
     return request<PublicationComment>(`/publications/${publicationId}/comments`, {
       method: 'POST',
       token,
-      body: { body, clientId, parentId },
+      body: input,
     });
+  },
+
+  /** Ticket d'écriture présignée pour un média social (image, vidéo, audio). */
+  createSocialUpload(
+    token: string,
+    input: {
+      kind: 'image' | 'video' | 'audio';
+      mime: string;
+      sizeBytes: number;
+      durationMs?: number;
+    },
+  ) {
+    return request<SocialUploadTicket>('/media/uploads', {
+      method: 'POST',
+      token,
+      body: input,
+    });
+  },
+
+  /** Confirme l'upload : le serveur vérifie taille et signature réelles. */
+  completeSocialUpload(token: string, assetId: string) {
+    return request<SocialMediaAsset>(`/media/uploads/${assetId}/complete`, {
+      method: 'POST',
+      token,
+    });
+  },
+
+  /**
+   * Upload complet d'un média social pour commentaire : ticket → PUT
+   * présigné → confirmation. Renvoie l'asset `ready` à référencer par
+   * `mediaAssetId`.
+   */
+  async uploadSocialMedia(
+    token: string,
+    asset: {
+      uri: string;
+      kind: 'image' | 'audio';
+      mime: string;
+      durationMs?: number;
+      sizeBytes?: number;
+    },
+  ): Promise<SocialMediaAsset> {
+    const sizeBytes = asset.sizeBytes ?? new File(asset.uri).size ?? 0;
+    const ticket = await api.createSocialUpload(token, {
+      kind: asset.kind,
+      mime: asset.mime,
+      sizeBytes,
+      durationMs: asset.durationMs,
+    });
+    // PUT présigné : le fichier part directement au stockage, hors de l'API.
+    // `uploadAsync` (API legacy) est le seul chemin RN qui envoie un binaire
+    // avec une méthode PUT explicite.
+    const { uploadAsync, FileSystemUploadType } = await import(
+      'expo-file-system/legacy'
+    );
+    const result = await uploadAsync(ticket.uploadUrl, asset.uri, {
+      httpMethod: 'PUT',
+      uploadType: FileSystemUploadType.BINARY_CONTENT,
+      headers: { 'Content-Type': ticket.contentType },
+    });
+    if (result.status < 200 || result.status >= 300) {
+      throw new ApiError(result.status, 'Envoi du média impossible.');
+    }
+    return api.completeSocialUpload(token, ticket.id);
   },
 
   /** Recherche unifiée : comptes, publications et hashtags. */

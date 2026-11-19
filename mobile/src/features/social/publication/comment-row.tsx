@@ -1,4 +1,6 @@
 import * as Clipboard from 'expo-clipboard';
+import { Image } from 'expo-image';
+import * as Haptics from 'expo-haptics';
 import { router } from 'expo-router';
 import {
   Copy,
@@ -11,7 +13,7 @@ import {
   ThumbsDown,
   Trash2,
 } from 'lucide-react-native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Linking, Pressable, StyleSheet, View } from 'react-native';
 
 import { ActionSheet, type SheetAction } from '@/components/action-sheet';
@@ -22,8 +24,12 @@ import { fr } from '@/i18n/fr';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
-import { formatListTimestamp } from '@/lib/format';
+import { postDeepLink } from '@/lib/deep-link';
+import { formatCommentTimestamp } from '@/lib/format';
+import { loadVoice, type VoiceComponents } from '@/lib/voice';
+import { ImageViewer } from '@/features/media/MediaViewers';
 import type { CommentReactionKind, PublicationComment } from '@/lib/types';
+import { StickerMessage } from '@/features/stickers/StickerView';
 import {
   COMMENT_REACTION_EMOJI,
   COMMENT_REACTION_KINDS,
@@ -32,6 +38,43 @@ import { parseSocialText } from './rich-text';
 
 /** Nombre de lignes affichées avant « voir plus », comme sur Instagram. */
 const COLLAPSED_LINES = 2;
+
+/** Retour haptique léger sur les actions du commentaire (best-effort). */
+function tapHaptic(): void {
+  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+}
+
+/**
+ * Lecteur vocal d'un commentaire audio : le même composant que les messages
+ * vocaux du chat, chargé à la demande (module natif absent des vieux builds).
+ */
+function CommentAudio({
+  uri,
+  durationMs,
+  mine,
+}: {
+  uri: string;
+  durationMs: number;
+  mine: boolean;
+}) {
+  const [voice, setVoice] = useState<VoiceComponents | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void loadVoice().then((components) => {
+      if (alive) {
+        setVoice(components);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  if (!voice) {
+    return null;
+  }
+  const Bubble = voice.Bubble;
+  return <Bubble uri={uri} durationMs={durationMs} mine={mine} />;
+}
 
 /**
  * Ligne de commentaire : nom en gras sur sa ligne, texte en dessous, puis date
@@ -48,8 +91,8 @@ export function CommentRow({
   onPin,
   onReact,
   indented = false,
-  replyToName,
   isPublicationAuthor = false,
+  pinLimitReached = false,
 }: {
   comment: PublicationComment;
   onReply?: (comment: PublicationComment) => void;
@@ -62,10 +105,10 @@ export function CommentRow({
   /** Réaction emoji du visiteur (`null` retire sa réaction). */
   onReact?: (comment: PublicationComment, kind: CommentReactionKind | null) => void;
   indented?: boolean;
-  /** Pseudo du commentaire parent, affiché en gris devant une réponse. */
-  replyToName?: string;
   /** Le visiteur est l'auteur de la publication parente. */
   isPublicationAuthor?: boolean;
+  /** 3 commentaires déjà épinglés : l'action est masquée pour les autres. */
+  pinLimitReached?: boolean;
 }) {
   const { token, user } = useAuth();
   const theme = useTheme();
@@ -78,6 +121,8 @@ export function CommentRow({
   } | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** URL de la photo ouverte en plein écran, `null` si la visionneuse est close. */
+  const [viewerUri, setViewerUri] = useState<string | null>(null);
   const [followOverride, setFollowOverride] = useState<{
     following: boolean;
     followedBy: boolean;
@@ -104,6 +149,7 @@ export function CommentRow({
       return;
     }
     const next = !liked;
+    tapHaptic();
     const count = Math.max(0, likeCount + (next ? 1 : -1));
     const dislikes = disliked ? Math.max(0, dislikeCount - 1) : dislikeCount;
     const optimisticScore = Math.max(0, count - dislikes);
@@ -135,6 +181,7 @@ export function CommentRow({
       return;
     }
     const next = !disliked;
+    tapHaptic();
     const count = Math.max(0, likeCount - (liked ? 1 : 0));
     const dislikes = Math.max(0, dislikeCount + (next ? 1 : -1));
     const optimisticScore = Math.max(0, count - dislikes);
@@ -227,7 +274,7 @@ export function CommentRow({
         onPress: () => onReply(comment),
       });
     }
-    if (onPin && isPublicationAuthor && !comment.parentId) {
+    if (onPin && isPublicationAuthor && !comment.parentId && (comment.pinned || !pinLimitReached)) {
       actions.push({
         key: 'pin',
         label: comment.pinned ? fr.social.unpinComment : fr.social.pinComment,
@@ -240,6 +287,16 @@ export function CommentRow({
       label: fr.social.copyComment,
       icon: Copy,
       onPress: () => void copy(),
+    });
+    actions.push({
+      key: 'share',
+      label: fr.social.shareComment,
+      icon: Link2,
+      onPress: () => {
+        void Clipboard.setStringAsync(postDeepLink(comment.publicationId)).then(() =>
+          onNotice?.(fr.social.commentLinkCopied),
+        );
+      },
     });
     if (onReport && !isOwnComment) {
       actions.push({
@@ -267,7 +324,37 @@ export function CommentRow({
       });
     }
     return actions;
-  }, [comment, copy, isPublicationAuthor, isOwnComment, onDelete, onPin, onReply, onReport, segments]);
+  }, [comment, copy, isPublicationAuthor, isOwnComment, onDelete, onNotice, onPin, onReply, onReport, pinLimitReached, segments]);
+
+  /** Corps du commentaire : texte simple, liens, mentions et hashtags. */
+  const renderSegments = () =>
+    segments.map((segment, index) => {
+      if (segment.kind === 'text') {
+        return <ThemedText key={index}>{segment.value}</ThemedText>;
+      }
+      if (segment.kind === 'link') {
+        return (
+          <ThemedText
+            key={index}
+            onPress={() => void Linking.openURL(segment.url).catch(() => undefined)}
+            style={{ color: theme.accent, textDecorationLine: 'underline' }}>
+            {segment.value}
+          </ThemedText>
+        );
+      }
+      return (
+        <ThemedText
+          key={index}
+          onPress={() =>
+            segment.kind === 'mention'
+              ? void openMention(segment.username)
+              : openHashtag(segment.tag)
+          }
+          style={{ color: theme.accent, fontWeight: '600' }}>
+          {segment.value}
+        </ThemedText>
+      );
+    });
 
   const row = (
     <Pressable
@@ -299,11 +386,6 @@ export function CommentRow({
         ) : null}
         <View style={styles.nameRow}>
           <ThemedText style={styles.author}>{comment.author.displayName}</ThemedText>
-          {replyToName ? (
-            <ThemedText type="small" themeColor="textSecondary" style={styles.replyPrefix}>
-              {fr.social.replyToPrefix(replyToName)}
-            </ThemedText>
-          ) : null}
           {!isOwnComment && following && followedBy ? (
             <ThemedText type="caption" themeColor="textSecondary">
               {fr.social.mutualFollow}
@@ -327,38 +409,55 @@ export function CommentRow({
             </Pressable>
           ) : null}
         </View>
+        {/* Photo : la légende vit dans la bulle média, sous l'image. */}
+        {comment.attachment?.kind === 'image' && comment.attachment.url ? (
+          <View
+            style={[
+              styles.mediaBubble,
+              { backgroundColor: theme.backgroundSelected },
+            ]}>
+            <Pressable
+              onPress={() => setViewerUri(comment.attachment?.url ?? null)}
+              accessibilityRole="button"
+              accessibilityLabel={fr.social.commentImageView}>
+              <Image
+                source={{ uri: comment.attachment.url }}
+                style={styles.commentImage}
+                contentFit="cover"
+                transition={120}
+                accessibilityLabel={fr.social.commentImage}
+              />
+            </Pressable>
+            {comment.body.length > 0 ? (
+              <View style={styles.captionWrap}>
+                <ThemedText
+                  style={styles.captionText}
+                  numberOfLines={isLong && !expanded ? COLLAPSED_LINES : undefined}>
+                  {renderSegments()}
+                </ThemedText>
+                {isLong ? (
+                  <Pressable
+                    onPress={() => setExpanded((value) => !value)}
+                    hitSlop={6}
+                    accessibilityRole="button">
+                    <ThemedText type="caption" themeColor="textSecondary">
+                      {expanded ? fr.social.seeLess : fr.social.seeMore}
+                    </ThemedText>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+        {/* Hors photo, le corps reste une ligne de texte classique. */}
+        {comment.body.length > 0 && comment.attachment?.kind !== 'image' ? (
         <ThemedText
           style={styles.text}
           numberOfLines={isLong && !expanded ? COLLAPSED_LINES : undefined}>
-          {segments.map((segment, index) => {
-            if (segment.kind === 'text') {
-              return <ThemedText key={index}>{segment.value}</ThemedText>;
-            }
-            if (segment.kind === 'link') {
-              return (
-                <ThemedText
-                  key={index}
-                  onPress={() => void Linking.openURL(segment.url).catch(() => undefined)}
-                  style={{ color: theme.accent, textDecorationLine: 'underline' }}>
-                  {segment.value}
-                </ThemedText>
-              );
-            }
-            return (
-              <ThemedText
-                key={index}
-                onPress={() =>
-                  segment.kind === 'mention'
-                    ? void openMention(segment.username)
-                    : openHashtag(segment.tag)
-                }
-                style={{ color: theme.accent, fontWeight: '600' }}>
-                {segment.value}
-              </ThemedText>
-            );
-          })}
+          {renderSegments()}
         </ThemedText>
-        {isLong ? (
+        ) : null}
+        {isLong && comment.attachment?.kind !== 'image' ? (
           <Pressable
             onPress={() => setExpanded((value) => !value)}
             hitSlop={6}
@@ -368,9 +467,29 @@ export function CommentRow({
             </ThemedText>
           </Pressable>
         ) : null}
+        {comment.attachment?.kind === 'sticker' && comment.attachment.stickerRef ? (
+          <View style={styles.stickerWrap}>
+            <StickerMessage stickerRef={comment.attachment.stickerRef} size={96} />
+          </View>
+        ) : null}
+        {comment.attachment?.kind === 'audio' && comment.attachment.url ? (
+          <CommentAudio
+            uri={comment.attachment.url}
+            durationMs={comment.attachment.durationMs ?? 0}
+            mine={isOwnComment}
+          />
+        ) : null}
+        {/* Légende vocale d'une photo ou d'un sticker : bulle audio sous le média. */}
+        {comment.attachment?.voice?.url ? (
+          <CommentAudio
+            uri={comment.attachment.voice.url}
+            durationMs={comment.attachment.voice.durationMs ?? 0}
+            mine={isOwnComment}
+          />
+        ) : null}
         <View style={styles.meta}>
           <ThemedText type="caption" themeColor="textSecondary">
-            {formatListTimestamp(comment.createdAt)}
+            {formatCommentTimestamp(comment.createdAt)}
           </ThemedText>
           {onReply ? (
             <Pressable onPress={() => onReply(comment)} hitSlop={6} accessibilityRole="button">
@@ -384,50 +503,47 @@ export function CommentRow({
               {fr.social.likesCount(score)}
             </ThemedText>
           ) : null}
-        </View>
-        {comment.reactions.length > 0 ? (
-          <View style={styles.reactions}>
-            {COMMENT_REACTION_KINDS.flatMap((kind) => {
-              const reaction = comment.reactions.find((item) => item.kind === kind);
-              const count = reaction?.count ?? 0;
-              const mine = comment.viewerReaction === kind;
-              if (count === 0 && !mine) {
-                return [];
-              }
-              return [
-                <Pressable
-                  key={kind}
-                  onPress={() =>
-                    onReact?.(comment, mine ? null : kind)
-                  }
-                  disabled={!onReact}
-                  hitSlop={4}
-                  accessibilityRole="button"
-                  accessibilityLabel={fr.social.commentReactionNames[kind]}
-                  accessibilityState={{ selected: mine }}
-                  style={[
-                    styles.reactionChip,
-                    {
-                      backgroundColor: mine
-                        ? theme.accentSoft
-                        : theme.backgroundSelected,
-                    },
-                  ]}>
-                  <ThemedText style={styles.reactionEmoji}>
-                    {COMMENT_REACTION_EMOJI[kind]}
+          {COMMENT_REACTION_KINDS.flatMap((kind) => {
+            const reaction = comment.reactions.find((item) => item.kind === kind);
+            const count = reaction?.count ?? 0;
+            const mine = comment.viewerReaction === kind;
+            if (count === 0 && !mine) {
+              return [];
+            }
+            return [
+              <Pressable
+                key={kind}
+                onPress={() => {
+                  tapHaptic();
+                  onReact?.(comment, mine ? null : kind);
+                }}
+                disabled={!onReact}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel={fr.social.commentReactionNames[kind]}
+                accessibilityState={{ selected: mine }}
+                style={[
+                  styles.reactionChip,
+                  {
+                    backgroundColor: mine
+                      ? theme.accentSoft
+                      : theme.backgroundSelected,
+                  },
+                ]}>
+                <ThemedText style={styles.reactionEmoji}>
+                  {COMMENT_REACTION_EMOJI[kind]}
+                </ThemedText>
+                {count > 0 ? (
+                  <ThemedText
+                    type="caption"
+                    style={{ color: mine ? theme.accent : theme.textSecondary }}>
+                    {count}
                   </ThemedText>
-                  {count > 0 ? (
-                    <ThemedText
-                      type="caption"
-                      style={{ color: mine ? theme.accent : theme.textSecondary }}>
-                      {count}
-                    </ThemedText>
-                  ) : null}
-                </Pressable>,
-              ];
-            })}
-          </View>
-        ) : null}
+                ) : null}
+              </Pressable>,
+            ];
+          })}
+        </View>
       </View>
       <View style={styles.actions}>
         <Pressable
@@ -465,6 +581,9 @@ export function CommentRow({
   return (
     <>
       {row}
+      {viewerUri ? (
+        <ImageViewer urls={[viewerUri]} initialIndex={0} onClose={() => setViewerUri(null)} />
+      ) : null}
       <ActionSheet
         visible={menuOpen}
         title={fr.social.commentActionsTitle}
@@ -475,6 +594,7 @@ export function CommentRow({
                 <Pressable
                   key={kind}
                   onPress={() => {
+                    tapHaptic();
                     setMenuOpen(false);
                     onReact(comment, comment.viewerReaction === kind ? null : kind);
                   }}
@@ -505,25 +625,45 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   indented: { paddingLeft: Spacing.four },
+  commentImage: {
+    width: 180,
+    height: 180,
+    borderRadius: Radii.md,
+    marginTop: Spacing.one,
+  },
+  // Bulle média d'un commentaire photo : image + légende dans le même
+  // conteneur arrondi, comme une carte média façon TikTok.
+  mediaBubble: {
+    borderRadius: Radii.md,
+    overflow: 'hidden',
+    alignSelf: 'flex-start',
+    marginTop: Spacing.one,
+  },
+  captionWrap: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
+    gap: Spacing.half,
+  },
+  captionText: { fontSize: Type.body.fontSize },
+  stickerWrap: { marginTop: Spacing.one, alignSelf: 'flex-start' },
   body: { flex: 1, gap: Spacing.one },
   nameRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.one, flexWrap: 'wrap' },
   // Nom sur sa propre ligne, commentaire en dessous : le gras et l'écart de
   // taille rendent la hiérarchie visible même avec la police Android.
   text: { ...Type.body, fontSize: 14, fontWeight: '400', flexWrap: 'wrap' },
   author: { ...Type.body, fontSize: 15.5, fontWeight: '700' },
-  replyPrefix: { ...Type.body, fontSize: 13, fontWeight: '400' },
-  meta: { flexDirection: 'row', alignItems: 'center', gap: Spacing.three, marginTop: Spacing.one },
+  meta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+    marginTop: Spacing.one,
+  },
   pinnedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.one,
     marginBottom: Spacing.half,
-  },
-  reactions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.one,
-    marginTop: Spacing.one,
   },
   reactionChip: {
     flexDirection: 'row',

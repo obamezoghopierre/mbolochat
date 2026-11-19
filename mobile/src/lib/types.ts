@@ -541,12 +541,60 @@ export interface CommentReaction {
 /** Tri des commentaires : pertinence ou plus récents. */
 export type CommentSort = 'top' | 'recent';
 
+/** Nature d'un commentaire : texte, vocal, photo ou sticker. */
+export type CommentKind = 'text' | 'audio' | 'image' | 'sticker';
+
+/** Pièce jointe d'un commentaire, résolue côté serveur. */
+export interface CommentAttachment {
+  kind: 'image' | 'audio' | 'sticker';
+  /** URL signée du média ; `null` pour un sticker de catalogue. */
+  url: string | null;
+  mime: string | null;
+  durationMs: number | null;
+  width: number | null;
+  height: number | null;
+  /** Référence catalogue (`pack/sticker`) pour `kind: 'sticker'`. */
+  stickerRef: string | null;
+  /** Note vocale jointe en légende d'une photo ou d'un sticker. */
+  voice: {
+    url: string | null;
+    mime: string;
+    durationMs: number | null;
+  } | null;
+}
+
+/** Ticket d'upload présigné du pipeline média social. */
+export interface SocialUploadTicket {
+  id: string;
+  status: 'pending';
+  uploadUrl: string;
+  expiresIn: number;
+  contentType: string;
+  maxBytes: number;
+}
+
+/** Asset média social après confirmation. */
+export interface SocialMediaAsset {
+  id: string;
+  kind: 'image' | 'video' | 'audio';
+  mime: string;
+  sizeBytes: number;
+  status: string;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  publicUrl: string | null;
+  createdAt: string;
+}
+
 /** Commentaire ou réponse à une publication. */
 export interface PublicationComment {
   id: string;
   publicationId: string;
   parentId: string | null;
+  kind: CommentKind;
   body: string;
+  attachment: CommentAttachment | null;
   createdAt: string;
   author: SocialAuthor;
   likeCount: number;

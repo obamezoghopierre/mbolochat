@@ -105,6 +105,7 @@ import { CLASSIC_DEPS, E2EE_DEPS } from '../transport/production-deps';
 import { useAuth } from '@/lib/auth-context';
 import { api } from '@/lib/api';
 import { cache } from '@/lib/cache';
+import { consumePendingMediaShare } from '@/lib/pending-media-share';
 
 const EMPTY_CAPABILITIES: ChatCapabilities = {
   replies: true,
@@ -176,7 +177,22 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
   const [mediaComposer, setMediaComposer] = useState<{
     items: PickedAttachment[];
     total: number;
-  } | null>(null);
+  } | null>(() => {
+    const share = consumePendingMediaShare();
+    if (!share) return null;
+    return {
+      items: [
+        {
+          uri: share.uri,
+          kind: 'image',
+          mime: share.mime ?? 'image/jpeg',
+          name: 'partage.jpg',
+          size: null,
+        },
+      ],
+      total: 1,
+    };
+  });
   const [composerSending, setComposerSending] = useState(false);
   const [chatAreaHeight, setChatAreaHeight] = useState(0);
   const media = useChatMedia();

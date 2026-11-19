@@ -309,6 +309,20 @@
       "when": 1795083555037,
       "tag": "0043_concerned_leper_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1795095424163,
+      "tag": "0044_crazy_loa",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1795101188427,
+      "tag": "0045_gifted_meltdown",
+      "breakpoints": true
     }
   ]
 }

@@ -1,13 +1,13 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { IsIn, IsInt, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/jwt-payload.js';
 import { SocialMediaService } from './social-media.service.js';
 
 class CreateUploadDto {
-  @IsIn(['image', 'video'])
-  kind!: 'image' | 'video';
+  @IsIn(['image', 'video', 'audio'])
+  kind!: 'image' | 'video' | 'audio';
 
   @IsString()
   mime!: string;
@@ -15,6 +15,12 @@ class CreateUploadDto {
   @IsInt()
   @Min(1)
   sizeBytes!: number;
+
+  /** Durée réelle pour l'audio (commentaire vocal) — jamais déduite du fichier. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  durationMs?: number;
 }
 
 /**

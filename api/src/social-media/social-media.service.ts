@@ -9,8 +9,11 @@ import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { mediaAssets, mediaJobs } from '../db/schema.js';
 import {
+  ALLOWED_AUDIO_MIMES,
   ALLOWED_IMAGE_MIMES,
   ALLOWED_VIDEO_MIMES,
+  canonicalAudioMime,
+  detectAudioMedia,
   detectSocialMedia,
   type SocialMediaKind,
 } from './media-signature.js';
@@ -19,6 +22,8 @@ import { ObjectStorageService, UPLOAD_URL_TTL_SECONDS } from './object-storage.s
 /** Plafonds v1, en octets. Le client les affiche, l'API les impose. */
 export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+/** Commentaire vocal : quelques minutes en AAC suffisent largement. */
+export const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 /** Octets lus pour la détection binaire : les signatures tiennent en 16. */
 const SIGNATURE_PROBE_BYTES = 32;
 
@@ -52,6 +57,12 @@ const EXTENSIONS: Record<string, string> = {
   'image/webp': 'webp',
   'video/mp4': 'mp4',
   'video/webm': 'webm',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/mpeg': 'mp3',
+  'audio/aac': 'aac',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
 };
 
 /**
@@ -72,19 +83,28 @@ export class SocialMediaService {
   /** Crée un asset `pending` et rend l'URL présignée d'écriture. */
   async createUpload(
     ownerId: string,
-    input: { kind: SocialMediaKind; mime: string; sizeBytes: number },
+    input: { kind: SocialMediaKind; mime: string; sizeBytes: number; durationMs?: number },
   ): Promise<UploadTicket> {
     if (!this.storage.isConfigured()) {
       throw new ServiceUnavailableException('Stockage média non configuré.');
     }
-    const maxBytes = input.kind === 'image' ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES;
+    const maxBytes =
+      input.kind === 'image'
+        ? MAX_IMAGE_BYTES
+        : input.kind === 'video'
+          ? MAX_VIDEO_BYTES
+          : MAX_AUDIO_BYTES;
     if (input.sizeBytes <= 0 || input.sizeBytes > maxBytes) {
       throw new BadRequestException(
         `Fichier trop volumineux : la limite est de ${maxBytes} octets.`,
       );
     }
     const allowed: readonly string[] =
-      input.kind === 'image' ? ALLOWED_IMAGE_MIMES : ALLOWED_VIDEO_MIMES;
+      input.kind === 'image'
+        ? ALLOWED_IMAGE_MIMES
+        : input.kind === 'video'
+          ? ALLOWED_VIDEO_MIMES
+          : ALLOWED_AUDIO_MIMES;
     if (!allowed.includes(input.mime)) {
       throw new BadRequestException('Type de fichier non pris en charge.');
     }
@@ -101,6 +121,7 @@ export class SocialMediaService {
         kind: input.kind,
         mime: input.mime,
         sizeBytes: input.sizeBytes,
+        durationMs: input.kind === 'audio' ? (input.durationMs ?? null) : null,
       })
       .returning();
     if (!asset) {
@@ -139,26 +160,40 @@ export class SocialMediaService {
     }
 
     const probe = await this.storage.readHead(asset.storageKey, SIGNATURE_PROBE_BYTES);
-    const detected = probe ? detectSocialMedia(probe) : null;
-    if (!detected || detected.kind !== asset.kind || detected.mime !== asset.mime) {
+    // L'audio n'a pas de signature `kind` : on compare le MIME canonique.
+    const detected = probe
+      ? asset.kind === 'audio'
+        ? detectAudioMedia(probe)
+        : (detectSocialMedia(probe)?.mime ?? null)
+      : null;
+    const expected =
+      asset.kind === 'audio' ? canonicalAudioMime(asset.mime) : asset.mime;
+    if (!detected || detected !== expected) {
       await this.storage.delete(asset.storageKey);
       throw new BadRequestException('Le contenu ne correspond pas au type déclaré.');
     }
 
     const updated = await this.db.transaction(async (tx) => {
+      // L'audio n'a besoin d'aucun traitement : il passe directement `ready`,
+      // ce qui permet de le référencer immédiatement dans un commentaire.
       const [row] = await tx
         .update(mediaAssets)
-        .set({ status: 'uploaded', updatedAt: new Date() })
+        .set({
+          status: asset.kind === 'audio' ? 'ready' : 'uploaded',
+          updatedAt: new Date(),
+        })
         // Le filtre `pending` rend la confirmation idempotente sous course.
         .where(and(eq(mediaAssets.id, assetId), eq(mediaAssets.status, 'pending')))
         .returning();
       if (!row) {
         return null;
       }
-      // Une seule mise en file : le job n'est créé que par la transition réussie.
-      const kinds =
-        row.kind === 'video' ? (['video_poster', 'video_transcode'] as const) : (['image_variants'] as const);
-      await tx.insert(mediaJobs).values(kinds.map((kind) => ({ assetId: row.id, kind })));
+      if (row.kind !== 'audio') {
+        // Une seule mise en file : le job n'est créé que par la transition réussie.
+        const kinds =
+          row.kind === 'video' ? (['video_poster', 'video_transcode'] as const) : (['image_variants'] as const);
+        await tx.insert(mediaJobs).values(kinds.map((kind) => ({ assetId: row.id, kind })));
+      }
       return row;
     });
 
@@ -185,7 +220,7 @@ export class SocialMediaService {
   private view(asset: typeof mediaAssets.$inferSelect): MediaAssetView {
     return {
       id: asset.id,
-      kind: asset.kind === 'video' ? 'video' : 'image',
+      kind: asset.kind,
       mime: asset.mime,
       sizeBytes: asset.sizeBytes,
       status: asset.status,

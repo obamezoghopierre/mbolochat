@@ -2,10 +2,14 @@ import BottomSheet, {
   BottomSheetBackdrop,
   type BottomSheetBackdropProps,
   BottomSheetFlatList,
+  useScrollEventsHandlersDefault,
+  type ScrollEventsHandlersHookType,
 } from '@gorhom/bottom-sheet';
-import { ChevronDown, SendHorizontal, Smile, X } from 'lucide-react-native';
+import { ChevronDown, ImagePlus, MessageCircle, Mic, Sticker, X } from 'lucide-react-native';
+import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
-import type { SharedValue } from 'react-native-reanimated';
+import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 import {
   ActivityIndicator,
   Dimensions,
@@ -14,6 +18,7 @@ import {
   Platform,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   TextInput,
   UIManager,
@@ -27,6 +32,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { CommentRow } from '@/features/social/publication/comment-row';
+import { useCommentLiveEvents } from '@/features/social/publication/use-comment-live';
 import {
   appendComment,
   appendReply,
@@ -37,7 +43,12 @@ import {
 } from '@/features/social/publication/comments-model';
 import { detectAutocompleteToken } from '@/features/social/publication/rich-text';
 import { useReportComment } from '@/features/social/publication/use-report-comment';
+import { composerThemeFor } from '@/features/composer/ChatComposer';
+import { StickerPanel } from '@/features/stickers/StickerPanel';
+import { StickerMessage } from '@/features/stickers/StickerView';
 import { useTheme } from '@/hooks/use-theme';
+import { useThemePreference } from '@/lib/theme-preference';
+import { audioAvailable, loadVoice, type VoiceComponents, type VoiceTake } from '@/lib/voice';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { newClientId } from '@/lib/client-id';
@@ -63,6 +74,11 @@ type AutocompleteSuggestion = {
   isUser: boolean;
 };
 
+/** Pièce jointe en cours de rédaction : média uploadé ou sticker catalogue. */
+type PendingAttachment =
+  | { kind: 'image' | 'audio'; assetId: string; previewUri: string; durationMs: number | null }
+  | { kind: 'sticker'; ref: string };
+
 if (Platform.OS === 'android') {
   UIManager.setLayoutAnimationEnabledExperimental?.(true);
 }
@@ -86,6 +102,7 @@ export function CommentsSheet({
 }) {
   const { token, user } = useAuth();
   const theme = useTheme();
+  const { scheme } = useThemePreference();
   const insets = useSafeAreaInsets();
   const screenHeight = useMemo(() => Dimensions.get('window').height, []);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -101,14 +118,48 @@ export function CommentsSheet({
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [exprOpen, setExprOpen] = useState(false);
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [sort, setSort] = useState<CommentSort>('top');
   const [pinned, setPinned] = useState<PublicationComment[]>([]);
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [replyBusy, setReplyBusy] = useState<Set<string>>(() => new Set());
-  const pending = useRef<{ clientId: string; body: string; parentId?: string } | null>(null);
+  const [newCount, setNewCount] = useState(0);
+  const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
+  const [uploading, setUploading] = useState(false);
+  /** `null` = pas d'enregistrement ; sinon le composant vocal est monté. */
+  const [voice, setVoice] = useState<VoiceComponents | null>(null);
+  // Partagée avec le handler de scroll worklet : `.value` est lisible sur le
+  // thread JS comme sur le runtime UI.
+  const scrollY = useSharedValue(0);
+  const listRef = useRef<ComponentRef<typeof BottomSheetFlatList>>(null);
+  // BottomSheetFlatList retire onScroll/scrollEventThrottle du type : la
+  // position de défilement se lit via le hook de handlers de la feuille.
+  const scrollEventsHandlersHook = useCallback<ScrollEventsHandlersHookType>(
+    (scrollableRef, contentOffsetY) => {
+      // Appelé par BottomSheetScrollable pendant son propre rendu : c'est un
+      // point d'appel de hook valide, mais le lint ne peut pas le savoir.
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      const handlers = useScrollEventsHandlersDefault(scrollableRef, contentOffsetY);
+      const defaultOnScroll = handlers.handleOnScroll;
+      return {
+        ...handlers,
+        handleOnScroll: (payload, context) => {
+          'worklet';
+          scrollY.value = payload.contentOffset.y;
+          defaultOnScroll?.(payload, context);
+        },
+      };
+    },
+    [scrollY],
+  );
+  const pending = useRef<{
+    clientId: string;
+    body: string;
+    parentId?: string;
+    attachmentKey?: string;
+  } | null>(null);
   const replyCursors = useRef(new Map<string, string | null>());
   const replyPrefill = useRef<{ parentId: string; text: string } | null>(null);
   const inputRef = useRef<ComponentRef<typeof TextInput>>(null);
@@ -118,15 +169,17 @@ export function CommentsSheet({
   // et bénéficient des mêmes réponses repliables.
   const allRoots = useMemo(() => [...pinned, ...grouped.roots], [pinned, grouped]);
 
-  // Un seul snap point : la feuille s'ouvre à 72 % et ne peut pas monter plus
-  // haut. Le drag vers le bas la ferme (enablePanDownToClose).
-  const snapPoints = useMemo(
-    () =>
-      keyboardHeight > 0
-        ? [Math.max(240, screenHeight - keyboardHeight)]
-        : [`${COMMENTS_SHEET_SNAP_RATIO * 100}%`],
-    [keyboardHeight, screenHeight],
-  );
+  // Un seul snap « réduit » + un snap « ouvert » : la carte du feed suit la
+  // position réelle de la feuille (voir FeedScreen), comme sur Instagram.
+  // Clavier ouvert : deux détentes relatives à sa hauteur pour garder le
+  // composeur visible sur Waydroid où le clavier recouvre la fenêtre.
+  const snapPoints = useMemo(() => {
+    if (keyboardHeight > 0) {
+      const top = Math.max(240, screenHeight - keyboardHeight);
+      return [Math.max(200, top - 120), top];
+    }
+    return ['45%', `${COMMENTS_SHEET_SNAP_RATIO * 100}%`];
+  }, [keyboardHeight, screenHeight]);
 
   // Le clavier se superpose à la fenêtre sur Waydroid : on remonte la feuille
   // de sa hauteur et on réduit son snap point pour garder le composeur visible.
@@ -223,56 +276,221 @@ export function CommentsSheet({
     setPinned((items) => items.map(apply));
   }, []);
 
-  const send = useCallback(async () => {
+  /** Envoi effectif d'un commentaire déjà validé (texte et/ou pièce jointe). */
+  const postComment = useCallback(
+    async (input: {
+      clientId: string;
+      body: string;
+      parentId?: string;
+      mediaAssetId?: string;
+      voiceMediaAssetId?: string;
+      stickerRef?: string;
+    }) => {
+      const { parentId } = input;
+      setSending(true);
+      try {
+        const created = await api.addComment(token as string, current.id, {
+          clientId: input.clientId,
+          body: input.body.length > 0 ? input.body : undefined,
+          parentId,
+          mediaAssetId: input.mediaAssetId,
+          voiceMediaAssetId: input.voiceMediaAssetId,
+          stickerRef: input.stickerRef,
+        });
+        const replay =
+          comments.some((item) => item.id === created.id) ||
+          pinned.some((item) => item.id === created.id);
+        const replayPinned = pinned.some((item) => item.id === created.id);
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setComments((items) => {
+          if (parentId) {
+            return appendReply(items, created);
+          }
+          if (items.some((item) => item.id === created.id)) {
+            return appendComment(items, created);
+          }
+          // En tri « Récents », le nouveau commentaire ouvre le fil.
+          return sort === 'recent' ? [created, ...items] : appendComment(items, created);
+        });
+        if (replayPinned) {
+          setPinned((items) => upsertComment(items, created));
+        }
+        if (parentId && !replay) {
+          setExpanded((ids) => new Set(ids).add(parentId));
+        }
+        if (!replay) {
+          setCurrent((value) => ({
+            ...value,
+            counters: { ...value.counters, comments: value.counters.comments + 1 },
+          }));
+        }
+        setDraft('');
+        setReplyTo(null);
+        setAttachment(null);
+        setExprOpen(false);
+        replyPrefill.current = null;
+        pending.current = null;
+        setError(null);
+      } catch {
+        setNotice(fr.social.commentError);
+      } finally {
+        setSending(false);
+      }
+    },
+    [comments, current.id, pinned, sort, token],
+  );
+
+  const send = useCallback(() => {
     const body = draft.trim();
-    if (!token || body.length === 0 || sending) {
+    const mediaAssetId =
+      attachment && attachment.kind !== 'sticker' ? attachment.assetId : undefined;
+    const stickerRef = attachment?.kind === 'sticker' ? attachment.ref : undefined;
+    if (!token || sending || uploading) {
+      return;
+    }
+    if (body.length === 0 && !mediaAssetId && !stickerRef) {
       return;
     }
     const parentId = replyTo?.id;
-    const reusable = pending.current?.body === body && pending.current.parentId === parentId;
+    const attachmentKey = stickerRef ?? mediaAssetId;
+    const reusable =
+      pending.current?.body === body &&
+      pending.current.parentId === parentId &&
+      pending.current.attachmentKey === attachmentKey;
     const clientId = reusable ? (pending.current?.clientId ?? newClientId()) : newClientId();
-    pending.current = { clientId, body, parentId };
-    setSending(true);
-    try {
-      const created = await api.addComment(token, current.id, body, clientId, parentId);
-      const replay =
-        comments.some((item) => item.id === created.id) ||
-        pinned.some((item) => item.id === created.id);
-      const replayPinned = pinned.some((item) => item.id === created.id);
-      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-      setComments((items) => {
-        if (parentId) {
-          return appendReply(items, created);
-        }
-        if (items.some((item) => item.id === created.id)) {
-          return appendComment(items, created);
-        }
-        // En tri « Récents », le nouveau commentaire ouvre le fil.
-        return sort === 'recent' ? [created, ...items] : appendComment(items, created);
-      });
-      if (replayPinned) {
-        setPinned((items) => upsertComment(items, created));
+    pending.current = { clientId, body, parentId, attachmentKey };
+    void postComment({ clientId, body, parentId, mediaAssetId, stickerRef });
+  }, [attachment, draft, pending, postComment, replyTo, sending, token, uploading]);
+
+  /** Upload d'un média (photo ou vocal) puis attache l'asset au brouillon. */
+  const attachMedia = useCallback(
+    async (input: { uri: string; kind: 'image' | 'audio'; mime: string; durationMs?: number }) => {
+      if (!token || uploading) {
+        return;
       }
-      if (parentId && !replay) {
-        setExpanded((ids) => new Set(ids).add(parentId));
-      }
-      if (!replay) {
-        setCurrent((value) => ({
-          ...value,
-          counters: { ...value.counters, comments: value.counters.comments + 1 },
-        }));
-      }
-      setDraft('');
-      setReplyTo(null);
-      replyPrefill.current = null;
-      pending.current = null;
+      setUploading(true);
       setError(null);
-    } catch {
-      setError(fr.social.commentError);
-    } finally {
-      setSending(false);
+      try {
+        const asset = await api.uploadSocialMedia(token, input);
+        setAttachment({
+          kind: input.kind,
+          assetId: asset.id,
+          previewUri: input.uri,
+          durationMs: input.durationMs ?? asset.durationMs ?? null,
+        });
+      } catch {
+        setNotice(fr.social.mediaUploadError);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [token, uploading],
+  );
+
+  const pickPhoto = useCallback(async () => {
+    if (!token || uploading) {
+      return;
     }
-  }, [comments, current.id, draft, pinned, replyTo, sending, sort, token]);
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      quality: 0.85,
+    });
+    const picked = result.assets?.[0];
+    if (result.canceled || !picked) {
+      return;
+    }
+    await attachMedia({
+      uri: picked.uri,
+      kind: 'image',
+      mime: picked.mimeType ?? 'image/jpeg',
+    });
+  }, [attachMedia, token, uploading]);
+
+  /** Micro → composants vocaux → permission → l'enregistreur prend la main. */
+  const startVoice = useCallback(async () => {
+    if (!token || uploading || voice) {
+      return;
+    }
+    const components = await loadVoice();
+    if (!components || !(await components.requestMicrophone())) {
+      return;
+    }
+    setVoice(components);
+  }, [token, uploading, voice]);
+
+  /**
+   * Note vocale : le ✓ de l'aperçu enchaîne upload + publication en une
+   * seule étape — l'utilisateur n'a plus rien à saisir ni à renvoyer.
+   * - Sans pièce jointe : commentaire purement vocal.
+   * - Avec photo/sticker : la voix part en `voiceMediaAssetId`, légende du
+   *   média, avec le brouillon comme corps du commentaire.
+   */
+  const sendVoice = useCallback(
+    async (take: VoiceTake) => {
+      if (!token || sending || uploading) {
+        return;
+      }
+      const pendingAttachment = attachment;
+      setVoice(null);
+      setUploading(true);
+      setError(null);
+      try {
+        const asset = await api.uploadSocialMedia(token, {
+          uri: take.uri,
+          kind: 'audio',
+          mime: take.mime,
+          durationMs: take.durationMs,
+        });
+        const hasMedia =
+          pendingAttachment !== null && pendingAttachment.kind !== 'audio';
+        await postComment({
+          clientId: newClientId(),
+          body: draft.trim(),
+          parentId: replyTo?.id,
+          mediaAssetId: hasMedia
+            ? pendingAttachment.kind !== 'sticker'
+              ? pendingAttachment.assetId
+              : undefined
+            : asset.id,
+          voiceMediaAssetId: hasMedia ? asset.id : undefined,
+          stickerRef:
+            hasMedia && pendingAttachment.kind === 'sticker'
+              ? pendingAttachment.ref
+              : undefined,
+        });
+      } catch {
+        setNotice(fr.social.mediaUploadError);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [attachment, draft, postComment, replyTo, sending, token, uploading],
+  );
+
+  const finishVoice = useCallback(
+    (take: VoiceTake) => {
+      void sendVoice(take);
+    },
+    [sendVoice],
+  );
+
+  /** Sticker catalogue : référence directe, aucun upload nécessaire. */
+  const sendStickerRef = useCallback((ref: string) => {
+    setAttachment({ kind: 'sticker', ref });
+    setExprOpen(false);
+  }, []);
+
+  /** Sticker personnel : l'image est importée comme photo de commentaire. */
+  const sendPersonalSticker = useCallback(
+    (sticker: { uri: string; mime: string }) => {
+      setExprOpen(false);
+      void attachMedia({ uri: sticker.uri, kind: 'image', mime: sticker.mime });
+    },
+    [attachMedia],
+  );
+
+  const panelTheme = useMemo(() => composerThemeFor(theme, scheme), [theme, scheme]);
+  const canRecord = audioAvailable();
 
   const handleReply = useCallback(
     (target: PublicationComment) => {
@@ -288,7 +506,9 @@ export function CommentsSheet({
         current.trim().length === 0 || current === previous?.text ? text : current,
       );
       replyPrefill.current = { parentId: root.id, text };
-      inputRef.current?.focus();
+      // Différé : le focus doit survivre au changement de brouillon et à
+      // l'ouverture du clavier de la feuille.
+      setTimeout(() => inputRef.current?.focus(), 50);
     },
     [comments],
   );
@@ -360,6 +580,107 @@ export function CommentsSheet({
     },
     [expanded, grouped, ensureReplies],
   );
+
+  // Miroir à jour des listes pour les handlers temps réel (sinon closures périmées).
+  const liveRef = useRef<{ comments: PublicationComment[]; pinned: PublicationComment[] }>({
+    comments: [],
+    pinned: [],
+  });
+  useEffect(() => {
+    liveRef.current = { comments, pinned };
+  }, [comments, pinned]);
+
+  const scoreOrder = (a: PublicationComment, b: PublicationComment) =>
+    b.score - a.score || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+
+  /** Commentaire créé ailleurs : insertion selon le tri, pilule si scrollé. */
+  const handleLiveCreated = useCallback(
+    (view: PublicationComment) => {
+      const known = [...liveRef.current.comments, ...liveRef.current.pinned].some(
+        (item) => item.id === view.id,
+      );
+      if (known) {
+        return; // notre propre écho REST/socket : déjà inséré par `send`.
+      }
+      if (scrollY.value > 240) {
+        setNewCount((count) => count + 1);
+      }
+      if (view.parentId) {
+        setComments((items) => appendReply(items, view));
+        setPinned((items) =>
+          items.map((item) =>
+            item.id === view.parentId ? { ...item, replyCount: item.replyCount + 1 } : item,
+          ),
+        );
+      } else {
+        setComments((items) => {
+          // `liveRef` est synchronisé en effet : un écho socket peut arriver
+          // entre l'insertion REST et la mise à jour — on re-vérifie ici.
+          if (items.some((item) => item.id === view.id)) {
+            return items;
+          }
+          return sort === 'recent' ? [view, ...items] : [...items, view].sort(scoreOrder);
+        });
+      }
+      setCurrent((value) => ({
+        ...value,
+        counters: { ...value.counters, comments: value.counters.comments + 1 },
+      }));
+    },
+    // `scrollY` est une SharedValue stable : `.value` est lu au moment de l'événement.
+    [scrollY, sort],
+  );
+
+  /** Score, réactions, épinglage ou compteur modifiés ailleurs. */
+  const handleLiveUpdated = useCallback(
+    (view: PublicationComment) => {
+      if (view.pinned) {
+        setComments((items) => items.filter((item) => item.id !== view.id));
+        setPinned((items) => [view, ...items.filter((item) => item.id !== view.id)]);
+        return;
+      }
+      setPinned((items) => items.filter((item) => item.id !== view.id));
+      setComments((items) => {
+        const next = upsertComment(items, view);
+        // En tri « Mieux notés », un changement de score peut déplacer le commentaire.
+        return sort === 'top' && items.some((item) => item.id === view.id)
+          ? next.sort(scoreOrder)
+          : next;
+      });
+    },
+    [sort],
+  );
+
+  /** Suppression distante : le commentaire et ses réponses directes partent. */
+  const handleLiveDeleted = useCallback((commentId: string) => {
+    const isRemoved = (item: PublicationComment) =>
+      item.id === commentId || item.parentId === commentId;
+    setComments((items) => items.filter((item) => !isRemoved(item)));
+    setPinned((items) => items.filter((item) => !isRemoved(item)));
+    const removed = [...liveRef.current.comments, ...liveRef.current.pinned].filter(isRemoved).length;
+    if (removed > 0) {
+      setCurrent((value) => ({
+        ...value,
+        counters: {
+          ...value.counters,
+          comments: Math.max(0, value.counters.comments - removed),
+        },
+      }));
+    }
+  }, []);
+
+  useCommentLiveEvents({
+    token,
+    publicationId: current.id,
+    onCreated: handleLiveCreated,
+    onUpdated: handleLiveUpdated,
+    onDeleted: handleLiveDeleted,
+  });
+
+  const scrollToNewest = useCallback(() => {
+    setNewCount(0);
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
+  }, []);
 
   const report = useReportComment(setNotice);
 
@@ -492,7 +813,6 @@ export function CommentsSheet({
 
   const insertEmoji = useCallback((emoji: string) => {
     setDraft((value) => value + emoji);
-    setEmojiOpen(false);
   }, []);
 
   const repliesCount = useMemo(
@@ -570,7 +890,7 @@ export function CommentsSheet({
   return (
     <>
     <BottomSheet
-      index={0}
+      index={1}
       snapPoints={snapPoints}
       enablePanDownToClose
       enableDynamicSizing={false}
@@ -630,10 +950,12 @@ export function CommentsSheet({
       </View>
 
       <BottomSheetFlatList
+          ref={listRef}
           data={allRoots}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          scrollEventsHandlersHook={scrollEventsHandlersHook}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl
@@ -667,8 +989,10 @@ export function CommentsSheet({
               </View>
             ) : (
               <View style={styles.center}>
+                <MessageCircle size={36} color={theme.textSecondary} />
+                <ThemedText type="sectionTitle">{fr.social.commentsEmptyTitle}</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {fr.social.commentsEmpty}
+                  {fr.social.commentsEmptyHint}
                 </ThemedText>
               </View>
             )
@@ -688,6 +1012,7 @@ export function CommentsSheet({
                   onPin={(target, pinnedFlag) => void togglePin(target, pinnedFlag)}
                   onReact={(target, kind) => void reactToComment(target, kind)}
                   isPublicationAuthor={isPublicationAuthor}
+                  pinLimitReached={pinned.length >= 3 && !item.pinned}
                 />
                 {replies.length > 0 ? (
                   <Pressable
@@ -713,9 +1038,6 @@ export function CommentsSheet({
                         onScoreChange={updateScore}
                         onReact={(target, kind) => void reactToComment(target, kind)}
                         indented
-                        replyToName={
-                          allRoots.find((root) => root.id === reply.parentId)?.author.username
-                        }
                       />
                     ))
                   : null}
@@ -750,6 +1072,18 @@ export function CommentsSheet({
             <X size={14} color={theme.accent} />
           </Pressable>
         </View>
+      ) : null}
+
+      {newCount > 0 ? (
+        <Pressable
+          onPress={scrollToNewest}
+          accessibilityRole="button"
+          style={[styles.newPill, { backgroundColor: theme.accent }]}
+          hitSlop={6}>
+          <ThemedText type="caption" style={{ color: theme.onAccent, fontWeight: '700' }}>
+            {fr.social.newComments(newCount)}
+          </ThemedText>
+        </Pressable>
       ) : null}
 
       {replyTo ? (
@@ -789,18 +1123,32 @@ export function CommentsSheet({
         </View>
       ) : null}
 
-      {emojiOpen ? (
-        <View style={[styles.suggestions, { borderTopColor: theme.border }]}>
-          {EMOJIS.map((emoji) => (
-            <Pressable
-              key={emoji}
-              onPress={() => insertEmoji(emoji)}
-              hitSlop={6}
-              accessibilityRole="button"
-              accessibilityLabel={emoji}>
-              <ThemedText style={styles.emoji}>{emoji}</ThemedText>
-            </Pressable>
-          ))}
+      {exprOpen ? (
+        /* Panneau d'expressions : rangée d'emojis puis stickers — la pilule
+           de saisie reste épurée, sans icône 😊. */
+        <View style={{ backgroundColor: panelTheme.panelBg }}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.emojiRail}
+            keyboardShouldPersistTaps="handled">
+            {EMOJIS.map((emoji) => (
+              <Pressable
+                key={emoji}
+                onPress={() => insertEmoji(emoji)}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={emoji}>
+                <ThemedText style={styles.emoji}>{emoji}</ThemedText>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <StickerPanel
+            height={240}
+            theme={panelTheme}
+            onSendRef={sendStickerRef}
+            onSendPersonal={sendPersonalSticker}
+          />
         </View>
       ) : null}
 
@@ -810,65 +1158,143 @@ export function CommentsSheet({
         </ThemedText>
       ) : null}
 
+      {voice ? (
+        /* Enregistrement vocal : l'enregistreur gère chrono, waveform et
+           Validation/annulation — il remplace toute la rangée du composeur. */
+        <View
+          style={[
+            styles.composer,
+            {
+              borderTopColor: theme.border,
+              backgroundColor: theme.backgroundElement,
+              paddingBottom: Math.max(insets.bottom, COMPOSER_SYSTEM_BAR_FALLBACK),
+            },
+          ]}>
+          <Avatar
+            name={user?.displayName ?? ''}
+            uri={user?.avatarUrl}
+            gender={user?.gender}
+            size={34}
+          />
+          <View style={styles.voiceSlot}>
+            {attachment ? (
+              /* La pièce jointe remplace le libellé : c'est elle qui recevra
+                 la note vocale comme légende à la publication. */
+              <View style={styles.voicePreviewRow}>
+                <AttachmentPreview
+                  attachment={attachment}
+                  onRemove={() => setAttachment(null)}
+                />
+              </View>
+            ) : (
+              <ThemedText type="caption" themeColor="textSecondary">
+                {fr.social.recordingVoice}
+              </ThemedText>
+            )}
+            <voice.CommentRecorder
+              onFinished={finishVoice}
+              onCancel={() => setVoice(null)}
+            />
+          </View>
+        </View>
+      ) : (
       <View
         style={[
-          styles.composer,
+          styles.composerShell,
           {
             borderTopColor: theme.border,
             backgroundColor: theme.backgroundElement,
             paddingBottom: Math.max(insets.bottom, COMPOSER_SYSTEM_BAR_FALLBACK),
           },
         ]}>
+        {/* Aperçu des pièces jointes : vignette discrète au-dessus de la
+            rangée d'icônes, alignée sur la pilule de saisie. */}
+        {attachment ? (
+          <View style={styles.previewRow}>
+            <AttachmentPreview
+              attachment={attachment}
+              onRemove={() => setAttachment(null)}
+            />
+          </View>
+        ) : null}
+        {/* Rangée d'actions média au-dessus de la saisie, alignée sur la
+            pilule (avatar + espacements à gauche). */}
+        <View style={styles.iconRow}>
+          <Pressable
+            onPress={() => void pickPhoto()}
+            disabled={uploading || sending}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={fr.social.commentPhoto}
+            style={styles.composerAction}>
+            <ImagePlus size={20} color={theme.textSecondary} />
+          </Pressable>
+          {canRecord ? (
+            <Pressable
+              onPress={() => void startVoice()}
+              disabled={uploading || sending}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={fr.social.commentVoice}
+              style={styles.composerAction}>
+              <Mic size={20} color={theme.textSecondary} />
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={() => setExprOpen((value) => !value)}
+            disabled={uploading || sending}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={fr.social.commentSticker}
+            accessibilityState={{ selected: exprOpen }}
+            style={styles.composerAction}>
+            <Sticker size={20} color={exprOpen ? theme.accent : theme.textSecondary} />
+          </Pressable>
+        </View>
+        <View style={styles.composer}>
         <Avatar
           name={user?.displayName ?? ''}
           uri={user?.avatarUrl}
           gender={user?.gender}
           size={34}
         />
-        <TextInput
-          ref={inputRef}
-          value={draft}
-          onChangeText={handleDraftChange}
-          placeholder={fr.social.commentPlaceholder}
-          placeholderTextColor={theme.textSecondary}
+        {/* Pilule de saisie : les pièces jointes sont prévisualisées dans la
+            rangée du haut, le 😊 est à l'intérieur, au bord droit. */}
+        <View
           style={[
-            styles.input,
-            { color: theme.text, backgroundColor: theme.backgroundSelected },
-          ]}
-          maxLength={1000}
-          multiline
-          accessibilityLabel={fr.social.commentPlaceholder}
-        />
-        <Pressable
-          onPress={() => setEmojiOpen((value) => !value)}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel={fr.social.addEmoji}>
-          <Smile size={20} color={theme.textSecondary} />
-        </Pressable>
-        <Pressable
-          onPress={() => void send()}
-          disabled={sending || draft.trim().length === 0}
-          accessibilityRole="button"
-          accessibilityLabel={fr.social.commentSend}
-          style={[
-            styles.send,
-            {
-              backgroundColor:
-                draft.trim().length === 0 ? theme.backgroundSelected : theme.accent,
-            },
+            styles.inputWrap,
+            { backgroundColor: theme.backgroundSelected },
           ]}>
-          {sending ? (
-            <ActivityIndicator color={theme.onAccent} size="small" />
-          ) : (
-            <SendHorizontal
-              size={18}
-              color={draft.trim().length === 0 ? theme.textSecondary : theme.onAccent}
-              strokeWidth={2.2}
-            />
-          )}
-        </Pressable>
+          <TextInput
+            ref={inputRef}
+            value={draft}
+            onChangeText={handleDraftChange}
+            placeholder={fr.social.commentPlaceholder}
+            placeholderTextColor={theme.textSecondary}
+            style={[styles.input, { color: theme.text }]}
+            maxLength={1000}
+            multiline
+            accessibilityLabel={fr.social.commentPlaceholder}
+          />
+        </View>
+        {/* Comme Instagram : « Publier » en texte accentué, visible seulement
+            quand il y a quelque chose à envoyer. */}
+        {sending || uploading ? (
+          <ActivityIndicator color={theme.accent} size="small" />
+        ) : draft.trim().length > 0 || attachment ? (
+          <Pressable
+            onPress={() => void send()}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={fr.social.commentSend}>
+            <ThemedText type="small" style={{ color: theme.accent, fontWeight: '700' }}>
+              {fr.social.commentSend}
+            </ThemedText>
+          </Pressable>
+        ) : null}
+        </View>
       </View>
+      )}
     </BottomSheet>
     {report.sheet}
     <ActionSheet
@@ -878,6 +1304,52 @@ export function CommentsSheet({
       onClose={() => setSortSheetOpen(false)}
     />
     </>
+  );
+}
+
+/** Vignette 44 px d'une pièce jointe en cours, avec badge de retrait. */
+function AttachmentPreview({
+  attachment,
+  onRemove,
+}: {
+  attachment: PendingAttachment;
+  onRemove: () => void;
+}) {
+  const theme = useTheme();
+  return (
+    <Pressable
+      onPress={onRemove}
+      accessibilityRole="button"
+      accessibilityLabel={fr.common.remove}
+      style={styles.previewWrap}>
+      {attachment.kind === 'image' ? (
+        <Image
+          source={{ uri: attachment.previewUri }}
+          style={styles.previewThumb}
+          contentFit="cover"
+        />
+      ) : attachment.kind === 'sticker' ? (
+        <View style={styles.previewSticker}>
+          <StickerMessage stickerRef={attachment.ref} size={34} />
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.previewThumb,
+            styles.previewAudio,
+            { backgroundColor: theme.backgroundSelected },
+          ]}>
+          <Mic size={18} color={theme.textSecondary} />
+        </View>
+      )}
+      <View
+        style={[
+          styles.previewBadge,
+          { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        ]}>
+        <X size={11} color={theme.text} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -908,6 +1380,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one,
   },
+  newPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 76,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radii.full,
+  },
   replyBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -934,15 +1414,81 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   emoji: { fontSize: 22 },
+  emojiRail: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
   charCount: { textAlign: 'right', paddingHorizontal: Spacing.three },
+  composerShell: {
+    borderTopWidth: 1,
+  },
+  iconRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    // Alignée sur le bord gauche de la pilule : avatar (34) + marges.
+    paddingLeft: Spacing.three * 2 + 34 + Spacing.two,
+    paddingTop: Spacing.one,
+    paddingBottom: Spacing.half,
+  },
+  previewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    // Même alignement que `iconRow` : au-dessus des icônes, sur la pilule.
+    paddingLeft: Spacing.three * 2 + 34 + Spacing.two,
+    paddingTop: Spacing.one,
+    paddingBottom: Spacing.half,
+  },
+  previewWrap: {
+    width: 44,
+    height: 44,
+  },
+  previewSticker: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewAudio: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voicePreviewRow: {
+    flexDirection: 'row',
+    marginBottom: Spacing.two,
+  },
+  previewThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: Radii.md,
+  },
+  previewBadge: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
-    paddingTop: Spacing.two,
+    paddingTop: Spacing.one,
     paddingBottom: Spacing.two,
-    borderTopWidth: 1,
+  },
+  inputWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    borderRadius: Radii.full,
+    paddingRight: Spacing.two,
   },
   input: {
     flex: 1,
@@ -953,11 +1499,11 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     fontSize: 15,
   },
-  send: {
-    width: 40,
-    height: 40,
-    borderRadius: Radii.full,
-    alignItems: 'center',
+  inputEmoji: {
     justifyContent: 'center',
+    paddingHorizontal: Spacing.one,
+    paddingBottom: Spacing.two,
   },
+  composerAction: { justifyContent: 'center', padding: Spacing.one },
+  voiceSlot: { flex: 1 },
 });

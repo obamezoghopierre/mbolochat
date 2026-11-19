@@ -8,6 +8,7 @@ import {
 import {
   and,
   asc,
+  count,
   desc,
   eq,
   inArray,
@@ -56,6 +57,7 @@ import type {
 } from './dto/interactions.dto.js';
 import { COMMENT_REACTION_KINDS, MAX_WATCH_MS } from './dto/interactions.dto.js';
 import { loadPublicationMedia, type PublicationMediaView } from './publication-media.js';
+import { PublicationEvents } from './publication-events.js';
 import type { CreatePublicationDto } from './dto/create-publication.dto.js';
 
 /** Carte d'auteur réduite au strict public : aucune donnée personnelle. */
@@ -101,7 +103,24 @@ export interface CommentView {
   id: string;
   publicationId: string;
   parentId: string | null;
+  kind: 'text' | 'audio' | 'image' | 'sticker';
   body: string;
+  /** Pièce jointe : média (photo/vocal) résolu en URL, ou sticker de catalogue. */
+  attachment: {
+    kind: 'image' | 'audio' | 'sticker';
+    url: string | null;
+    mime: string | null;
+    durationMs: number | null;
+    width: number | null;
+    height: number | null;
+    stickerRef: string | null;
+    /** Note vocale jointe en légende (photo/sticker), URL signée. */
+    voice: {
+      url: string | null;
+      mime: string;
+      durationMs: number | null;
+    } | null;
+  } | null;
   createdAt: Date;
   author: AuthorCard;
   likeCount: number;
@@ -190,7 +209,7 @@ export interface CommentPage {
 export type CommentSort = 'top' | 'recent';
 
 /** Nombre maximal de commentaires épinglés renvoyés en tête de fil. */
-const MAX_PINNED_COMMENTS = 5;
+const MAX_PINNED_COMMENTS = 3;
 
 /** Ordre d'affichage stable des réactions emoji dans la vue. */
 const COMMENT_REACTION_ORDER = COMMENT_REACTION_KINDS;
@@ -220,6 +239,7 @@ export class PublicationsService {
     private readonly notifications: SocialNotificationsService,
     private readonly moderation: ModerationService,
     private readonly storage: ObjectStorageService,
+    private readonly events: PublicationEvents,
   ) {}
 
   async create(authorId: string, dto: CreatePublicationDto): Promise<PublicationView> {
@@ -639,11 +659,69 @@ export class PublicationsService {
     viewerId: string,
     dto: CreateCommentDto,
   ): Promise<CommentView> {
-    const body = dto.body.trim();
-    if (body.length === 0) {
+    const body = (dto.body ?? '').trim();
+    const { row, facts } = await this.assertVisible(publicationId, viewerId);
+
+    // Pièce jointe : sticker de catalogue, ou asset image/audio `ready` du
+    // compte. Un commentaire sans corps ni pièce jointe est refusé.
+    let kind: 'text' | 'audio' | 'image' | 'sticker' = 'text';
+    let mediaAssetId: string | null = null;
+    let voiceMediaAssetId: string | null = null;
+    let stickerRef: string | null = null;
+    if (dto.stickerRef) {
+      if (!/^[\w-]+\/[\w-]+$/.test(dto.stickerRef)) {
+        throw new BadRequestException('Sticker invalide.');
+      }
+      kind = 'sticker';
+      stickerRef = dto.stickerRef;
+    } else if (dto.mediaAssetId) {
+      const [asset] = await this.db
+        .select()
+        .from(mediaAssets)
+        .where(eq(mediaAssets.id, dto.mediaAssetId));
+      if (
+        !asset ||
+        asset.ownerId !== viewerId ||
+        (asset.status !== 'ready' && asset.status !== 'uploaded') ||
+        asset.deletedAt !== null ||
+        (asset.kind !== 'image' && asset.kind !== 'audio')
+      ) {
+        throw new BadRequestException('Média introuvable ou pas encore prêt.');
+      }
+      kind = asset.kind;
+      mediaAssetId = asset.id;
+    }
+
+    // Note vocale : légende d'une photo/sticker, ou pièce jointe principale
+    // quand elle est seule (commentaire purement vocal, corps = légende).
+    if (dto.voiceMediaAssetId) {
+      const [voiceAsset] = await this.db
+        .select()
+        .from(mediaAssets)
+        .where(eq(mediaAssets.id, dto.voiceMediaAssetId));
+      if (
+        !voiceAsset ||
+        voiceAsset.ownerId !== viewerId ||
+        (voiceAsset.status !== 'ready' && voiceAsset.status !== 'uploaded') ||
+        voiceAsset.deletedAt !== null ||
+        voiceAsset.kind !== 'audio' ||
+        voiceAsset.id === mediaAssetId
+      ) {
+        throw new BadRequestException('Note vocale introuvable ou pas encore prête.');
+      }
+      if (!mediaAssetId && !stickerRef) {
+        kind = 'audio';
+        mediaAssetId = voiceAsset.id;
+      } else if (kind === 'audio') {
+        throw new BadRequestException('Une seule note vocale par commentaire.');
+      } else {
+        voiceMediaAssetId = voiceAsset.id;
+      }
+    }
+
+    if (!mediaAssetId && !stickerRef && body.length === 0) {
       throw new BadRequestException('Le commentaire ne peut pas être vide.');
     }
-    const { row, facts } = await this.assertVisible(publicationId, viewerId);
 
     const [settings] = await this.db
       .select({ commentPermission: userSocialSettings.commentPermission })
@@ -677,7 +755,11 @@ export class PublicationsService {
           publicationId,
           authorId: viewerId,
           parentId: dto.parentId ?? null,
+          kind,
           body,
+          mediaAssetId,
+          voiceMediaAssetId,
+          stickerRef,
           clientId: dto.clientId,
         })
         .onConflictDoNothing()
@@ -697,7 +779,10 @@ export class PublicationsService {
           .where(eq(comments.id, comment.parentId));
       }
       await this.refreshHotScore(tx, publicationId);
-      const tagged = await this.applyCommentTags(tx, body, viewerId, publicationId, comment.id);
+      const tagged =
+        body.length > 0
+          ? await this.applyCommentTags(tx, body, viewerId, publicationId, comment.id)
+          : [];
       const notifications = [
         await this.notifications.create(tx, {
           recipientId: row.authorId,
@@ -731,13 +816,21 @@ export class PublicationsService {
       await this.notifications.deliver(notification);
     }
 
-    if (inserted) {
-      return this.loadCommentView(inserted.id, viewerId);
-    }
+    const view = inserted
+      ? await this.loadCommentView(inserted.id, viewerId)
+      : await this.loadExistingCommentView(dto.clientId, viewerId);
+    // Le salon est scopé par publication et n'accueille que des viewers ayant
+    // passé la même vérification de visibilité que la route REST.
+    this.events.emitCommentCreated(publicationId, view);
+    return view;
+  }
+
+  /** Rejeu idempotent : le commentaire existe déjà pour ce `clientId`. */
+  private async loadExistingCommentView(clientId: string, viewerId: string): Promise<CommentView> {
     const [existing] = await this.db
       .select()
       .from(comments)
-      .where(and(eq(comments.authorId, viewerId), eq(comments.clientId, dto.clientId)));
+      .where(and(eq(comments.authorId, viewerId), eq(comments.clientId, clientId)));
     if (!existing) {
       throw new ForbiddenException('Commentaire en conflit.');
     }
@@ -865,6 +958,8 @@ export class PublicationsService {
         id: comments.id,
         parentId: comments.parentId,
         publicationAuthorId: publications.authorId,
+        publicationId: comments.publicationId,
+        pinnedAt: comments.pinnedAt,
         deletedAt: comments.deletedAt,
       })
       .from(comments)
@@ -879,11 +974,29 @@ export class PublicationsService {
     if (row.parentId) {
       throw new BadRequestException('Seule une réponse de premier niveau peut être épinglée.');
     }
+    if (pinned && !row.pinnedAt) {
+      const [{ value: pinnedCount } = { value: 0 }] = await this.db
+        .select({ value: count() })
+        .from(comments)
+        .where(
+          and(
+            eq(comments.publicationId, row.publicationId),
+            isNull(comments.deletedAt),
+            isNull(comments.parentId),
+            isNotNull(comments.pinnedAt),
+          ),
+        );
+      if (pinnedCount >= MAX_PINNED_COMMENTS) {
+        throw new BadRequestException('Limite de commentaires épinglés atteinte.');
+      }
+    }
     await this.db
       .update(comments)
       .set({ pinnedAt: pinned ? new Date() : null })
       .where(eq(comments.id, commentId));
-    return this.loadCommentView(commentId, viewerId);
+    const view = await this.loadCommentView(commentId, viewerId);
+    this.events.emitCommentUpdated(view);
+    return view;
   }
 
   /** Réaction emoji sur un commentaire : une seule par compte, type modifiable. */
@@ -893,14 +1006,21 @@ export class PublicationsService {
     kind: CommentReactionKind | null,
   ): Promise<CommentView> {
     const [row] = await this.db
-      .select({ publicationId: comments.publicationId })
+      .select({
+        publicationId: comments.publicationId,
+        authorId: comments.authorId,
+      })
       .from(comments)
       .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
     if (!row) {
       throw new NotFoundException('Commentaire introuvable.');
     }
-    await this.assertVisible(row.publicationId, viewerId);
+    const { facts } = await this.assertVisible(row.publicationId, viewerId);
+    if (facts.blocked) {
+      throw new ForbiddenException('Interaction impossible avec ce compte.');
+    }
 
+    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
     await this.db.transaction(async (tx) => {
       if (kind === null) {
         await tx
@@ -910,6 +1030,12 @@ export class PublicationsService {
           );
         return;
       }
+      const [existing] = await tx
+        .select({ kind: commentReactions.kind })
+        .from(commentReactions)
+        .where(
+          and(eq(commentReactions.commentId, commentId), eq(commentReactions.userId, viewerId)),
+        );
       await tx
         .insert(commentReactions)
         .values({ commentId, userId: viewerId, kind })
@@ -917,9 +1043,23 @@ export class PublicationsService {
           target: [commentReactions.commentId, commentReactions.userId],
           set: { kind },
         });
+      // Une seule notification par commentateur, même s'il change de réaction.
+      if (!existing) {
+        notification = await this.notifications.create(tx, {
+          recipientId: row.authorId,
+          actorId: viewerId,
+          type: 'like',
+          dedupeKey: `comment-react:${commentId}:${viewerId}`,
+          publicationId: row.publicationId,
+          commentId,
+        });
+      }
     });
 
-    return this.loadCommentView(commentId, viewerId);
+    await this.notifications.deliver(notification);
+    const view = await this.loadCommentView(commentId, viewerId);
+    this.events.emitCommentUpdated(view);
+    return view;
   }
 
   /** Commentaires racines épinglés, du plus récemment épinglé au plus ancien. */
@@ -1010,17 +1150,90 @@ export class PublicationsService {
         mine.set(row.commentId, row.kind);
       }
     }
+
+    // Pièces jointes média : une requête pour toute la page, URL signée —
+    // un commentaire n'hérite jamais de l'URL publique d'une publication,
+    // même si le compte est public (le média appartient au commentateur).
+    const assetIds = [
+      ...new Set(
+        rows
+          .flatMap((row) => [row.comment.mediaAssetId, row.comment.voiceMediaAssetId])
+          .filter((id): id is string => typeof id === 'string'),
+      ),
+    ];
+    const assets = new Map<
+      string,
+      { url: string | null; mime: string; durationMs: number | null; width: number | null; height: number | null }
+    >();
+    if (assetIds.length > 0 && this.storage.isConfigured()) {
+      const found = await this.db
+        .select()
+        .from(mediaAssets)
+        .where(and(inArray(mediaAssets.id, assetIds), isNull(mediaAssets.deletedAt)));
+      await Promise.all(
+        found.map(async (asset) => {
+          const url = await this.storage.presignGet(asset.storageKey);
+          assets.set(asset.id, {
+            url,
+            mime: asset.mime,
+            durationMs: asset.durationMs,
+            width: asset.width,
+            height: asset.height,
+          });
+        }),
+      );
+    }
+
     return rows.map((row) => {
       const byKind = counts.get(row.comment.id);
       const reactions = COMMENT_REACTION_ORDER.flatMap((kind) => {
         const count = byKind?.get(kind) ?? 0;
         return count > 0 ? [{ kind, count }] : [];
       });
+      const media = row.comment.mediaAssetId
+        ? assets.get(row.comment.mediaAssetId)
+        : undefined;
+      const voiceMedia = row.comment.voiceMediaAssetId
+        ? assets.get(row.comment.voiceMediaAssetId)
+        : undefined;
+      const voice = voiceMedia
+        ? {
+            url: voiceMedia.url,
+            mime: voiceMedia.mime,
+            durationMs: voiceMedia.durationMs,
+          }
+        : null;
+      const attachment =
+        row.comment.kind === 'sticker' && row.comment.stickerRef
+          ? {
+              kind: 'sticker' as const,
+              url: null,
+              mime: null,
+              durationMs: null,
+              width: null,
+              height: null,
+              stickerRef: row.comment.stickerRef,
+              voice,
+            }
+          : row.comment.kind !== 'text' && media
+            ? {
+                kind: row.comment.kind as 'image' | 'audio',
+                url: media.url,
+                mime: media.mime,
+                durationMs: media.durationMs,
+                width: media.width,
+                height: media.height,
+                stickerRef: null,
+                voice,
+              }
+            : null;
       return {
         id: row.comment.id,
         publicationId: row.comment.publicationId,
         parentId: row.comment.parentId,
+        kind: row.comment.kind,
         body: row.comment.body,
+        attachment,
         createdAt: row.comment.createdAt,
         author: { ...row.author, following: row.following, followedBy: row.followedBy },
         likeCount: row.comment.likeCount,
@@ -1074,7 +1287,13 @@ export class PublicationsService {
       }
       await this.refreshHotScore(tx, row.publicationId);
     });
+    this.events.emitCommentDeleted(row.publicationId, commentId);
     return { deleted: true };
+  }
+
+  /** Visibilité d'une publication pour les salons temps réel (gateway). */
+  async assertVisiblePublication(publicationId: string, viewerId: string): Promise<void> {
+    await this.assertVisible(publicationId, viewerId);
   }
 
   /**
@@ -1272,14 +1491,21 @@ export class PublicationsService {
   /** J'aime sur un commentaire, idempotent et transactionnel. */
   async likeComment(commentId: string, viewerId: string, liked: boolean): Promise<CommentView> {
     const [row] = await this.db
-      .select({ publicationId: comments.publicationId })
+      .select({
+        publicationId: comments.publicationId,
+        authorId: comments.authorId,
+      })
       .from(comments)
       .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
     if (!row) {
       throw new NotFoundException('Commentaire introuvable.');
     }
-    await this.assertVisible(row.publicationId, viewerId);
+    const { facts } = await this.assertVisible(row.publicationId, viewerId);
+    if (facts.blocked) {
+      throw new ForbiddenException('Interaction impossible avec ce compte.');
+    }
 
+    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
     await this.db.transaction(async (tx) => {
       const [existing] = await tx
         .select({ userId: commentLikes.userId })
@@ -1295,6 +1521,14 @@ export class PublicationsService {
           .update(comments)
           .set({ likeCount: sql`${comments.likeCount} + 1` })
           .where(eq(comments.id, commentId));
+        notification = await this.notifications.create(tx, {
+          recipientId: row.authorId,
+          actorId: viewerId,
+          type: 'like',
+          dedupeKey: `comment-like:${commentId}:${viewerId}`,
+          publicationId: row.publicationId,
+          commentId,
+        });
       } else if (!liked && existing) {
         await tx
           .delete(commentLikes)
@@ -1306,7 +1540,10 @@ export class PublicationsService {
       }
     });
 
-    return this.loadCommentView(commentId, viewerId);
+    await this.notifications.deliver(notification);
+    const view = await this.loadCommentView(commentId, viewerId);
+    this.events.emitCommentUpdated(view);
+    return view;
   }
 
   /** « Je n'aime pas » sur un commentaire, idempotent et exclusif du j'aime. */
@@ -1351,7 +1588,9 @@ export class PublicationsService {
       }
     });
 
-    return this.loadCommentView(commentId, viewerId);
+    const view = await this.loadCommentView(commentId, viewerId);
+    this.events.emitCommentUpdated(view);
+    return view;
   }
 
   /**

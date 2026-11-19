@@ -55,6 +55,11 @@ export class ObjectStorageService {
       credentials: { accessKeyId: accessKeyId!, secretAccessKey: secretAccessKey! },
       // MinIO et beaucoup de proxys exposent le bucket dans le chemin.
       forcePathStyle: config.get<string>('SOCIAL_S3_FORCE_PATH_STYLE') !== 'false',
+      // Le SDK récent signe un CRC32 par défaut que les S3 compatibles
+      // (LocalStack, MinIO ancien) rejettent sur les PUT présignés : on ne
+      // l'exige que lorsque le service le demande.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
       ...(endpoint ? { endpoint } : {}),
     });
   }

@@ -14,7 +14,9 @@ function comment(overrides: Partial<PublicationComment> = {}): PublicationCommen
     id: 'c1',
     publicationId: 'p1',
     parentId: null,
+    kind: 'text',
     body: 'Bonjour',
+    attachment: null,
     createdAt: '2026-11-16T10:00:00.000Z',
     author: {
       id: 'u1',
