@@ -9,6 +9,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createWriteStream } from 'node:fs';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 /** Durée de vie d'une URL d'upload : courte, à usage unique de fait. */
@@ -43,7 +44,8 @@ export class ObjectStorageService {
     const bucket = config.get<string>('SOCIAL_S3_BUCKET');
     const accessKeyId = config.get<string>('SOCIAL_S3_ACCESS_KEY_ID');
     const secretAccessKey = config.get<string>('SOCIAL_S3_SECRET_ACCESS_KEY');
-    this.publicBaseUrl = config.get<string>('SOCIAL_S3_PUBLIC_BASE_URL') ?? null;
+    this.publicBaseUrl =
+      config.get<string>('SOCIAL_S3_PUBLIC_BASE_URL') ?? null;
     this.bucket = bucket && accessKeyId && secretAccessKey ? bucket : null;
 
     if (!this.bucket) {
@@ -52,9 +54,13 @@ export class ObjectStorageService {
     const endpoint = config.get<string>('SOCIAL_S3_ENDPOINT');
     this.client = new S3Client({
       region: config.get<string>('SOCIAL_S3_REGION') ?? 'us-east-1',
-      credentials: { accessKeyId: accessKeyId!, secretAccessKey: secretAccessKey! },
+      credentials: {
+        accessKeyId: accessKeyId!,
+        secretAccessKey: secretAccessKey!,
+      },
       // MinIO et beaucoup de proxys exposent le bucket dans le chemin.
-      forcePathStyle: config.get<string>('SOCIAL_S3_FORCE_PATH_STYLE') !== 'false',
+      forcePathStyle:
+        config.get<string>('SOCIAL_S3_FORCE_PATH_STYLE') !== 'false',
       // Le SDK récent signe un CRC32 par défaut que les S3 compatibles
       // (LocalStack, MinIO ancien) rejettent sur les PUT présignés : on ne
       // l'exige que lorsque le service le demande.
@@ -74,7 +80,11 @@ export class ObjectStorageService {
     const { client, bucket } = this.require();
     return getSignedUrl(
       client,
-      new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType }),
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ContentType: contentType,
+      }),
       { expiresIn: UPLOAD_URL_TTL_SECONDS },
     );
   }
@@ -85,11 +95,18 @@ export class ObjectStorageService {
    *
    * Le client ne reçoit jamais la clé : seulement une URL qui expire.
    */
-  async presignGet(key: string, expiresIn = READ_URL_TTL_SECONDS): Promise<string> {
+  async presignGet(
+    key: string,
+    expiresIn = READ_URL_TTL_SECONDS,
+  ): Promise<string> {
     const { client, bucket } = this.require();
-    return getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
-      expiresIn,
-    });
+    return getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      {
+        expiresIn,
+      },
+    );
   }
 
   /**
@@ -113,7 +130,9 @@ export class ObjectStorageService {
   async head(key: string): Promise<StoredObjectInfo | null> {
     const { client, bucket } = this.require();
     try {
-      const response = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      const response = await client.send(
+        new HeadObjectCommand({ Bucket: bucket, Key: key }),
+      );
       return {
         size: response.ContentLength ?? 0,
         contentType: response.ContentType ?? null,
@@ -129,7 +148,11 @@ export class ObjectStorageService {
     const { client, bucket } = this.require();
     try {
       const response = await client.send(
-        new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=0-${bytes - 1}` }),
+        new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Range: `bytes=0-${bytes - 1}`,
+        }),
       );
       return this.streamToBuffer(response.Body);
     } catch (error) {
@@ -138,11 +161,46 @@ export class ObjectStorageService {
     }
   }
 
+  /**
+   * Ouvre un objet en lecture streaming, `Range` propagé à S3.
+   *
+   * Sert le proxy `social-cdn` : la lecture vidéo exige des réponses 206,
+   * impossibles à reproduire avec `download()` qui charge tout en mémoire.
+   */
+  async open(
+    key: string,
+    range?: string,
+  ): Promise<{
+    body: Readable;
+    contentType: string;
+    contentLength: number | undefined;
+    contentRange: string | undefined;
+    etag: string | undefined;
+  }> {
+    const { client, bucket } = this.require();
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ...(range ? { Range: range } : {}),
+      }),
+    );
+    return {
+      body: response.Body as Readable,
+      contentType: response.ContentType ?? 'application/octet-stream',
+      contentLength: response.ContentLength,
+      contentRange: response.ContentRange,
+      etag: response.ETag,
+    };
+  }
+
   /** Contenu complet de l'objet, `null` s'il n'existe pas. */
   async download(key: string): Promise<Buffer | null> {
     const { client, bucket } = this.require();
     try {
-      const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
       return this.streamToBuffer(response.Body);
     } catch (error) {
       if (this.isNotFound(error)) return null;
@@ -162,7 +220,9 @@ export class ObjectStorageService {
   async downloadToFile(key: string, path: string): Promise<boolean> {
     const { client, bucket } = this.require();
     try {
-      const response = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      const response = await client.send(
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+      );
       if (!response.Body) {
         return false;
       }
@@ -181,7 +241,12 @@ export class ObjectStorageService {
   async put(key: string, body: Buffer, contentType: string): Promise<void> {
     const { client, bucket } = this.require();
     await client.send(
-      new PutObjectCommand({ Bucket: bucket, Key: key, Body: body, ContentType: contentType }),
+      new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+      }),
     );
   }
 
@@ -205,8 +270,8 @@ export class ObjectStorageService {
 
   private isNotFound(error: unknown): boolean {
     const name = (error as { name?: string })?.name;
-    const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata
-      ?.httpStatusCode;
+    const status = (error as { $metadata?: { httpStatusCode?: number } })
+      ?.$metadata?.httpStatusCode;
     return name === 'NotFound' || name === 'NoSuchKey' || status === 404;
   }
 

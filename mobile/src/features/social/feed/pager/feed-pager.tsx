@@ -29,7 +29,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ActionSheet, type SheetAction } from '@/components/action-sheet';
 import { ThemedText } from '@/components/themed-text';
-import { FeedMetrics, FeedSurface, Radii, Spacing } from '@/constants/theme';
+import { FeedSurface, Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { useAuth } from '@/lib/auth-context';
 import { postDeepLink } from '@/lib/deep-link';
@@ -73,9 +73,6 @@ const TOAST_DURATION = 1600;
 const AnimatedFlatList = Animated.createAnimatedComponent(
   FlatList as new (props: FlatListProps<FeedPost>) => FlatList<FeedPost>,
 );
-
-/** Respiration entre la ligne du son et la barre de progression. */
-const SOUND_TO_PROGRESS_GAP = 12;
 
 /**
  * Pager vertical plein écran : une publication par écran, snap
@@ -386,16 +383,12 @@ export function FeedPager({
           const videoMode = videoPageMode(distance, preloadNeighbors);
           const sourceUrl =
             videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
-          // Le bloc infos et le rail partagent la même ancre basse. Ils remontent
-          // de la hauteur de la barre, de la zone de la barre de progression
-          // (24 px) et de 12 px de respiration : la ligne du son ne touche
-          // jamais le trait de progression.
-          // La zone de progression n'existe que sur les vidéos : la réserver
-          // sur un post texte ou une photo laisserait 36 px de vide au-dessus
-          // de la barre d'onglets.
-          const paddingBottom =
-            barInset +
-            (isVideoPost(item) ? FeedMetrics.progressTrackHeight + SOUND_TO_PROGRESS_GAP : 0);
+          // Le bloc infos et le rail partagent la même ancre basse : ils
+          // se posent ~35 px au-dessus du cluster icônes+libellés de la
+          // barre d'onglets — la position basse d'un fil vidéo, sans jamais
+          // passer dessous. La ligne de progression vit dans la bande basse
+          // de la barre : pas d'espace à réserver ici.
+          const paddingBottom = barInset - Spacing.two;
 
           return (
             <Animated.View style={[styles.page, { height, width: '100%' }, pageAnim(index)]}>

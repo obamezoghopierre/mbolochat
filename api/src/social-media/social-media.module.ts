@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ObjectStorageService } from './object-storage.service.js';
+import { SocialCdnController } from './social-cdn.controller.js';
 import { SocialMediaController } from './social-media.controller.js';
 import { SocialMediaService } from './social-media.service.js';
 
@@ -9,7 +10,7 @@ import { SocialMediaService } from './social-media.service.js';
  * collision ; le plan (ADR-0001) appelle ce domaine « media (social) ».
  */
 @Module({
-  controllers: [SocialMediaController],
+  controllers: [SocialMediaController, SocialCdnController],
   providers: [SocialMediaService, ObjectStorageService],
   exports: [SocialMediaService, ObjectStorageService],
 })

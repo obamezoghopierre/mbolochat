@@ -100,7 +100,7 @@ export function FeedScreen() {
       sheetPosition.value = withTiming(screenHeight, { duration: 260 });
     }
   }, [commentsPost, screenHeight, sheetPosition]);
-  const feedHeight = Math.max(1, screenHeight - insets.bottom);
+  const feedHeight = screenHeight;
   // Espace au-dessus de la plus haute détentes : la carte est à sa plus petite.
   const sheetOpenTop = screenHeight * (1 - COMMENTS_SHEET_SNAP_RATIO);
   // En dessous de cette hauteur d'espace, l'échelle atteint 1 (feed intact).
@@ -314,14 +314,13 @@ function FeedSurfaceView({
   // l'utilisateur doit savoir pourquoi rien de nouveau n'arrive.
   const network = useNetworkState();
   const offline = network.isConnected === false;
-  // La vidéo ne passe jamais sous la barre système (Retour/Accueil/Récents) :
-  // l'item s'arrête juste au-dessus. On retire donc l'inset
-  // du bas à la hauteur mesurée par `onLayout`.
-  const height = Math.max(0, screenHeight - insets.bottom);
-  // La barre d'onglets flotte au-dessus de la vidéo : elle occupe sa propre
-  // hauteur utile, et repose sur la barre système. Les overlays remontent de
-  // cette valeur pour ne pas se retrouver dessous.
-  const barInset = TabBarHeight;
+  // La vidéo couvre tout l'écran, y compris sous la zone de gestes système —
+  // comme un fil vidéo immersif. La barre d'onglets (transparente sur le fil)
+  // flotte par-dessus : les overlays remontent de sa hauteur + l'inset pour ne
+  // jamais passer dessous, et la ligne de progression se loge dans la bande
+  // vide sous les icônes.
+  const height = screenHeight;
+  const barInset = TabBarHeight + insets.bottom;
   const report = useReportPublication(feed.notifyError);
 
   // Le toast ne doit jamais rester affiché indéfiniment.

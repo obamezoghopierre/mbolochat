@@ -20,6 +20,8 @@ import { FeedSurface, Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import type { FeedPost } from '@/lib/types';
 import { FeedGestureLayer } from './feed-gestures';
+import { primaryMedia } from './feed-media';
+import { isLoadStalled, loadKeyFor, showsInitialSpinner, VIDEO_STALL_TIMEOUT_MS } from './load-guard';
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { HeartBurstOverlay } from './heart-burst';
 import { ProgressBar } from './progress-bar';
@@ -106,23 +108,41 @@ export function VideoPage({
 }) {
   // Même résolution que le préchargement détaché : sans cela, deux URL
   // différentes (donc deux entrées de cache) pour la même vidéo.
-  const url = videoSourceUrl(post, preferLowQuality);
+  // Vitesse augmentée : la variante basse qualité prend le relais — elle
+  // divise la charge de décodage, ce qui évite les saccades à 1,5×/2× sur
+  // les machines sans décodeur matériel. Le retour à 1× restaure le flux
+  // principal, et l'absence de variante basse qualité ne change rien.
+  // Pastille de vitesse : index dans PLAYBACK_RATES, cyclé au tap.
+  const [rateIndex, setRateIndex] = useState(0);
+  const url = videoSourceUrl(post, preferLowQuality || rateIndex > 0);
   const posterUrl = videoPosterUrl(post);
   const insets = useSafeAreaInsets();
   const { width: pageWidth } = useWindowDimensions();
+  // Comportement d'un fil vidéo : une vidéo plus large que l'écran est
+  // affichée entière, avec des barres noires haut/bas (`contain`) ; une
+  // vidéo plus haute est rognée en haut/bas (`cover`) pour remplir l'écran.
+  const media = primaryMedia(post);
+  const videoAspect =
+    media?.width && media?.height ? media.width / media.height : null;
+  const screenAspect =
+    pageWidth > 0 && chrome.height > 0 ? pageWidth / chrome.height : null;
+  const letterboxed =
+    videoAspect !== null &&
+    screenAspect !== null &&
+    videoAspect >= screenAspect;
   const viewRef = useRef<VideoView>(null);
   const [userPaused, setUserPaused] = useState(false);
   // Source dont la première image a été décodée : le poster reste affiché page
   // par page tant que ce n'est pas le cas, pour éviter le flash noir.
   const [firstFrameSource, setFirstFrameSource] = useState<string | null>(null);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Pastille de vitesse : index dans PLAYBACK_RATES, cyclé au tap.
-  const [rateIndex, setRateIndex] = useState(0);
   // Flash « +10 s / −10 s » du double-tap latéral.
   const [skipFlash, setSkipFlash] = useState<{ dir: 1 | -1; key: number } | null>(null);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Reprises automatiques déjà tentées sur cette source en erreur.
   const [autoRetries, setAutoRetries] = useState(0);
+  // Numéro de la tentative de chargement en cours : reprise manuelle comprise.
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   // Le cache disque est activé sur la source (`useCaching`) : revenir sur une
   // vidéo déjà vue relit le cache local au lieu de re-télécharger. Le plafond de
@@ -151,6 +171,18 @@ export function VideoPage({
   // trop tôt est perdu. On relance donc aussi quand il devient `readyToPlay`.
   const { status, error } = useEvent(player, 'statusChange', { status: player.status });
 
+  // Garde-fou du chargement : un flux peut rester en `loading` sans jamais
+  // rendre d'image (décodeur bloqué, serveur muet). Sans cela, le poster reste
+  // affiché indéfiniment et l'utilisateur n'a aucun moyen d'agir.
+  const loadKey = loadKeyFor(url, loadAttempt);
+  const [stalledKey, setStalledKey] = useState<string | null>(null);
+  const stalled = isLoadStalled(status, stalledKey, loadKey);
+  // Une lecture qui démarre réarme le garde-fou : un rebuffering ultérieur doit
+  // pouvoir attendre à nouveau le délai complet. Fait pendant le rendu (pattern
+  // « derived state »), comme `userPaused` plus bas.
+  if (status === 'readyToPlay' && stalledKey !== null) {
+    setStalledKey(null);
+  }
   // `muted` et la cadence de progression sont des propriétés impératives de
   // l'API expo-video : la règle d'immutabilité du React Compiler ne s'applique
   // pas à un objet natif.
@@ -179,7 +211,9 @@ export function VideoPage({
   // Mémorise la position de lecture pour la reprise au retour sur la page.
   // `useEventListener` maintient le dernier listener : pas de closure périmée.
   useEventListener(player, 'timeUpdate', ({ currentTime }) => {
-    if (chrome.isActive) {
+    // Uniquement en lecture effective : pendant un `replaceAsync` (bascule
+    // de qualité), les `timeUpdate` à ~0 écraseraient la position à reprendre.
+    if (chrome.isActive && player.status === 'readyToPlay') {
       // Plafond : la map survit à tout le fil, on n'en garde que les plus
       // récentes (itération dans l'ordre d'insertion de la Map).
       if (playbackPositions.size >= 200) {
@@ -192,15 +226,16 @@ export function VideoPage({
     }
   });
 
-  // Au premier `readyToPlay`, reprend où la vidéo s'était arrêtée. Une seule
-  // fois par lecteur : après le seek initial, les `statusChange` suivants ne
-  // doivent pas ramener la tête en arrière.
-  const resumedFor = useRef<VideoPlayer | null>(null);
+  // Au premier `readyToPlay` de chaque source, reprend où la vidéo
+  // s'était arrêtée. La clé est l'URL : un `replaceAsync` (bascule
+  // basse qualité à vitesse augmentée) garde le même lecteur mais doit
+  // déclencher une nouvelle reprise.
+  const resumedUrl = useRef<string | null>(null);
   useEffect(() => {
-    if (status !== 'readyToPlay' || resumedFor.current === player) {
+    if (status !== 'readyToPlay' || resumedUrl.current === url) {
       return;
     }
-    resumedFor.current = player;
+    resumedUrl.current = url;
     const saved = playbackPositions.get(post.id) ?? 0;
     const duration = player.duration;
     const tooCloseToEnd =
@@ -208,7 +243,17 @@ export function VideoPage({
     if (saved >= RESUME_MIN_SECONDS && !tooCloseToEnd) {
       seekExactly(player, saved);
     }
-  }, [player, post.id, status]);
+  }, [player, post.id, status, url]);
+
+  // Le spinner centré ne sert qu'au tout premier chargement : passé le
+  // premier `readyToPlay`, le buffering s'anime sur la barre de progression.
+  // Le drapeau est par lecteur : un lecteur recréé repasse par le spinner.
+  // Ajusté pendant le rendu (pattern « derived state »), comme `userPaused`.
+  const [readyPlayer, setReadyPlayer] = useState<VideoPlayer | null>(null);
+  if (status === 'readyToPlay' && readyPlayer !== player) {
+    setReadyPlayer(player);
+  }
+  const buffering = status === 'loading' && readyPlayer === player;
 
   // Devenir la page active réarme la lecture : une pause volontaire ne doit pas
   // survivre à la sortie de l'écran : dès que la page devient inactive, le
@@ -276,14 +321,29 @@ export function VideoPage({
     [],
   );
 
-  const retry = useCallback(() => {
+  // Volontairement non mémoïsé : le React Compiler s'en charge, et une
+  // `useCallback` ici faisait échouer la préservation de la mémoïsation
+  // (`preserve-manual-memoization`).
+  const retry = () => {
     if (!url) {
       return;
     }
     setFirstFrameSource(null);
     setAutoRetries(0);
+    setLoadAttempt((attempt) => attempt + 1);
     void player.replaceAsync({ uri: url, useCaching: true }).catch(() => undefined);
-  }, [player, url]);
+  };
+
+  // Le chargement bloqué n'est pas une erreur du lecteur : il attend toujours.
+  // Seul un délai sans image permet de le distinguer d'un démarrage lent, et
+  // d'offrir « Réessayer » plutôt qu'un poster figé.
+  useEffect(() => {
+    if (status !== 'loading' || !url) {
+      return;
+    }
+    const timer = setTimeout(() => setStalledKey(loadKey), VIDEO_STALL_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [status, loadKey, url]);
 
   // Backoff automatique : une coupure réseau passagère ne doit pas imposer un
   // appui sur « Réessayer ». Les délais croissent, l'état d'erreur n'apparaît
@@ -296,6 +356,7 @@ export function VideoPage({
     const timer = setTimeout(() => {
       setAutoRetries((count) => count + 1);
       setFirstFrameSource(null);
+      setLoadAttempt((attempt) => attempt + 1);
       void player.replaceAsync({ uri: url, useCaching: true }).catch(() => undefined);
     }, delay);
     return () => clearTimeout(timer);
@@ -339,6 +400,14 @@ export function VideoPage({
   // sans lui, chaque changement de vidéo laisserait voir un flash noir le
   // temps que le lecteur se prépare. Il sert aussi de repli pendant une erreur.
   const showPoster = posterUrl !== null && firstFrameSource !== url;
+  // Témoin du premier chargement : le poster seul ne dit pas si ça progresse.
+  const loading =
+    showsInitialSpinner(status, firstFrameSource === url, stalled) &&
+    chrome.isActive &&
+    !exhausted &&
+    url !== null;
+  // Aucune lecture possible : erreur épuisée, flux bloqué, ou pas de source.
+  const unplayable = exhausted || stalled || !url;
 
   return (
     <View style={[styles.page, { height: chrome.height }]}>
@@ -357,7 +426,7 @@ export function VideoPage({
         // scroll. Une `TextureView` est un vrai View, découpé et positionné
         // comme le reste de la hiérarchie.
         surfaceType="textureView"
-        contentFit="cover"
+        contentFit={letterboxed ? 'contain' : 'cover'}
         nativeControls={false}
         pointerEvents="none"
         onFirstFrameRender={() => setFirstFrameSource(url)}
@@ -372,29 +441,46 @@ export function VideoPage({
         />
       ) : null}
 
-      {exhausted || !url ? (
+      {loading ? (
+        <View pointerEvents="none" style={styles.loadingHint}>
+          <View style={styles.hintCard}>
+            <ActivityIndicator size="small" color={FeedSurface.onMedia} />
+            <ThemedText style={styles.loadingText}>{fr.social.videoLoading}</ThemedText>
+          </View>
+        </View>
+      ) : null}
+
+      {unplayable ? (
         <View style={styles.errorSurface}>
-          <ThemedText style={styles.errorTitle}>
-            {url ? fr.social.videoErrorTitle : fr.social.videoUnavailable}
-          </ThemedText>
-          {url ? (
-            <>
-              <ThemedText style={styles.errorBody}>{fr.social.videoErrorBody}</ThemedText>
-              <Pressable
-                onPress={retry}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel={fr.social.videoRetry}
-                style={({ pressed }) => [styles.retry, pressed && styles.pressed]}>
-                <ThemedText style={styles.retryText}>{fr.social.videoRetry}</ThemedText>
-              </Pressable>
-            </>
-          ) : null}
-          {error?.message ? (
-            <ThemedText style={styles.errorDetail} numberOfLines={2}>
-              {error.message}
+          <View style={styles.hintCard}>
+            <ThemedText style={styles.errorTitle}>
+              {!url
+                ? fr.social.videoUnavailable
+                : stalled
+                  ? fr.social.videoStalledTitle
+                  : fr.social.videoErrorTitle}
             </ThemedText>
-          ) : null}
+            {url ? (
+              <>
+                <ThemedText style={styles.errorBody}>
+                  {stalled ? fr.social.videoStalledBody : fr.social.videoErrorBody}
+                </ThemedText>
+                <Pressable
+                  onPress={retry}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={fr.social.videoRetry}
+                  style={({ pressed }) => [styles.retry, pressed && styles.pressed]}>
+                  <ThemedText style={styles.retryText}>{fr.social.videoRetry}</ThemedText>
+                </Pressable>
+              </>
+            ) : null}
+            {error?.message ? (
+              <ThemedText style={styles.errorDetail} numberOfLines={2}>
+                {error.message}
+              </ThemedText>
+            ) : null}
+          </View>
         </View>
       ) : (
         <FeedGestureLayer
@@ -406,13 +492,8 @@ export function VideoPage({
         />
       )}
 
-      {/* Spinner tant que le lecteur charge ou retente après une erreur :
-          `status` repasse à `loading` pendant chaque `replaceAsync`. */}
-      {status === 'loading' && chrome.isActive && !chrome.hideOverlays ? (
-        <View pointerEvents="none" style={styles.buffering}>
-          <ActivityIndicator size="large" color={FeedSurface.onMedia} />
-        </View>
-      ) : null}
+      {/* Le poster couvre le chargement ; le témoin au-dessus dit qu'il
+          progresse, et le rebuffering s'anime sur la barre de progression. */}
 
       {/* Flash « +10 s / −10 s » du double-tap sur les bords. */}
       {skipFlash ? (
@@ -435,41 +516,50 @@ export function VideoPage({
             </View>
           ) : null}
 
-          {/* Contrôles supérieurs toujours visibles : vitesse, plein écran,
-              son. Le son n'est plus réservé à la pause — il doit pouvoir se
-              couper pendant la lecture, comme sur les fils vidéo courants. */}
-          <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
-            <Pressable
-              onPress={cycleRate}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel={`Vitesse de lecture : ${PLAYBACK_RATES[rateIndex]}×`}
-              style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-              <ThemedText style={styles.rateText}>{PLAYBACK_RATES[rateIndex]}×</ThemedText>
-            </Pressable>
-            <Pressable
-              onPress={() => void viewRef.current?.enterFullscreen().catch(() => undefined)}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityLabel="Plein écran"
-              style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-              <Icon icon={Expand} size={18} color={FeedSurface.onMedia} />
-            </Pressable>
-            <Pressable
-              onPress={onToggleSound}
-              hitSlop={10}
-              accessibilityRole="button"
-              accessibilityState={{ selected: muted }}
-              accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
-              style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-              <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
-            </Pressable>
-          </View>
+          {/* Contrôles supérieurs réservés à la pause : vitesse, plein écran
+              et son ne couvrent la vidéo que quand elle est suspendue. */}
+          {isPaused ? (
+            <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
+              <Pressable
+                onPress={cycleRate}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={`Vitesse de lecture : ${PLAYBACK_RATES[rateIndex]}×`}
+                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+                <ThemedText style={styles.rateText}>{PLAYBACK_RATES[rateIndex]}×</ThemedText>
+              </Pressable>
+              <Pressable
+                onPress={() => void viewRef.current?.enterFullscreen().catch(() => undefined)}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Plein écran"
+                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+                <Icon icon={Expand} size={18} color={FeedSurface.onMedia} />
+              </Pressable>
+              <Pressable
+                onPress={onToggleSound}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityState={{ selected: muted }}
+                accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
+                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
+                <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
+              </Pressable>
+            </View>
+          ) : null}
 
           <ProgressBar
             player={player}
-            bottomInset={chrome.barInset}
+            // La bande `insets.bottom` sous les icônes de la barre d'onglets
+            // est vide (la barre la réserve via `paddingBottom`) : la ligne
+            // s'y plaque, juste sous les icônes, sans toucher la zone des
+            // gestes système tout en bas. Sans inset (navigation à 3 boutons),
+            // on reste au-dessus de la barre pour ne pas bloquer ses pressions.
+            bottomInset={
+              insets.bottom > 0 ? Math.max(4, insets.bottom - 10) : chrome.barInset
+            }
             active={chrome.isActive && !failed}
+            buffering={buffering && chrome.isActive}
             onSeekStart={handleSeekStart}
             onSeekEnd={handleSeekEnd}
             onScrubStateChange={onScrubStateChange}
@@ -513,6 +603,35 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.two,
     paddingHorizontal: Spacing.five,
+  },
+  // Fond sombre sous le message : un poster clair rendrait le texte blanc
+  // illisible, et le voile du feed ne suffit pas.
+  hintCard: {
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.four,
+    paddingVertical: Spacing.four,
+    borderRadius: Radii.lg,
+    backgroundColor: 'rgba(0,0,0,0.62)',
+    maxWidth: '100%',
+  },
+  // Témoin du premier chargement, centré sur le poster : il rassure sans
+  // masquer l'image, contrairement à un écran plein.
+  loadingHint: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.two,
+  },
+  loadingText: {
+    color: FeedSurface.onMediaSoft,
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   errorTitle: {
     color: FeedSurface.onMedia,
@@ -561,15 +680,6 @@ const styles = StyleSheet.create({
     color: FeedSurface.onMedia,
     fontSize: 12,
     fontWeight: '700',
-  },
-  buffering: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   skipFlash: {
     position: 'absolute',
