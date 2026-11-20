@@ -31,12 +31,15 @@ import { ActionSheet, type SheetAction } from '@/components/action-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
+import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { copyToClipboard } from '@/lib/clipboard';
 import { postDeepLink } from '@/lib/deep-link';
+import { setFeedPageIsLight } from '@/lib/feed-page-tone';
 import { setPendingPostShare } from '@/lib/pending-post-share';
+import { useThemePreference } from '@/lib/theme-preference';
 import type { ConversationSummary, FeedPost, SocialReaction } from '@/lib/types';
-import { FeedActionRail } from './action-rail';
+import { FeedActionRail, type FeedActions, type FeedActionState } from './action-rail';
 import { isVideoPost, primaryMedia } from './feed-media';
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { ImagePage } from './image-page';
@@ -136,6 +139,7 @@ export function FeedPager({
   // de données. Le Wi-Fi et l'Ethernet prennent le flux principal.
   const preferLowQuality = network.type === NetworkStateType.CELLULAR;
   const { user, token } = useAuth();
+  const { scheme } = useThemePreference();
   const [activeIndex, setActiveIndex] = useState(0);
 
   const [muted, setMuted] = useState(false);
@@ -168,6 +172,20 @@ export function FeedPager({
     }
     void setVideoCacheSizeAsync(VIDEO_CACHE_BYTES).catch(() => undefined);
   }, []);
+
+  // La barre d'onglets est transparente sur le fil : en thème clair, une page
+  // texte a un fond pastel qui rend ses icônes blanches illisibles. On publie
+  // l'état « page claire » pour qu'elle passe aux teintes foncées.
+  const activeItem = items[activeIndex];
+  const feedPageIsLight =
+    scheme === 'light' &&
+    !!activeItem &&
+    !isVideoPost(activeItem) &&
+    !primaryMedia(activeItem);
+  useEffect(() => {
+    setFeedPageIsLight(feedPageIsLight);
+    return () => setFeedPageIsLight(false);
+  }, [feedPageIsLight]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -241,10 +259,22 @@ export function FeedPager({
     router.push(`/user/${post.author.id}`);
   }, []);
 
+  /** Compteur de partages : chaque action de partage est un événement. */
+  const trackShare = useCallback(
+    (post: FeedPost) => {
+      if (!token) {
+        return;
+      }
+      void api.sharePublication(token, post.id).catch(() => undefined);
+    },
+    [token],
+  );
+
   const share = useCallback(
     async (post: FeedPost) => {
       const caption = (post.caption ?? '').trim();
       const title = caption.length > 0 ? caption : `Publication de ${post.author.displayName}`;
+      trackShare(post);
       try {
         await Share.share({
           message: `${title}\n\n${postDeepLink(post.id)}`,
@@ -254,7 +284,7 @@ export function FeedPager({
         actions.notifyError(fr.social.shareError);
       }
     },
-    [actions],
+    [actions, trackShare],
   );
 
   const copyLink = useCallback(
@@ -262,12 +292,13 @@ export function FeedPager({
       // Vrai presse-papiers, pas la feuille de partage : le libellé promet
       // une copie, pas un envoi.
       if (await copyToClipboard(postDeepLink(post.id))) {
+        trackShare(post);
         showToast(fr.social.linkCopied);
       } else {
         actions.notifyError(fr.social.shareError);
       }
     },
-    [actions, showToast],
+    [actions, showToast, trackShare],
   );
 
   const sendPostToConversation = useCallback(
@@ -280,9 +311,10 @@ export function FeedPager({
       // Le chat envoie le lien profond via son transport (clair ou E2EE)
       // à l'arrivée sur l'écran.
       setPendingPostShare({ publicationId: target.id });
+      trackShare(target);
       router.push(`/chat/${conversation.id}`);
     },
-    [shareTarget],
+    [shareTarget, trackShare],
   );
 
   if (height <= 0) {
@@ -353,6 +385,33 @@ export function FeedPager({
           const videoMode = videoPageMode(distance, preloadNeighbors);
           const sourceUrl =
             videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
+          // Publication texte : la carte porte son propre pied de post
+          // (barre d'actions horizontale), sans rail vertical ni bloc infos.
+          const isTextPost = !isVideoPost(item) && !primaryMedia(item);
+          const railState: FeedActionState = {
+            reacted: item.viewer.reaction !== null,
+            saved: Boolean(item.viewer.saved),
+            reposted: Boolean(item.viewer.reposted),
+            following: item.viewer.followingAuthor,
+            toast: null,
+          };
+          const railActions: FeedActions = {
+            onToggleLike: () => {
+              // Retour haptique léger : le cœur doit « répondre »
+              // comme le double-tap, en plus discret.
+              void Haptics.selectionAsync().catch(() => undefined);
+              void actions.toggleLike(item);
+            },
+            onPickReaction: () => setReactionTarget(item),
+            onOpenComments: () => actions.onOpenComments(item),
+            onToggleSave: () => void actions.toggleSave(item),
+            onToggleRepost: () => setRepostTarget(item),
+            onShare: () => setShareTarget(item),
+            onOpenProfile: () => openProfile(item),
+            onFollow: item.viewer.followingAuthor
+              ? null
+              : () => void actions.follow(item),
+          };
           // Le bloc infos et le rail partagent la même ancre basse : ils
           // se posent ~35 px au-dessus du cluster icônes+libellés de la
           // barre d'onglets — la position basse d'un fil vidéo, sans jamais
@@ -388,7 +447,14 @@ export function FeedPager({
               ) : primaryMedia(item) ? (
                 <ImagePage post={item} chrome={chrome} onDoubleTapLike={doubleTap} />
               ) : (
-                <TextPage post={item} chrome={chrome} />
+                <TextPage
+                  post={item}
+                  chrome={chrome}
+                  actions={railActions}
+                  state={railState}
+                  likeScale={likeScale}
+                  onDoubleTapLike={doubleTap}
+                />
               )}
 
               {/* Consommation : temps réellement visible, envoyé au serveur au
@@ -399,11 +465,12 @@ export function FeedPager({
                 durationMs={primaryMedia(item)?.durationMs ?? null}
               />
 
-              <OverlayScrim />
+              {!isTextPost ? <OverlayScrim /> : null}
 
               {/* Le média réduit s'affiche seul quand la feuille
-                  est ouverte : ni rail d'actions, ni infos auteur/son. */}
-              {!hideOverlays ? (
+                  est ouverte : ni rail d'actions, ni infos auteur/son.
+                  Les posts texte portent leurs actions dans la carte. */}
+              {!hideOverlays && !isTextPost ? (
                 <View
                   style={[styles.bottom, { paddingBottom }]}
                   pointerEvents="box-none">
@@ -421,28 +488,8 @@ export function FeedPager({
                   <FeedActionRail
                     post={item}
                     likeScale={likeScale}
-                    state={{
-                      reacted: item.viewer.reaction !== null,
-                      saved: Boolean(item.viewer.saved),
-                      reposted: Boolean(item.viewer.reposted),
-                      following: item.viewer.followingAuthor,
-                      toast: null,
-                    }}
-                    actions={{
-                      onToggleLike: () => {
-                        // Retour haptique léger : le cœur du rail doit « répondre »
-                        // comme le double-tap, en plus discret.
-                        void Haptics.selectionAsync().catch(() => undefined);
-                        void actions.toggleLike(item);
-                      },
-                      onPickReaction: () => setReactionTarget(item),
-                      onOpenComments: () => actions.onOpenComments(item),
-                      onToggleSave: () => void actions.toggleSave(item),
-                      onToggleRepost: () => setRepostTarget(item),
-                      onShare: () => setShareTarget(item),
-                      onOpenProfile: () => openProfile(item),
-                      onFollow: item.viewer.followingAuthor ? null : () => void actions.follow(item),
-                    }}
+                    state={railState}
+                    actions={railActions}
                   />
                 </View>
               ) : null}

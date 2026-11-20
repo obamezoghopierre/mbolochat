@@ -17,10 +17,13 @@ import { useHeartBurst } from './use-heart-burst';
 export function HeartBurstOverlay({
   burstKey,
   point,
+  color = FeedSurface.like,
 }: {
   burstKey: number;
   /** Point du double-tap : le cœur naît sous le doigt. */
   point?: { x: number; y: number } | null;
+  /** Teinte du cœur — `tones.action` côté carte texte pour suivre le thème. */
+  color?: string;
 }) {
   const { burst, opacity, scale, translateY } = useHeartBurst();
 
@@ -45,12 +48,12 @@ export function HeartBurstOverlay({
           : null,
         { opacity, transform: [{ translateY }, { scale }] },
       ]}>
-      <View style={styles.glow}>
+      <View style={[styles.glow, { shadowColor: color }]}>
         <Icon
           icon={Heart}
           size={FeedMetrics.heart}
-          color={FeedSurface.like}
-          fill={FeedSurface.like}
+          color={color}
+          fill={color}
         />
       </View>
     </Animated.View>
@@ -67,7 +70,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
   glow: {
-    shadowColor: FeedSurface.like,
     shadowOpacity: 0.55,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 0 },

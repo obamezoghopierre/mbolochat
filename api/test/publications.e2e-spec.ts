@@ -50,7 +50,15 @@ describe('Publications et interactions (e2e)', () => {
 
   const publish = (
     actor: { token: string },
-    overrides: Partial<{ caption: string; visibility: string; kind: string; clientId: string }> = {},
+    overrides: Partial<{
+      caption: string;
+      visibility: string;
+      kind: string;
+      clientId: string;
+      textBackground: string;
+      textPages: string[];
+      quotedPublicationId: string;
+    }> = {},
   ) =>
     request(app.getHttpServer())
       .post('/publications')
@@ -100,13 +108,57 @@ describe('Publications et interactions (e2e)', () => {
       avatarUrl: null,
       verified: false,
     });
-    expect(body.counters).toEqual({ likes: 0, comments: 0, reposts: 0, saves: 0, views: 0 });
+    expect(body.counters).toEqual({
+      likes: 0,
+      comments: 0,
+      reposts: 0,
+      saves: 0,
+      shares: 0,
+      views: 0,
+    });
     expect(body.viewer).toEqual({ reaction: null, saved: false, reposted: false });
     expect(await counters(alice.id)).toEqual({
       publications: 1,
       reels: 0,
       likesReceived: 0,
     });
+  });
+
+  it('persiste le fond et les pages d’un post texte', async () => {
+    const alice = await register('Paginee');
+
+    const response = await publish(alice, {
+      caption: 'ignorée par le serveur',
+      textBackground: 'ocean',
+      textPages: ['Première page', 'Deuxième page'],
+    }).expect(201);
+    const body = response.body;
+
+    // La première page devient la légende (recherche, extraits, citation).
+    expect(body.caption).toBe('Première page');
+    expect(body.textBackground).toBe('ocean');
+    expect(body.pages).toEqual(['Première page', 'Deuxième page']);
+    expect(body.format).toBe('text');
+
+    // Une seule page reste une publication classique, sans `pages`.
+    const single = await publish(alice, {
+      caption: 'Seule page',
+      textBackground: 'forest',
+      textPages: ['Seule page'],
+    }).expect(201);
+    expect(single.body.caption).toBe('Seule page');
+    expect(single.body.textBackground).toBe('forest');
+    expect(single.body.pages).toBeNull();
+  });
+
+  it('rejette les pages sur une publication avec média ou citation', async () => {
+    const alice = await register('Mediapages');
+    const original = await publish(alice).expect(201);
+
+    await publish(alice, {
+      textPages: ['a', 'b'],
+      quotedPublicationId: original.body.id,
+    }).expect(400);
   });
 
   it('rejoue la création sans créer de doublon', async () => {
@@ -271,6 +323,39 @@ describe('Publications et interactions (e2e)', () => {
       .set('Authorization', `Bearer ${bob.token}`)
       .expect(200);
     expect(replay.body.saveCount).toBe(0);
+  });
+
+  it('compte chaque partage sans idempotence', async () => {
+    const alice = await register('Partagee');
+    const bob = await register('Shareur');
+    const post = await publish(alice).expect(201);
+
+    const first = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/share`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(201);
+    expect(first.body).toEqual({ shareCount: 1 });
+
+    // Chaque action de partage est un événement : pas de déduplication.
+    const second = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/share`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(201);
+    expect(second.body).toEqual({ shareCount: 2 });
+
+    const seen = await see(bob, post.body.id).expect(200);
+    expect(seen.body.counters.shares).toBe(2);
+  });
+
+  it('refuse de partager une publication invisible', async () => {
+    const alice = await register('PriveePartage');
+    const bob = await register('Voisin');
+    const post = await publish(alice, { visibility: 'private' }).expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/share`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(404);
   });
 
   it('republie puis retire, sans double notification', async () => {

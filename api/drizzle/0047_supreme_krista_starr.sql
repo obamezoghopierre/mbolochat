@@ -1,0 +1,1 @@
+ALTER TABLE "publications" ADD COLUMN "share_count" integer DEFAULT 0 NOT NULL;

@@ -13,6 +13,18 @@ import {
 export const MAX_CAPTION_LENGTH = 63_200;
 export const MAX_COMMENT_LENGTH = 1000;
 export const MAX_CLIENT_ID_LENGTH = 128;
+/** Pages d'un post texte multi-cartes : borne et taille d'une page. */
+export const MAX_TEXT_PAGES = 10;
+export const MAX_TEXT_PAGE_LENGTH = 2000;
+/** Fonds de post texte reconnus (clés de palette du client). */
+export const TEXT_BACKGROUNDS = [
+  'dark',
+  'violet',
+  'sunset',
+  'ocean',
+  'forest',
+  'sand',
+] as const;
 
 const VISIBILITIES = ['public', 'followers', 'private'] as const;
 const KINDS = ['post', 'reel'] as const;
@@ -59,6 +71,26 @@ export class CreatePublicationDto {
   @IsOptional()
   @IsIn(FORMATS)
   format?: (typeof FORMATS)[number];
+
+  /**
+   * Fond du post texte (clé de palette). Réservé aux publications sans
+   * média ; toute autre valeur est ignorée côté service.
+   */
+  @IsOptional()
+  @IsIn(TEXT_BACKGROUNDS)
+  textBackground?: (typeof TEXT_BACKGROUNDS)[number];
+
+  /**
+   * Pages d'un post texte multi-cartes. Dès qu'elles sont fournies, la
+   * première devient `caption` côté serveur (recherche, extraits, citation)
+   * et `caption` du DTO est ignoré. Une seule page = publication classique.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_TEXT_PAGES)
+  @IsString({ each: true })
+  @MaxLength(MAX_TEXT_PAGE_LENGTH, { each: true })
+  textPages?: string[];
 
   @IsString({ message: 'clientId est requis.' })
   @Length(8, MAX_CLIENT_ID_LENGTH, {

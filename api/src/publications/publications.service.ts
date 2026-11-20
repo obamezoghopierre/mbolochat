@@ -79,6 +79,10 @@ export interface PublicationView {
   kind: 'post' | 'reel';
   format: 'text' | 'image' | 'carousel' | 'video';
   caption: string | null;
+  /** Fond choisi pour un post texte, `null` = dégradé par défaut. */
+  textBackground?: string | null;
+  /** Pages d'un post texte multi-cartes, `null` pour une publication classique. */
+  pages?: string[] | null;
   visibility: 'public' | 'followers' | 'private';
   createdAt: Date;
   author: AuthorCard;
@@ -87,6 +91,7 @@ export interface PublicationView {
     comments: number;
     reposts: number;
     saves: number;
+    shares: number;
     views: number;
   };
   viewer: {
@@ -263,7 +268,21 @@ export class PublicationsService {
       throw new BadRequestException('Une citation ne peut pas ajouter de média.');
     }
     const caption = (dto.caption ?? '').trim();
-    if (caption.length === 0 && assetIds.length === 0 && !quotedPublicationId) {
+    // Pages d'un post texte multi-cartes : une seule page non vide reste une
+    // publication classique (`caption` suffit), `textPages` n'est persisté
+    // qu'à partir de deux pages.
+    const textPages = (dto.textPages ?? [])
+      .map((page) => page.trim())
+      .filter((page) => page.length > 0);
+    const storedPages = textPages.length > 1 ? textPages : [];
+    // Quand des pages sont fournies, la première fait office de légende
+    // (recherche plein texte, extraits, citation) et `caption` est ignoré.
+    const effectiveCaption = storedPages.length > 0 ? storedPages[0] : caption;
+    if (
+      effectiveCaption.length === 0 &&
+      assetIds.length === 0 &&
+      !quotedPublicationId
+    ) {
       throw new BadRequestException('La légende ne peut pas être vide sans média.');
     }
     // Une citation copie les médias de l'originale : la citation devient une
@@ -296,10 +315,17 @@ export class PublicationsService {
     }
     // Médias de la citation : ceux de l'originale, dans leur ordre.
     const effectiveAssetIds = quoted ? quoted.assetIds : assetIds;
+    if (storedPages.length > 0 && (effectiveAssetIds.length > 0 || quotedPublicationId)) {
+      throw new BadRequestException(
+        'Un post multi-pages ne peut pas avoir de média ni être une citation.',
+      );
+    }
     const kind = quoted ? 'post' : (dto.kind ?? 'post');
     // Auto-flag : un contenu qui contient un mot bloqué part en revue humaine
-    // au lieu d'être publié directement.
-    const flagged = caption.length > 0 ? await this.moderation.hasBlockedWord(caption) : false;
+    // au lieu d'être publié directement. Toutes les pages sont modérées.
+    const moderationText = storedPages.length > 0 ? storedPages.join('\n') : caption;
+    const flagged =
+      moderationText.length > 0 ? await this.moderation.hasBlockedWord(moderationText) : false;
 
     let quoteNotification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
 
@@ -329,7 +355,7 @@ export class PublicationsService {
       const ordered = effectiveAssetIds.map(
         (assetId) => assets.find((asset) => asset.id === assetId)!,
       );
-      if (ordered.length === 0 && caption.length === 0) {
+      if (ordered.length === 0 && effectiveCaption.length === 0) {
         throw new BadRequestException('La légende ne peut pas être vide sans média.');
       }
       const kinds = new Set(ordered.map((asset) => asset.kind));
@@ -359,7 +385,10 @@ export class PublicationsService {
           authorId,
           kind,
           format,
-          caption: caption.length > 0 ? caption : null,
+          caption: effectiveCaption.length > 0 ? effectiveCaption : null,
+          // Le fond n'a de sens que sur une carte texte sans média.
+          textBackground: format === 'text' ? (dto.textBackground ?? null) : null,
+          textPages: storedPages.length > 0 ? storedPages : null,
           visibility: dto.visibility ?? 'public',
           moderationStatus: flagged ? 'flagged' : 'pending',
           quotedPublicationId: quoted?.id ?? null,
@@ -483,6 +512,29 @@ export class PublicationsService {
       completed: result.completed,
       firstView: result.inserted,
     };
+  }
+
+  /**
+   * Compte un partage de la publication (envoi en discussion, feuille de
+   * partage système, copie du lien). Volontairement non idempotent : chaque
+   * action de partage est un événement ; le rate limit du endpoint borne
+   * les abus.
+   */
+  async recordShare(
+    publicationId: string,
+    viewerId: string,
+  ): Promise<{ shareCount: number }> {
+    await this.assertVisible(publicationId, viewerId);
+
+    const [row] = await this.db
+      .update(publications)
+      .set({ shareCount: sql`${publications.shareCount} + 1` })
+      .where(eq(publications.id, publicationId))
+      .returning({ shareCount: publications.shareCount });
+    if (!row) {
+      throw new NotFoundException('Publication introuvable.');
+    }
+    return { shareCount: row.shareCount };
   }
 
   /** Suppression logique par l'auteur, idempotente. */
@@ -1512,6 +1564,8 @@ export class PublicationsService {
       kind: row.kind,
       format: row.format,
       caption: row.caption,
+      textBackground: row.textBackground ?? null,
+      pages: row.textPages ?? null,
       visibility: row.visibility,
       createdAt: row.createdAt,
       author,
@@ -1520,6 +1574,7 @@ export class PublicationsService {
         comments: row.commentCount,
         reposts: row.repostCount,
         saves: row.saveCount,
+        shares: row.shareCount,
         views: row.viewCount,
       },
       viewer: {

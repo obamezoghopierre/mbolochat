@@ -1075,6 +1075,18 @@ export const publications = pgTable(
     format: publicationFormatEnum('format').notNull().default('text'),
     /** Légende / texte du post. Le média est décrit par `publication_media`. */
     caption: text('caption'),
+    /**
+     * Fond du post texte : clé de palette choisie par l'auteur
+     * (`FeedTextPost.backgrounds` côté mobile). `null` = dégradé par défaut.
+     * Ignoré pour les publications avec média.
+     */
+    textBackground: text('text_background'),
+    /**
+     * Pages d'un post texte multi-cartes (carrousel de textes). `null` pour
+     * une publication classique : `caption` porte alors tout le texte.
+     * Quand présent, `caption` reflète la première page (recherche, extraits).
+     */
+    textPages: jsonb('text_pages').$type<string[]>(),
     visibility: publicationVisibilityEnum('visibility').notNull().default('public'),
     moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
     /** Son utilisé par un reel, facultatif. */
@@ -1096,6 +1108,8 @@ export const publications = pgTable(
     commentCount: integer('comment_count').notNull().default(0),
     repostCount: integer('repost_count').notNull().default(0),
     saveCount: integer('save_count').notNull().default(0),
+    /** Partages (envoi en discussion, feuille système, copie de lien). */
+    shareCount: integer('share_count').notNull().default(0),
     viewCount: integer('view_count').notNull().default(0),
     /** Clé d'idempotence fournie par l'appareil, unique par auteur. */
     clientId: text('client_id').notNull(),

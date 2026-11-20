@@ -509,6 +509,10 @@ export interface FeedPost {
   kind: 'post' | 'reel';
   format: 'text' | 'image' | 'carousel' | 'video';
   caption: string | null;
+  /** Fond choisi pour un post texte (`FeedTextPost.backgrounds`), `null` = défaut. */
+  textBackground?: string | null;
+  /** Pages d'un post texte multi-cartes, `null` pour une publication classique. */
+  pages?: string[] | null;
   visibility: SocialVisibility;
   createdAt: string;
   author: SocialAuthor;
@@ -519,6 +523,8 @@ export interface FeedPost {
     comments: number;
     reposts: number;
     saves: number;
+    /** Partages comptés côté serveur (envoi, feuille système, copie). */
+    shares?: number;
     views: number;
   };
   viewer: {

@@ -95,6 +95,8 @@ type PublicationRow = {
   kind: 'post' | 'reel';
   format: 'text' | 'image' | 'carousel' | 'video';
   caption: string | null;
+  textBackground: string | null;
+  textPages: string[] | null;
   visibility: 'public' | 'followers' | 'private';
   createdAt: Date;
   author: AuthorCard;
@@ -103,6 +105,7 @@ type PublicationRow = {
   commentCount: number;
   repostCount: number;
   saveCount: number;
+  shareCount: number;
   viewCount: number;
   reaction: 'like' | 'love' | 'fire' | 'clap' | null;
   followingAuthor: unknown;
@@ -483,7 +486,10 @@ export class FeedService {
       .from(publications)
       .innerJoin(users, eq(users.id, publications.authorId))
       .where(and(...conditions))
-      .orderBy(sql`${this.rankExpression(viewerId)} desc`, desc(publications.id))
+      .orderBy(
+        sql`${this.rankExpression(viewerId)} desc`,
+        desc(publications.id),
+      )
       .limit(FEED_SESSION_SIZE);
 
     const explorationRows = await this.db
@@ -590,6 +596,8 @@ export class FeedService {
       kind: publications.kind,
       format: publications.format,
       caption: publications.caption,
+      textBackground: publications.textBackground,
+      textPages: publications.textPages,
       visibility: publications.visibility,
       createdAt: publications.createdAt,
       author: {
@@ -604,6 +612,7 @@ export class FeedService {
       commentCount: publications.commentCount,
       repostCount: publications.repostCount,
       saveCount: publications.saveCount,
+      shareCount: publications.shareCount,
       viewCount: publications.viewCount,
       reaction: publicationReactions.kind,
       followingAuthor: this.followsAuthor(viewerId),
@@ -713,6 +722,8 @@ export class FeedService {
       kind: row.kind,
       format: row.format,
       caption: row.caption,
+      textBackground: row.textBackground,
+      pages: row.textPages,
       visibility: row.visibility,
       createdAt: row.createdAt,
       author: { ...row.author } as AuthorCard,
@@ -721,6 +732,7 @@ export class FeedService {
         comments: row.commentCount,
         reposts: row.repostCount,
         saves: row.saveCount,
+        shares: row.shareCount,
         views: row.viewCount,
       },
       viewer: {

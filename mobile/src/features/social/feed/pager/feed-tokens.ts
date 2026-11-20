@@ -1,4 +1,5 @@
-import { FeedMetrics, FeedSurface, Type } from '@/constants/theme';
+import { FeedMetrics, FeedSurface, FeedTextPost, Type } from '@/constants/theme';
+import { useThemePreference } from '@/lib/theme-preference';
 
 /**
  * Dérivés de tokens propres au feed plein écran.
@@ -35,3 +36,13 @@ export const feedText = {
 export const feedCircle = {
   size: FeedMetrics.avatar,
 } as const;
+
+/**
+ * Teintes de la carte texte pour le thème courant : en clair, texte foncé sur
+ * dégradé pastel ; en sombre, le rendu historique. Le compositeur n'utilise
+ * pas ce hook — il reste volontairement sombre (aperçu = rendu du fil).
+ */
+export function useTextPostTones() {
+  const { scheme } = useThemePreference();
+  return FeedTextPost.tones[scheme === 'light' ? 'light' : 'dark'];
+}

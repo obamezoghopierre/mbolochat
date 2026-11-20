@@ -223,10 +223,88 @@ export const FeedMetrics = {
  * teintes vivantes donnent au post une présence visuelle sans image distante.
  */
 export const FeedTextPost = {
-  /** Dégradé de fond STATIQUE, du haut vers le bas (aucune animation). */
-  backdrop: ['#241059', '#3B1B6E', '#101A3C'] as const,
-  /** Carte de texte translucide : le fond coloré reste visible par transparence. */
-  card: 'rgba(16, 12, 38, 0.42)',
+  /**
+   * Dégradé de fond par défaut, par thème : `dark` = le rendu historique,
+   * `light` = pastels doux pour le thème clair (text posts IG).
+   */
+  backdrop: {
+    dark: ['#1B1B24', '#101018', '#07070B'],
+    light: ['#E9EAF3', '#D8DAE8', '#C6C9DE'],
+  } as const,
+  /**
+   * Fonds personnalisables du post texte, par clé persistée en
+   * `publications.text_background` — mêmes clés que `TEXT_BACKGROUNDS`
+   * côté API. Chaque fond a un rendu `dark` et un rendu `light`.
+   */
+  backgrounds: {
+    dark: {
+      dark: ['#1B1B24', '#101018', '#07070B'],
+      light: ['#E9EAF3', '#D8DAE8', '#C6C9DE'],
+    },
+    violet: {
+      dark: ['#241059', '#3B1B6E', '#101A3C'],
+      light: ['#E2D4F7', '#CFAEF0', '#B98AE2'],
+    },
+    sunset: {
+      dark: ['#3D1230', '#7A2E5C', '#2B1055'],
+      light: ['#F6D3DF', '#F0AEC6', '#E48BAE'],
+    },
+    ocean: {
+      dark: ['#0B2545', '#134074', '#081C33'],
+      light: ['#C9DFF6', '#A2C6EC', '#7FA9DC'],
+    },
+    forest: {
+      dark: ['#0E2B1F', '#1D5C40', '#0A1F2E'],
+      light: ['#CBE5D4', '#A0D1B0', '#7CB98F'],
+    },
+    sand: {
+      dark: ['#3A2A14', '#8A5A24', '#241A3D'],
+      light: ['#F2DFB9', '#E2C58E', '#CBAF6C'],
+    },
+  } as const satisfies Record<
+    string,
+    { dark: readonly [string, string, string]; light: readonly [string, string, string] }
+  >,
+  /** Teinte pleine d'un fond (variante sombre), pour les pastilles du compositeur. */
+  backgroundSwatch: (key: string) =>
+    FeedTextPost.backgrounds[key as keyof typeof FeedTextPost.backgrounds]?.dark[1] ??
+    FeedTextPost.backdrop.dark[1],
+  /**
+   * Teintes de la carte texte par thème : texte, carte translucide, accent,
+   * actions. Le compositeur reste sombre — ces tons ne servent qu'au fil.
+   */
+  tones: {
+    dark: {
+      text: '#FFFFFF',
+      textSoft: 'rgba(255,255,255,0.86)',
+      textFaint: 'rgba(255,255,255,0.62)',
+      card: 'rgba(10,10,14,0.45)',
+      cardBorder: 'rgba(255,255,255,0.18)',
+      badge: 'rgba(255,255,255,0.16)',
+      accent: '#3C87F7',
+      action: '#FFFC00',
+      glass: 'rgba(255,255,255,0.16)',
+      verified: '#5AA9FF',
+      follow: '#FFFC00',
+      onFollow: '#000000',
+    },
+    light: {
+      text: '#0B0F14',
+      textSoft: '#3D4756',
+      textFaint: '#6B7684',
+      card: 'rgba(255,255,255,0.6)',
+      cardBorder: 'rgba(11,15,20,0.10)',
+      badge: 'rgba(11,15,20,0.08)',
+      accent: '#2F6FDB',
+      action: '#EAB308',
+      glass: 'rgba(11,15,20,0.07)',
+      verified: '#2563EB',
+      follow: '#FFFC00',
+      onFollow: '#000000',
+    },
+  } as const,
+  /** Carte de texte translucide sombre (utilisée par le compositeur, toujours sombre). */
+  card: 'rgba(10, 10, 14, 0.45)',
   cardBorder: 'rgba(255, 255, 255, 0.18)',
   /** Fond du bouton retour du lecteur plein écran. */
   badge: 'rgba(255, 255, 255, 0.16)',

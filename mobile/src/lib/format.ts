@@ -109,6 +109,31 @@ export function formatCommentTimestamp(iso: string): string {
   return `${date.getDate()} ${MONTHS[date.getMonth()]}${year}`;
 }
 
+/**
+ * Heure relative façon Instagram pour l'en-tête d'une publication :
+ * « à l'instant » → « il y a 12 min » → « il y a 3 h » → « il y a 2 j » → date.
+ */
+export function formatRelativeTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const minutes = Math.floor((Date.now() - date.getTime()) / 60_000);
+
+  if (minutes < 1) {
+    return "à l'instant";
+  }
+  if (minutes < 60) {
+    return `il y a ${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `il y a ${hours} h`;
+  }
+  const days = Math.floor(hours / 24);
+  if (days < 7) {
+    return `il y a ${days} j`;
+  }
+  return formatDateLabel(iso);
+}
+
 export function formatDateLabel(iso: string): string {
   const date = new Date(iso);
   const days = daysAgo(date);

@@ -39,6 +39,8 @@ export default function SharePostScreen() {
       const conversation = await api.createConversation(token, { memberIds: [other.id] });
       // Le chat envoie le lien profond via son transport (clair ou E2EE).
       setPendingPostShare({ publicationId: id });
+      // Compteur de partages : l'envoi à un ami est un partage.
+      void api.sharePublication(token, id).catch(() => undefined);
       router.replace({ pathname: '/chat/[id]', params: { id: conversation.id } });
     } catch (err) {
       setError(

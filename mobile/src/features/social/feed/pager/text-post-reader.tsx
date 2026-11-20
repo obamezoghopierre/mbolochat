@@ -4,8 +4,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedSurface, FeedTextPost, Radii, Spacing, Type } from '@/constants/theme';
+import { FeedTextPost, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
+import { useTextPostTones } from './feed-tokens';
 
 /**
  * Lecteur d'un post texte long.
@@ -19,14 +20,18 @@ export function TextPostReader({
   visible,
   title,
   body,
+  backgroundColor,
   onClose,
 }: {
   visible: boolean;
   title: string;
   body: string;
+  /** Couleur de fond = dernier arrêt du dégradé de la carte (sombre ou clair). */
+  backgroundColor?: string;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const tones = useTextPostTones();
 
   return (
     <Modal
@@ -35,17 +40,21 @@ export function TextPostReader({
       presentationStyle="fullScreen"
       onRequestClose={onClose}
       statusBarTranslucent>
-      <View style={styles.screen}>
-        <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
+      <View style={[styles.screen, { backgroundColor: backgroundColor ?? FeedTextPost.backdrop.dark[2] }]}>
+        <View style={[styles.header, { paddingTop: insets.top + Spacing.two, borderBottomColor: tones.cardBorder }]}>
           <Pressable
             onPress={onClose}
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={fr.social.back}
-            style={({ pressed }) => [styles.back, pressed && styles.pressed]}>
-            <Icon icon={ChevronLeft} size={24} color={FeedSurface.onMedia} strokeWidth={2.5} />
+            style={({ pressed }) => [
+              styles.back,
+              { backgroundColor: tones.badge },
+              pressed && styles.pressed,
+            ]}>
+            <Icon icon={ChevronLeft} size={24} color={tones.text} strokeWidth={2.5} />
           </Pressable>
-          <ThemedText numberOfLines={1} style={styles.title}>
+          <ThemedText numberOfLines={1} style={[styles.title, { color: tones.text }]}>
             {title}
           </ThemedText>
         </View>
@@ -57,7 +66,7 @@ export function TextPostReader({
             { paddingBottom: insets.bottom + Spacing.five },
           ]}
           showsVerticalScrollIndicator>
-          <ThemedText style={styles.body}>{body}</ThemedText>
+          <ThemedText style={[styles.body, { color: tones.textSoft }]}>{body}</ThemedText>
         </ScrollView>
       </View>
     </Modal>
@@ -67,7 +76,6 @@ export function TextPostReader({
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: FeedTextPost.backdrop[2],
   },
   header: {
     flexDirection: 'row',
@@ -76,7 +84,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingBottom: Spacing.three,
     borderBottomWidth: 1,
-    borderBottomColor: FeedTextPost.cardBorder,
   },
   back: {
     width: 36,
@@ -84,7 +91,6 @@ const styles = StyleSheet.create({
     borderRadius: Radii.full,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: FeedTextPost.badge,
   },
   pressed: {
     opacity: 0.7,
@@ -93,7 +99,6 @@ const styles = StyleSheet.create({
     ...Type.sectionTitle,
     fontSize: 19,
     fontWeight: '700',
-    color: FeedSurface.onMedia,
     flexShrink: 1,
   },
   content: {
@@ -104,9 +109,10 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.four,
   },
   body: {
+    // Même lecture que la carte : texte grand, centré, aéré.
     ...Type.body,
-    fontSize: 17,
-    lineHeight: 26,
-    color: FeedSurface.onMediaSoft,
+    fontSize: 19,
+    lineHeight: 29,
+    textAlign: 'center',
   },
 });

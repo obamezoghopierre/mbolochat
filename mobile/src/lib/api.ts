@@ -194,6 +194,9 @@ export const api = {
       caption?: string;
       quotedPublicationId?: string;
       visibility?: SocialVisibility;
+      /** Post texte : fond de carte et pages (multi-cartes). */
+      textBackground?: string;
+      textPages?: string[];
     },
   ) {
     return request<FeedPost>('/publications', { method: 'POST', token, body });
@@ -477,6 +480,14 @@ export const api = {
       completed: boolean;
       firstView: boolean;
     }>(`/publications/${publicationId}/view`, { method: 'POST', token, body: input });
+  },
+
+  /** Compte un partage de la publication (discussion, feuille OS, copie). */
+  sharePublication(token: string, publicationId: string) {
+    return request<{ shareCount: number }>(`/publications/${publicationId}/share`, {
+      method: 'POST',
+      token,
+    });
   },
 
   /** Republie la publication sur son propre profil, idempotent. */

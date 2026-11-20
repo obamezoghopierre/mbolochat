@@ -13,10 +13,10 @@ type ThemeContextValue = {
 const STORAGE_KEY = 'mbolo.theme-preference';
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-/** Préférence d'apparence de l'app : système par défaut, ou forcée. */
+/** Préférence d'apparence de l'app : sombre par défaut, ou système/clair. */
 export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
   const system = useColorScheme() === 'dark' ? 'dark' : 'light';
-  const [preference, setStored] = useState<ThemePreference>('system');
+  const [preference, setStored] = useState<ThemePreference>('dark');
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +49,5 @@ export function ThemePreferenceProvider({ children }: { children: ReactNode }) {
 
 export function useThemePreference(): ThemeContextValue {
   const context = useContext(ThemeContext);
-  const system = useColorScheme() === 'dark' ? 'dark' : 'light';
-  return context ?? { preference: 'system', scheme: system, setPreference: () => {} };
+  return context ?? { preference: 'dark', scheme: 'dark', setPreference: () => {} };
 }

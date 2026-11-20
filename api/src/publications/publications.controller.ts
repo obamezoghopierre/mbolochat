@@ -70,6 +70,14 @@ export class PublicationsController {
     return this.publications.recordView(id, current.sub, body ?? {});
   }
 
+  @Post(':id/share')
+  // Un partage par action utilisateur : plafond large, un client bogué ne
+  // doit pas pouvoir gonfler le compteur indéfiniment.
+  @Throttle({ default: { limit: 120, ttl: 60_000 } })
+  async share(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.recordShare(id, current.sub);
+  }
+
   @Post(':id/save')
   async save(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
     return this.publications.save(id, current.sub);

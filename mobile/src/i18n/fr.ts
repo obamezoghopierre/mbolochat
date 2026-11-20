@@ -784,6 +784,13 @@ export const fr = {
     seeLess: 'voir moins',
     /** Carte de post texte : ouvre le lecteur plein écran. */
     seeFullPost: 'Voir plus',
+    /** Lien sous la barre d'actions de la carte texte, façon Instagram. */
+    viewComments: (count: number) =>
+      count > 0
+        ? `Voir les ${count} commentaire${count > 1 ? 's' : ''}`
+        : 'Voir les commentaires',
+    /** Accessibilité : la carte texte entière ouvre le lecteur. */
+    readPublication: (name: string) => `Lire la publication de ${name}`,
     originalSound: 'Son original',
     viewsUnit: 'vues',
     notInterested: 'Pas intéressé',
@@ -815,6 +822,14 @@ export const fr = {
     discoverBody: 'La recherche, les hashtags et les tendances arrivent bientôt.',
     createTitle: 'Partage un moment',
     createBody: 'La création de photos, de carrousels et de reels arrive bientôt.',
+    createHeader: 'Nouvelle publication',
+    createPublish: 'Publier',
+    createPublishError: 'Publication impossible. Réessaie.',
+    createPage: (n: number) => `Page ${n}`,
+    createAddPage: 'Ajouter une page',
+    createRemovePage: 'Supprimer la page',
+    createBackground: 'Fond',
+    createPlaceholder: 'Écris ta publication…',
     notificationsTitle: 'Aucune notification',
     notificationsBody:
       'Les réactions, les commentaires et les nouveaux abonnés apparaîtront ici.',

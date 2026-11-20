@@ -9,13 +9,11 @@ import { FeedMetrics, FeedSurface, Radii, Spacing, Type } from '@/constants/them
 import { fr } from '@/i18n/fr';
 import { formatCompactCount } from '@/lib/format';
 import { OnMediaShadow, feedText } from './feed-tokens';
+import { renderTokens } from './rich-text';
 import type { FeedPost } from '@/lib/types';
 
 /** Longueur de légende affichée avant « voir plus ». */
 const CAPTION_PREVIEW = 80;
-
-/** Mot-clé (`#`) ou mention (`@`) : coloré dans la légende, comme Mbolo. */
-const TOKEN_PATTERN = /(#[\w\u00C0-\u024F]+|@[\w\u00C0-\u024F]+)/g;
 
 /** Rotation d'un tour du disque « son original ». */
 const DISC_PERIOD_MS = 3200;
@@ -124,7 +122,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
       {caption.length > 0 && showCaption ? (
         <Pressable onPress={toggleCaption} accessibilityRole="button">
           <ThemedText style={[feedText.caption, OnMediaShadow]}>
-            {renderTokens(shown)}
+            {renderTokens(shown, [feedText.caption, styles.token])}
             {isLong ? (
               <ThemedText style={feedText.captionToggle}>
                 {expanded ? ` ${fr.social.seeLess}` : ` ${fr.social.seeMore}`}
@@ -174,19 +172,6 @@ function SpinningDisc() {
     <Animated.View style={[styles.disc, { transform: [{ rotate: rotation }] }]}>
       <Icon icon={Music2} size={11} color={FeedSurface.onMedia} />
     </Animated.View>
-  );
-}
-
-/** Colorie les `#hashtags` et `@mentions` sans casser le reste du texte. */
-function renderTokens(text: string) {
-  return text.split(TOKEN_PATTERN).map((part, index) =>
-    part.startsWith('#') || part.startsWith('@') ? (
-      <ThemedText key={`${part}-${index}`} style={[feedText.caption, styles.token]}>
-        {part}
-      </ThemedText>
-    ) : (
-      part
-    ),
   );
 }
 

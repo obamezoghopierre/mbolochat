@@ -23,6 +23,9 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { TabBarHeight, TabBarSurface } from '@/constants/theme';
+import { useFeedPageIsLight } from '@/lib/feed-page-tone';
+import { useThemePreference } from '@/lib/theme-preference';
+import { useTheme } from '@/hooks/use-theme';
 
 /**
  * Icônes des onglets, par nom de route.
@@ -74,6 +77,11 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
   const barHidden = activeOptions?.tabBarHidden === true;
 
   const onFeed = state.routes[state.index]?.name === FEED_ROUTE;
+  const theme = useTheme();
+  const { scheme } = useThemePreference();
+  // Page texte claire en thème clair : les icônes blanches du fil seraient
+  // invisibles sur le dégradé pastel — la barre passe aux teintes foncées.
+  const lightPage = useFeedPageIsLight();
 
   // Une seule valeur partagée pilote le fond ET le filet.
   const opaque = useSharedValue(onFeed ? TRANSPARENT_PROGRESS : OPAQUE_PROGRESS);
@@ -93,14 +101,35 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
     backgroundColor: interpolateColor(
       opaque.value,
       [TRANSPARENT_PROGRESS, OPAQUE_PROGRESS],
-      [TabBarSurface.transparent, TabBarSurface.opaque],
+      [
+        TabBarSurface.transparent,
+        scheme === 'light' ? theme.background : TabBarSurface.opaque,
+      ],
     ),
     borderTopColor: interpolateColor(
       opaque.value,
       [TRANSPARENT_PROGRESS, OPAQUE_PROGRESS],
-      ['rgba(255,255,255,0)', TabBarSurface.border],
+      ['rgba(255,255,255,0)', scheme === 'light' ? theme.border : TabBarSurface.border],
     ),
   }));
+
+  // Thème clair : barre blanche, libellés noirs. Les icônes du fil sont
+  // remplies de blanc avec un contour noir (`strokeColor`/`fillColor`) ;
+  // hors fil, les icônes en trait prennent les teintes foncées.
+  // Sur une page texte claire, les libellés restent foncés ; sur les pages
+  // média sombres et en thème sombre, ils restent blancs.
+  const iconColors =
+    scheme === 'light'
+      ? { inactive: theme.textSecondary, active: theme.accent }
+      : { inactive: TabBarSurface.inactive, active: TabBarSurface.active };
+  const labelColors =
+    onFeed && !lightPage
+      ? { inactive: TabBarSurface.inactive, active: TabBarSurface.active }
+      : scheme === 'light'
+        ? { inactive: theme.text, active: theme.accent }
+        : { inactive: TabBarSurface.inactive, active: TabBarSurface.active };
+  const iconStroke = scheme === 'light' ? theme.text : undefined;
+  const iconFill = scheme === 'light' ? '#FFFFFF' : undefined;
 
   // Après tous les hooks : une feuille ouverte masque la barre.
   // On rend une vue de hauteur nulle plutôt que `null` : React Navigation
@@ -134,6 +163,10 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
               label={readLabel(options.tabBarLabel ?? options.title ?? route.name)}
               focused={focused}
               filled={onFeed}
+              colors={iconColors}
+              labelColors={labelColors}
+              strokeColor={iconStroke}
+              fillColor={iconFill}
               onPress={() => pressTab(emitter, navigateToTab, route.key, focused)}
             />
           );
@@ -155,6 +188,10 @@ function TabButton({
   label,
   focused,
   filled,
+  colors,
+  labelColors,
+  strokeColor,
+  fillColor,
   onPress,
 }: {
   routeName: string;
@@ -162,6 +199,14 @@ function TabButton({
   focused: boolean;
   /** Vrai sur le fil : toutes les icônes sont pleines. */
   filled: boolean;
+  /** Teintes inactif/actif des icônes en trait. */
+  colors: { inactive: string; active: string };
+  /** Teintes inactif/actif des libellés (blances sur média sombre). */
+  labelColors: { inactive: string; active: string };
+  /** Contour des icônes pleines en thème clair (noir). */
+  strokeColor?: string;
+  /** Remplissage fixe des icônes pleines en thème clair (blanc). */
+  fillColor?: string;
   onPress: () => void;
 }) {
   const Glyph = TAB_ICONS[routeName] ?? House;
@@ -176,7 +221,7 @@ function TabButton({
   // Le SVG est un composant : sa couleur est une prop animée, l'échelle vient
   // du wrapper `Animated.View`.
   const iconColor = useDerivedValue(() =>
-    interpolateColor(progress.value, [0, 1], [TAB_COLORS.inactive, TAB_COLORS.active]),
+    interpolateColor(progress.value, [0, 1], [colors.inactive, colors.active]),
   );
 
   const iconWrapStyle = useAnimatedStyle(() => ({
@@ -193,7 +238,7 @@ function TabButton({
     color: interpolateColor(
       progress.value,
       [0, 1],
-      [TAB_COLORS.inactive, TAB_COLORS.active],
+      [labelColors.inactive, labelColors.active],
     ) as string,
     opacity: 0.6 + progress.value * 0.4,
   }));
@@ -220,12 +265,25 @@ function TabButton({
       style={styles.tab}
       hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}>
       <Animated.View style={iconWrapStyle}>
-        <AnimatedIcon Glyph={Glyph} color={iconColor} filled={filled} />
+        <AnimatedIcon
+          Glyph={Glyph}
+          color={iconColor}
+          filled={filled}
+          initialColor={colors.inactive}
+          strokeColor={strokeColor}
+          fillColor={fillColor}
+        />
       </Animated.View>
       <Animated.Text numberOfLines={1} style={[styles.label, labelStyle]}>
         {label}
       </Animated.Text>
-      <Animated.View style={[styles.indicator, indicatorStyle]} />
+      <Animated.View
+        style={[
+          styles.indicator,
+          { backgroundColor: labelColors.active },
+          indicatorStyle,
+        ]}
+      />
     </Pressable>
   );
 }
@@ -241,14 +299,22 @@ function AnimatedIcon({
   Glyph,
   color,
   filled,
+  initialColor,
+  strokeColor,
+  fillColor,
 }: {
   Glyph: LucideIcon;
   color: SharedValue<string>;
   filled: boolean;
+  initialColor: string;
+  /** Contour fixe des icônes pleines (thème clair) ; sinon le trait suit la couleur animée. */
+  strokeColor?: string;
+  /** Remplissage fixe des icônes pleines (thème clair : blanc). */
+  fillColor?: string;
 }) {
   // `useAnimatedReaction` écrit la couleur dans un état local, seule façon de
   // traverser la frontière SVG ↔ Reanimated sans composant animable dédié.
-  const [resolved, setResolved] = useState<string>(TAB_COLORS.inactive);
+  const [resolved, setResolved] = useState<string>(initialColor);
 
   useAnimatedReaction(
     () => color.value,
@@ -263,8 +329,9 @@ function AnimatedIcon({
     <Glyph
       size={ICON_SIZE}
       strokeWidth={filled ? 1.8 : 2.1}
-      color={resolved}
-      fill={filled ? resolved : 'none'}
+      // Pleine + thème clair : contour noir + remplissage blanc fixes.
+      color={filled && strokeColor ? strokeColor : resolved}
+      fill={filled ? (fillColor ?? resolved) : 'none'}
     />
   );
 }
