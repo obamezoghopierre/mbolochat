@@ -71,6 +71,12 @@ describe('Feed (e2e)', () => {
       .query(query)
       .set('Authorization', `Bearer ${actor.token}`);
 
+  const reposts = (actor: { token: string }, userId: string, query: Record<string, unknown> = {}) =>
+    request(app.getHttpServer())
+      .get(`/feed/reposts/${userId}`)
+      .query(query)
+      .set('Authorization', `Bearer ${actor.token}`);
+
   const ids = (body: { items: Array<{ id: string }> }) => body.items.map((item) => item.id);
 
   const setCity = (userId: string, city: string | null) =>
@@ -535,6 +541,74 @@ describe('Feed (e2e)', () => {
     expect(newerIndex).toBeGreaterThanOrEqual(0);
     expect(olderIndex).toBeGreaterThanOrEqual(0);
     expect(newerIndex).toBeLessThan(olderIndex);
+  });
+
+  it('mélange les republications des comptes suivis avec attribution', async () => {
+    const author = await register('Originale');
+    const relaye = await register('Relayeuse');
+    const viewer = await register('Filtre');
+    const post = await publish(author);
+
+    // Le visiteur suit le relayeur, pas l'auteur : la publication n'entre
+    // dans son fil « Abonnements » que par la republication.
+    await request(app.getHttpServer())
+      .post(`/users/${relaye.id}/follow`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/publications/${post.id}/repost`)
+      .set('Authorization', `Bearer ${relaye.token}`)
+      .expect(201);
+
+    const page = (await feed(viewer, { tab: 'following' }).expect(200)).body;
+    const item = page.items.find((entry: { id: string }) => entry.id === post.id);
+    expect(item).toBeDefined();
+    expect(item.repostedBy?.id).toBe(relaye.id);
+    expect(item.repostedBy?.displayName).toBe(relaye.displayName);
+
+    // Dès que le visiteur suit aussi l'auteur, la publication arrive par
+    // lui : le badge « a republié » disparaît.
+    await request(app.getHttpServer())
+      .post(`/users/${author.id}/follow`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(201);
+    const after = (await feed(viewer, { tab: 'following' }).expect(200)).body;
+    const direct = after.items.find((entry: { id: string }) => entry.id === post.id);
+    expect(direct).toBeDefined();
+    expect(direct.repostedBy ?? null).toBeNull();
+  });
+
+  it('liste les republications d’un profil avec curseur et confidentialité', async () => {
+    const author = await register('Source');
+    const relaye = await register('ProfilRepost');
+    const viewer = await register('Collectionneuse');
+    const first = await publish(author);
+    const second = await publish(author);
+
+    for (const post of [first, second]) {
+      await request(app.getHttpServer())
+        .post(`/publications/${post.id}/repost`)
+        .set('Authorization', `Bearer ${relaye.token}`)
+        .expect(201);
+    }
+
+    const page1 = await reposts(viewer, relaye.id, { limit: 1 }).expect(200);
+    expect(page1.body.items).toHaveLength(1);
+    expect(page1.body.items[0].repostedBy?.id).toBe(relaye.id);
+    expect(page1.body.nextCursor).toEqual(expect.any(String));
+
+    const page2 = await reposts(viewer, relaye.id, {
+      limit: 1,
+      cursor: page1.body.nextCursor,
+    }).expect(200);
+    expect(page2.body.items).toHaveLength(1);
+    expect(page2.body.items[0].id).not.toBe(page1.body.items[0].id);
+
+    // Profil privé : fermé à un étranger, ouvert à soi-même.
+    await db.update(users).set({ privateAccount: true }).where(eq(users.id, relaye.id));
+    await reposts(viewer, relaye.id).expect(403);
+    const own = await reposts(relaye, relaye.id).expect(200);
+    expect(own.body.items.length).toBeGreaterThanOrEqual(2);
   });
 
   it('préserve l’ordre du score matérialisé entre deux appels', async () => {

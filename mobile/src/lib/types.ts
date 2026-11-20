@@ -495,6 +495,14 @@ export interface PublicationMedia {
   altText: string | null;
 }
 
+/** Résumé de la publication citée par une citation (« Citer »). */
+export interface QuotedPost {
+  id: string;
+  authorUsername: string;
+  authorDisplayName: string;
+  caption: string | null;
+}
+
 /** Publication du fil social (posts et reels unifiés côté API). */
 export interface FeedPost {
   id: string;
@@ -522,6 +530,13 @@ export interface FeedPost {
     /** Le visiteur a republié la publication. */
     reposted?: boolean;
   };
+  /** Publication citée, `null` pour une publication classique. */
+  quoted?: QuotedPost | null;
+  /**
+   * Compte suivi qui a republié cette publication dans le fil
+   * « Abonnements » (attribution « X a republié »). `null` sinon.
+   */
+  repostedBy?: SocialAuthor | null;
 }
 
 export interface FeedPage {

@@ -1,0 +1,3 @@
+ALTER TABLE "publications" ADD COLUMN "quoted_publication_id" text;--> statement-breakpoint
+ALTER TABLE "publications" ADD CONSTRAINT "publications_quoted_publication_id_publications_id_fk" FOREIGN KEY ("quoted_publication_id") REFERENCES "public"."publications"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "publications_quoted_idx" ON "publications" USING btree ("quoted_publication_id");

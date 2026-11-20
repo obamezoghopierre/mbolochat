@@ -8,6 +8,7 @@ import { ProfileAction, ProfileHeader } from '@/components/profile-view';
 import { Icon } from '@/components/icon';
 import { useCalls } from '@/features/calls/CallProvider';
 import { followAction, followLabelKey } from '@/features/social/follow/follow-state';
+import { RepostsSection } from '@/features/social/feed/reposts-section';
 import { useTheme } from '@/hooks/use-theme';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -260,6 +261,8 @@ export default function UserProfileScreen() {
               </ThemedText>
             </View>
           </View>
+        ) : profile ? (
+          <RepostsSection userId={profile.id} token={token} />
         ) : null}
 
         {error ? (

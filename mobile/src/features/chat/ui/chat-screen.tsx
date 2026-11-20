@@ -106,6 +106,8 @@ import { useAuth } from '@/lib/auth-context';
 import { api } from '@/lib/api';
 import { cache } from '@/lib/cache';
 import { consumePendingMediaShare } from '@/lib/pending-media-share';
+import { consumePendingPostShare } from '@/lib/pending-post-share';
+import { postDeepLink } from '@/lib/deep-link';
 
 const EMPTY_CAPABILITIES: ChatCapabilities = {
   replies: true,
@@ -261,6 +263,23 @@ export function ChatScreen({ conversationId }: { conversationId: string }) {
     classic: { deps: CLASSIC_DEPS, options: classicOptions },
     e2ee: { deps: E2EE_DEPS, options: e2eeOptions },
   });
+
+  // Publication partagée depuis le fil : le message (lien profond, chiffré
+  // ou non selon le mode) part dès que le transport est prêt.
+  const [pendingPostShare] = useState(() => consumePendingPostShare());
+  const postShareSentRef = useRef(false);
+  useEffect(() => {
+    if (postShareSentRef.current || !pendingPostShare || !transport) {
+      return;
+    }
+    postShareSentRef.current = true;
+    void transport.sendText(postDeepLink(pendingPostShare.publicationId), null).catch(() => {
+      // Échec (hors ligne E2EE, par exemple) : l'écran le signale, le
+      // partage peut être retenté depuis le fil.
+      postShareSentRef.current = false;
+      Alert.alert(fr.e2eeChat.sendFailedTitle, fr.chat.unified.failedToSend);
+    });
+  }, [transport, pendingPostShare]);
 
   const {
     rows,

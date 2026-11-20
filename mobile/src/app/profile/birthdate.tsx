@@ -4,7 +4,6 @@ import { Alert, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ChoiceSheet, type ChoiceOption } from '@/components/choice-sheet';
-import { Button } from '@/components/ui';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Radii, Spacing } from '@/constants/theme';
@@ -114,7 +113,30 @@ export default function BirthdateScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <Stack.Screen options={{ title: fr.profile.birthdateTitle }} />
+      <Stack.Screen
+        options={{
+          title: fr.profile.birthdateTitle,
+          // Action de validation en haut à droite, comme « Done » sur IG.
+          headerRight: () => (
+            <Pressable
+              onPress={() => void submit()}
+              disabled={saving || !day || !month || !year}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={fr.common.save}
+              accessibilityState={{ disabled: saving || !day || !month || !year }}
+              style={({ pressed }) => [
+                styles.headerAction,
+                pressed && { opacity: 0.6 },
+                (saving || !day || !month || !year) && { opacity: 0.4 },
+              ]}>
+              <ThemedText style={{ color: theme.accent, fontWeight: '600' }}>
+                {saving ? '…' : fr.common.save}
+              </ThemedText>
+            </Pressable>
+          ),
+        }}
+      />
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}>
         <ThemedText type="body" themeColor="textSecondary">
@@ -124,14 +146,6 @@ export default function BirthdateScreen() {
           {card('Jour', day ? String(day) : '—', () => setPicker('day'))}
           {card('Mois', month ? MONTHS[month - 1] : '—', () => setPicker('month'))}
           {card('Année', year ? String(year) : '—', () => setPicker('year'))}
-        </View>
-        <View style={styles.submitWrap}>
-          <Button
-            title={fr.profile.birthdateOnce}
-            onPress={() => void submit()}
-            loading={saving}
-            disabled={!day || !month || !year}
-          />
         </View>
       </ScrollView>
 
@@ -168,7 +182,5 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   value: { fontSize: 17, fontWeight: '600' },
-  submitWrap: {
-    marginTop: Spacing.two,
-  },
+  headerAction: { minWidth: 44, alignItems: 'flex-end' },
 });

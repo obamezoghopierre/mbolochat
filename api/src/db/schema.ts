@@ -1079,6 +1079,16 @@ export const publications = pgTable(
     moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
     /** Son utilisé par un reel, facultatif. */
     soundId: text('sound_id').references(() => sounds.id, { onDelete: 'set null' }),
+    /**
+     * Publication citée (« Citer » façon Instagram) : la citation est une
+     * publication à part entière qui copie les médias de l'originale et
+     * incrémente son compteur de republications. `set null` : la citation
+     * survit à la suppression de l'originale.
+     */
+    quotedPublicationId: text('quoted_publication_id').references(
+      (): AnyPgColumn => publications.id,
+      { onDelete: 'set null' },
+    ),
     /** Score de classement recalculé hors ligne, jamais fourni par le client. */
     hotScore: integer('hot_score').notNull().default(0),
     /** Compteurs dénormalisés, incrémentés en transaction SQL uniquement. */
@@ -1114,6 +1124,7 @@ export const publications = pgTable(
       .where(sql`deleted_at is null and moderation_status in ('pending', 'approved')`),
     index('publications_visibility_hot_idx').on(table.visibility, table.hotScore),
     index('publications_author_created_idx').on(table.authorId, table.createdAt),
+    index('publications_quoted_idx').on(table.quotedPublicationId),
   ],
 );
 

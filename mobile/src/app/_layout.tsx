@@ -188,6 +188,7 @@ function RootNavigator() {
       <Stack.Screen name="register" options={{ headerShown: false }} />
       <Stack.Screen name="forgot-password" options={{ title: 'Mot de passe oublié' }} />
       <Stack.Screen name="new-message" options={{ title: 'Nouveau message' }} />
+      <Stack.Screen name="share-post/[id]" options={{ title: 'Envoyer la publication' }} />
       <Stack.Screen name="new-group" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[id]" options={{ title: '' }} />
       <Stack.Screen name="group/[id]" options={{ title: 'Groupe' }} />

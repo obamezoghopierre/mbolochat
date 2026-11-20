@@ -3,6 +3,7 @@ import { Redirect, useRouter } from 'expo-router';
 import { ArrowLeft, Camera } from 'lucide-react-native';
 import { useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,13 +12,13 @@ import {
   View,
 } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutLeft } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
 import { ContactPicker } from '@/components/contact-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Button, TextField } from '@/components/ui';
+import { TextField } from '@/components/ui';
 import { Gutter, PressScale, Radii, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
@@ -44,7 +45,6 @@ export default function NewGroupScreen() {
   const { token } = useAuth();
   const theme = useTheme();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const [step, setStep] = useState<'members' | 'name'>('members');
   const [selected, setSelected] = useState<User[]>([]);
   const [name, setName] = useState('');
@@ -150,6 +150,27 @@ export default function NewGroupScreen() {
                 : 'Tu pourras tout changer plus tard.'}
             </ThemedText>
           </View>
+          {/* Action d'étape façon Instagram : texte accent en haut à droite,
+              pas de bouton plein en bas de page. */}
+          <Pressable
+            onPress={step === 'members' ? () => setStep('name') : () => void create()}
+            disabled={step === 'members' ? selected.length === 0 : creating}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={step === 'members' ? 'Suivant' : 'Créer le groupe'}
+            style={({ pressed }) => [
+              styles.headerAction,
+              pressed && { opacity: 0.6 },
+              (step === 'members' ? selected.length === 0 : creating) && { opacity: 0.4 },
+            ]}>
+            {step === 'name' && creating ? (
+              <ActivityIndicator color={theme.accent} size="small" />
+            ) : (
+              <ThemedText style={{ color: theme.accent, fontWeight: '600' }}>
+                {step === 'members' ? 'Suivant' : 'Créer'}
+              </ThemedText>
+            )}
+          </Pressable>
         </View>
 
         {error ? (
@@ -244,28 +265,6 @@ export default function NewGroupScreen() {
             </Animated.View>
           )}
 
-          <View
-            style={[
-              styles.footer,
-              {
-                borderTopColor: theme.border,
-                paddingBottom: Math.max(insets.bottom, Spacing.threeHalf),
-              },
-            ]}>
-            {step === 'members' ? (
-              <View style={styles.footerButton}>
-                <Button
-                  title="Suivant"
-                  onPress={() => setStep('name')}
-                  disabled={selected.length === 0}
-                />
-              </View>
-            ) : (
-              <View style={styles.footerButton}>
-                <Button title="Créer le groupe" onPress={() => void create()} loading={creating} />
-              </View>
-            )}
-          </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </ThemedView>
@@ -307,14 +306,5 @@ const styles = StyleSheet.create({
   memberList: { gap: Spacing.two },
   memberRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two, minHeight: 44 },
   memberName: { flex: 1 },
-  footer: {
-    marginTop: 'auto',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.two,
-    paddingHorizontal: Gutter,
-    paddingVertical: Spacing.threeHalf,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  footerButton: { flex: 1 },
+  headerAction: { minWidth: 44, alignItems: 'flex-end' },
 });

@@ -97,6 +97,17 @@ export interface PublicationView {
     /** Le visiteur a republié la publication. */
     reposted?: boolean;
   };
+  /**
+   * Publication citée (« Citer »), résumé pour l'attribution « a republié ».
+   * `null` pour une publication classique ; absent si l'originale a été
+   * supprimée (`quoted_publication_id` passe à `null` en base).
+   */
+  quoted?: {
+    id: string;
+    authorUsername: string;
+    authorDisplayName: string;
+    caption: string | null;
+  } | null;
 }
 
 export interface CommentView {
@@ -247,37 +258,80 @@ export class PublicationsService {
     if (new Set(assetIds).size !== assetIds.length) {
       throw new BadRequestException('Média fourni deux fois.');
     }
+    const quotedPublicationId = dto.quotedPublicationId?.trim() || null;
+    if (quotedPublicationId && assetIds.length > 0) {
+      throw new BadRequestException('Une citation ne peut pas ajouter de média.');
+    }
     const caption = (dto.caption ?? '').trim();
-    if (caption.length === 0 && assetIds.length === 0) {
+    if (caption.length === 0 && assetIds.length === 0 && !quotedPublicationId) {
       throw new BadRequestException('La légende ne peut pas être vide sans média.');
     }
-    const kind = dto.kind ?? 'post';
+    // Une citation copie les médias de l'originale : la citation devient une
+    // publication à part entière, visible selon sa propre visibilité. Seul un
+    // contenu déjà public d'un compte public peut être cité, sinon la copie
+    // exposerait un contenu `followers`/privé à un autre audience.
+    let quoted: { id: string; authorId: string; assetIds: string[] } | null = null;
+    if (quotedPublicationId) {
+      const { row: original, facts } = await this.assertVisible(quotedPublicationId, authorId);
+      if (facts.blocked || original.deletedAt) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+      const [originalAuthor] = await this.db
+        .select({ privateAccount: users.privateAccount })
+        .from(users)
+        .where(eq(users.id, original.authorId));
+      if (original.visibility !== 'public' || originalAuthor?.privateAccount === true) {
+        throw new BadRequestException('Seule une publication publique peut être citée.');
+      }
+      const mediaRows = await this.db
+        .select({ assetId: publicationMedia.assetId })
+        .from(publicationMedia)
+        .where(eq(publicationMedia.publicationId, original.id))
+        .orderBy(publicationMedia.position);
+      quoted = {
+        id: original.id,
+        authorId: original.authorId,
+        assetIds: mediaRows.map((media) => media.assetId),
+      };
+    }
+    // Médias de la citation : ceux de l'originale, dans leur ordre.
+    const effectiveAssetIds = quoted ? quoted.assetIds : assetIds;
+    const kind = quoted ? 'post' : (dto.kind ?? 'post');
     // Auto-flag : un contenu qui contient un mot bloqué part en revue humaine
     // au lieu d'être publié directement.
     const flagged = caption.length > 0 ? await this.moderation.hasBlockedWord(caption) : false;
 
+    let quoteNotification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
+
     const inserted = await this.db.transaction(async (tx) => {
       const assets =
-        assetIds.length === 0
+        effectiveAssetIds.length === 0
           ? []
           : await tx
               .select()
               .from(mediaAssets)
               .where(
                 and(
-                  inArray(mediaAssets.id, assetIds),
-                  eq(mediaAssets.ownerId, authorId),
+                  inArray(mediaAssets.id, effectiveAssetIds),
+                  // Une citation réutilise les assets de l'originale, qui
+                  // appartiennent à un autre compte : pas de contrôle
+                  // `ownerId`, seulement la disponibilité.
+                  ...(quoted ? [] : [eq(mediaAssets.ownerId, authorId)]),
                   eq(mediaAssets.status, 'ready'),
                   isNull(mediaAssets.deletedAt),
                 ),
               );
-      if (assets.length !== assetIds.length) {
+      if (assets.length !== effectiveAssetIds.length) {
         throw new BadRequestException('Média introuvable ou pas encore prêt.');
       }
-      // L'ordre du carrousel est celui fourni par le client.
-      const ordered = assetIds.map(
+      // L'ordre du carrousel est celui fourni par le client — ou celui des
+      // médias de l'originale pour une citation.
+      const ordered = effectiveAssetIds.map(
         (assetId) => assets.find((asset) => asset.id === assetId)!,
       );
+      if (ordered.length === 0 && caption.length === 0) {
+        throw new BadRequestException('La légende ne peut pas être vide sans média.');
+      }
       const kinds = new Set(ordered.map((asset) => asset.kind));
       if (kinds.size > 1) {
         throw new BadRequestException('Une publication ne mélange pas images et vidéos.');
@@ -308,6 +362,7 @@ export class PublicationsService {
           caption: caption.length > 0 ? caption : null,
           visibility: dto.visibility ?? 'public',
           moderationStatus: flagged ? 'flagged' : 'pending',
+          quotedPublicationId: quoted?.id ?? null,
           clientId: dto.clientId,
           createdAt: now,
           // Score matérialisé dès la création : le feed pagine dessus.
@@ -335,10 +390,26 @@ export class PublicationsService {
           ...(kind === 'reel' ? { reelCount: sql`${users.reelCount} + 1` } : {}),
         })
         .where(eq(users.id, authorId));
+      if (quoted) {
+        // La citation compte comme une republication de l'originale.
+        await tx
+          .update(publications)
+          .set({ repostCount: sql`${publications.repostCount} + 1` })
+          .where(eq(publications.id, quoted.id));
+        await this.refreshHotScore(tx, quoted.id);
+        quoteNotification = await this.notifications.create(tx, {
+          recipientId: quoted.authorId,
+          actorId: authorId,
+          type: 'repost',
+          dedupeKey: `repost:${quoted.id}:${authorId}`,
+          publicationId: quoted.id,
+        });
+      }
       return row;
     });
 
     if (inserted) {
+      await this.notifications.deliver(quoteNotification);
       return this.view(inserted, authorId);
     }
     // Rejeu : on rend la publication déjà enregistrée pour ce `clientId`.
@@ -441,6 +512,14 @@ export class PublicationsService {
       // La suppression logique ne retire pas les octets : le worker doit purger
       // l'original, le poster et les variantes du stockage.
       await enqueuePublicationCleanup(tx, publicationId);
+      if (row.quotedPublicationId) {
+        // La citation comptait comme une republication de l'originale.
+        await tx
+          .update(publications)
+          .set({ repostCount: sql`greatest(${publications.repostCount} - 1, 0)` })
+          .where(eq(publications.id, row.quotedPublicationId));
+        await this.refreshHotScore(tx, row.quotedPublicationId);
+      }
     });
     return { deleted: true };
   }
@@ -561,6 +640,9 @@ export class PublicationsService {
     const { row, facts } = await this.assertVisible(publicationId, viewerId);
     if (facts.blocked) {
       throw new ForbiddenException('Interaction impossible avec ce compte.');
+    }
+    if (row.authorId === viewerId) {
+      throw new BadRequestException('On ne peut pas republier sa propre publication.');
     }
 
     let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
@@ -1399,6 +1481,31 @@ export class PublicationsService {
         and(eq(publicationReposts.publicationId, row.id), eq(publicationReposts.userId, viewerId)),
       );
 
+    let quoted: PublicationView['quoted'] = null;
+    if (row.quotedPublicationId) {
+      const [original] = await this.db
+        .select({
+          id: publications.id,
+          caption: publications.caption,
+          deletedAt: publications.deletedAt,
+          authorUsername: users.username,
+          authorDisplayName: users.displayName,
+        })
+        .from(publications)
+        .innerJoin(users, eq(users.id, publications.authorId))
+        .where(eq(publications.id, row.quotedPublicationId));
+      // La citation survit à l'originale (`set null`) ; si la ligne citée a
+      // été supprimée physiquement ou masquée, on n'expose que l'attribution.
+      if (original && !original.deletedAt) {
+        quoted = {
+          id: original.id,
+          authorUsername: original.authorUsername,
+          authorDisplayName: original.authorDisplayName,
+          caption: original.caption,
+        };
+      }
+    }
+
     return {
       id: row.id,
       media: mediaMap.get(row.id) ?? [],
@@ -1420,6 +1527,7 @@ export class PublicationsService {
         saved: Boolean(saved),
         reposted: Boolean(reposted),
       },
+      quoted,
     };
   }
 

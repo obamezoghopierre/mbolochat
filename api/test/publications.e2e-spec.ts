@@ -307,6 +307,16 @@ describe('Publications et interactions (e2e)', () => {
     expect(replay.body.repostCount).toBe(0);
   });
 
+  it('interdit de republier sa propre publication', async () => {
+    const alice = await register('Auto');
+    const post = await publish(alice).expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/repost`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(400);
+  });
+
   it('refuse le signet et le repost sur une publication invisible', async () => {
     const alice = await register('Privee');
     const stranger = await register('Etranger');

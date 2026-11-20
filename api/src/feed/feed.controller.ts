@@ -3,6 +3,7 @@ import {
   Controller,
   DefaultValuePipe,
   Get,
+  Param,
   ParseIntPipe,
   Query,
   UseGuards,
@@ -45,5 +46,17 @@ export class FeedController {
       cursor,
       format as (typeof FEED_FORMATS)[number] | undefined,
     );
+  }
+
+  /** Republications d'un compte, pour sa grille de profil. */
+  @Get('reposts/:userId')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async reposts(
+    @CurrentUser() current: JwtPayload,
+    @Param('userId') userId: string,
+    @Query('limit', new DefaultValuePipe(FEED_DEFAULT_LIMIT), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.feed.listReposts(userId, current.sub, limit, cursor);
   }
 }

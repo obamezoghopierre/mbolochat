@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { applyReaction, mergeFeedPage, toggleRepost, toggleSave } from './feed-model';
 import { ApiError, api } from '@/lib/api';
+import { fr } from '@/i18n/fr';
 import type { FeedPost, FeedTab, SocialReaction } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
 
@@ -29,6 +30,18 @@ interface CachedFeed {
 }
 
 const feedCache = new Map<string, CachedFeed>();
+
+/**
+ * Oublie les fils mis en cache d'une session : appelé après une action qui
+ * crée du contenu (citation) pour que le prochain affichage recharge.
+ */
+export function invalidateFeedCache(token: string): void {
+  for (const key of [...feedCache.keys()]) {
+    if (key.startsWith(`${token}:`)) {
+      feedCache.delete(key);
+    }
+  }
+}
 
 /** Au-delà, le fil est requêté à nouveau (le classement a pu bouger). */
 const FEED_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -191,7 +204,7 @@ export function useFeed(tab: FeedTab) {
       setItems((current) => current.filter((entry) => entry.id !== post.id));
       try {
         await api.notInterested(token, post.id);
-        setNotice({ message: 'Moins de contenus comme celui-ci', tone: 'info' });
+        setNotice({ message: fr.social.notInterestedDone, tone: 'info' });
       } catch {
         setItems((current) => restoreItems(current, previous));
         notifyError('Action impossible. Réessaie.');
@@ -210,7 +223,7 @@ export function useFeed(tab: FeedTab) {
       setItems((current) => current.filter((entry) => entry.author.id !== post.author.id));
       try {
         await api.muteAuthor(token, post.author.id);
-        setNotice({ message: 'Auteur masqué dans ton fil', tone: 'info' });
+        setNotice({ message: fr.social.muteAuthorDone, tone: 'info' });
       } catch {
         setItems((current) => restoreItems(current, previous));
         notifyError('Action impossible. Réessaie.');
@@ -258,7 +271,7 @@ export function useFeed(tab: FeedTab) {
           await api.unrepostPublication(token, post.id);
         }
         setNotice({
-          message: next.reposted ? 'Publication republiée' : 'Republication retirée',
+          message: next.reposted ? fr.social.repostDone : fr.social.unrepostDone,
           tone: 'info',
         });
       } catch {

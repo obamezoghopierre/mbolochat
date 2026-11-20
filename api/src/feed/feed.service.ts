@@ -1,9 +1,18 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
+  blocks,
   feedSessions,
+  follows,
   publicationReactions,
   publicationReposts,
   publicationSaves,
@@ -48,6 +57,11 @@ export interface FeedItem extends PublicationView {
     /** Le visiteur suit l'auteur (abonnement accepté). */
     followingAuthor: boolean;
   };
+  /**
+   * Compte suivi qui a republication cette publication dans le fil
+   * « Abonnements » (façon Instagram). `null`/absent sinon.
+   */
+  repostedBy?: AuthorCard | null;
 }
 
 export interface FeedPage {
@@ -70,6 +84,12 @@ export function decodeFeedCursor(cursor: string): { hotScore: number; id: string
   return { hotScore, id };
 }
 
+/** Publication citée et son auteur, jointes pour l'attribution « a republié ». */
+const quotedPublications = alias(publications, 'quoted_publications');
+const quotedAuthors = alias(users, 'quoted_authors');
+/** Republication portée par le profil listé (`/feed/reposts/:userId`). */
+const profileReposts = alias(publicationReposts, 'profile_reposts');
+
 type PublicationRow = {
   id: string;
   kind: 'post' | 'reel';
@@ -88,6 +108,11 @@ type PublicationRow = {
   followingAuthor: unknown;
   saved: string | null;
   reposted: string | null;
+  repostedAt?: Date | null;
+  quotedId: string | null;
+  quotedCaption: string | null;
+  quotedAuthorUsername: string | null;
+  quotedAuthorDisplayName: string | null;
 };
 
 /**
@@ -139,30 +164,179 @@ export class FeedService {
     return this.listRanked(viewerId, tab, bounded, cursor, format, viewer.city);
   }
 
-  /** Abonnements : ordre chronologique strict, curseur stable. */
+  /**
+   * Abonnements : ordre chronologique strict, curseur stable.
+   *
+   * Comme Instagram, le fil mélange deux sources : les publications des
+   * auteurs suivis et les republications faites par des comptes suivis
+   * (d'auteurs que le visiteur ne suit pas déjà — sinon la publication
+   * arrive par son auteur). La clé de tri est `max(created_at, repost_at)` :
+   * une republication récente fait remonter une publication plus ancienne.
+   */
   private async listChronological(
     viewerId: string,
     limit: number,
     cursor?: string,
     format?: FeedFormat,
   ): Promise<FeedPage> {
-    const conditions = [
-      ...this.baseConditions(viewerId),
-      this.followsAuthor(viewerId),
-    ];
-    if (format) {
-      conditions.push(eq(publications.format, format));
+    const visibility = sql.join(
+      [
+        ...visiblePublicationConditions(viewerId),
+        this.feedbackCondition(viewerId),
+        ...(format ? [sql`${publications.format} = ${format}`] : []),
+      ],
+      sql` and `,
+    );
+    const decoded = cursor ? decodeFeedTimeCursor(cursor) : null;
+    const cursorClause = decoded
+      ? sql`where (sort_at, publication_id) < (${decoded.createdAt.toISOString()}::timestamptz, ${decoded.id})`
+      : sql``;
+
+    const { rows } = await this.db.execute<{
+      publication_id: string;
+      sort_at: Date | string;
+      reposter_id: string | null;
+    }>(sql`
+      select publication_id, sort_at, reposter_id
+      from (
+        select distinct on (publication_id) publication_id, sort_at, reposter_id
+        from (
+          select publications.id as publication_id,
+                 publications.created_at as sort_at,
+                 null::text as reposter_id
+          from publications
+          inner join users on users.id = publications.author_id
+          where ${visibility}
+            and ${this.followsAuthor(viewerId)}
+          union all
+          select publications.id,
+                 pr.created_at,
+                 pr.user_id
+          from publication_reposts pr
+          inner join publications on publications.id = pr.publication_id
+          inner join users on users.id = publications.author_id
+          inner join users reposters on reposters.id = pr.user_id
+          where ${visibility}
+            and pr.user_id <> ${viewerId}
+            and pr.user_id <> publications.author_id
+            and reposters.deleted_at is null
+            and not exists (
+              select 1 from blocks rb
+              where (rb.blocker_id = ${viewerId} and rb.blocked_id = reposters.id)
+                 or (rb.blocker_id = reposters.id and rb.blocked_id = ${viewerId})
+            )
+            and exists (
+              select 1 from follows rf
+              where rf.follower_id = ${viewerId}
+                and rf.following_id = reposters.id
+                and rf.status = 'accepted'
+            )
+            and not exists (
+              select 1 from follows fa
+              where fa.follower_id = ${viewerId}
+                and fa.following_id = publications.author_id
+                and fa.status = 'accepted'
+            )
+        ) candidates
+        order by publication_id, sort_at desc
+      ) ranked
+      ${cursorClause}
+      order by sort_at desc, publication_id desc
+      limit ${limit + 1}
+    `);
+
+    const pageRows = rows.slice(0, limit);
+    const reposterByPublication = new Map(
+      pageRows.filter((row) => row.reposter_id).map((row) => [row.publication_id, row.reposter_id!]),
+    );
+    const items = await this.hydrate(
+      pageRows.map((row) => row.publication_id),
+      viewerId,
+    );
+    const reposters = await this.authorCards([...reposterByPublication.values()]);
+    for (const item of items) {
+      const reposterId = reposterByPublication.get(item.id);
+      item.repostedBy = reposterId ? (reposters.get(reposterId) ?? null) : null;
     }
+
+    const last = pageRows.at(-1);
+    return {
+      items,
+      nextCursor:
+        rows.length > limit && last
+          ? encodeFeedTimeCursor(new Date(last.sort_at), last.publication_id)
+          : null,
+    };
+  }
+
+  /**
+   * Republications faites par un compte (`/feed/reposts/:userId`), pour la
+   * grille de profil. La visibilité du profil est vérifiée avant la liste :
+   * compte privé → abonnés acceptés, blocage → refus.
+   */
+  async listReposts(
+    userId: string,
+    viewerId: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<FeedPage> {
+    const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
+    const [target] = await this.db
+      .select({ privateAccount: users.privateAccount, deletedAt: users.deletedAt })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!target || target.deletedAt) {
+      throw new NotFoundException('Profil introuvable.');
+    }
+    if (userId !== viewerId) {
+      const [blockedRow] = await this.db
+        .select({ blockerId: blocks.blockerId })
+        .from(blocks)
+        .where(
+          or(
+            and(eq(blocks.blockerId, viewerId), eq(blocks.blockedId, userId)),
+            and(eq(blocks.blockerId, userId), eq(blocks.blockedId, viewerId)),
+          ),
+        )
+        .limit(1);
+      let allowed = !blockedRow;
+      if (allowed && target.privateAccount) {
+        const [follow] = await this.db
+          .select({ followerId: follows.followerId })
+          .from(follows)
+          .where(
+            and(
+              eq(follows.followerId, viewerId),
+              eq(follows.followingId, userId),
+              eq(follows.status, 'accepted'),
+            ),
+          )
+          .limit(1);
+        allowed = Boolean(follow);
+      }
+      if (!allowed) {
+        throw new ForbiddenException('Ce profil est privé.');
+      }
+    }
+
+    const conditions = [
+      eq(profileReposts.userId, userId),
+      ...this.baseConditions(viewerId),
+    ];
     if (cursor) {
       const decoded = decodeFeedTimeCursor(cursor);
       conditions.push(
-        sql`(${publications.createdAt}, ${publications.id}) < (${decoded.createdAt.toISOString()}::timestamptz, ${decoded.id})`,
+        sql`(${profileReposts.createdAt}, ${publications.id}) < (${decoded.createdAt.toISOString()}::timestamptz, ${decoded.id})`,
       );
     }
 
     const rows = await this.db
-      .select(this.feedColumns(viewerId))
-      .from(publications)
+      .select({
+        ...this.feedColumns(viewerId),
+        repostedAt: profileReposts.createdAt,
+      })
+      .from(profileReposts)
+      .innerJoin(publications, eq(publications.id, profileReposts.publicationId))
       .innerJoin(users, eq(users.id, publications.authorId))
       .leftJoin(
         publicationReactions,
@@ -185,19 +359,56 @@ export class FeedService {
           eq(publicationReposts.userId, viewerId),
         ),
       )
+      .leftJoin(
+        quotedPublications,
+        and(
+          eq(quotedPublications.id, publications.quotedPublicationId),
+          isNull(quotedPublications.deletedAt),
+        ),
+      )
+      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
       .where(and(...conditions))
-      .orderBy(desc(publications.createdAt), desc(publications.id))
-      .limit(limit + 1);
+      .orderBy(desc(profileReposts.createdAt), desc(publications.id))
+      .limit(bounded + 1);
 
-    const page = rows.slice(0, limit);
+    const page = rows.slice(0, bounded);
     const last = page.at(-1);
+    const items = await this.toItems(page);
+    // Comme dans le fil, chaque republication porte l'auteur du repost.
+    const reposters = await this.authorCards([userId]);
+    const reposter = reposters.get(userId) ?? null;
+    for (const item of items) {
+      item.repostedBy = reposter;
+    }
     return {
-      items: await this.toItems(page),
+      items,
       nextCursor:
-        rows.length > limit && last
-          ? encodeFeedTimeCursor(last.createdAt, last.id)
+        rows.length > bounded && last?.repostedAt
+          ? encodeFeedTimeCursor(last.repostedAt, last.id)
           : null,
     };
+  }
+
+  /** Cartes auteurs pour l'attribution « a republié ». */
+  private async authorCards(ids: string[]): Promise<Map<string, AuthorCard>> {
+    const result = new Map<string, AuthorCard>();
+    if (ids.length === 0) {
+      return result;
+    }
+    const rows = await this.db
+      .select({
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        verified: users.verified,
+      })
+      .from(users)
+      .where(inArray(users.id, ids));
+    for (const row of rows) {
+      result.set(row.id, { ...row });
+    }
+    return result;
   }
 
   /**
@@ -348,6 +559,14 @@ export class FeedService {
           eq(publicationReposts.userId, viewerId),
         ),
       )
+      .leftJoin(
+        quotedPublications,
+        and(
+          eq(quotedPublications.id, publications.quotedPublicationId),
+          isNull(quotedPublications.deletedAt),
+        ),
+      )
+      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
       .where(
         and(
           inArray(publications.id, ids),
@@ -390,25 +609,32 @@ export class FeedService {
       followingAuthor: this.followsAuthor(viewerId),
       saved: publicationSaves.userId,
       reposted: publicationReposts.userId,
+      quotedId: publications.quotedPublicationId,
+      quotedCaption: quotedPublications.caption,
+      quotedAuthorUsername: quotedAuthors.username,
+      quotedAuthorDisplayName: quotedAuthors.displayName,
     };
   }
 
   /** Conditions d'autorisation communes à tous les onglets. */
   private baseConditions(viewerId: string) {
-    return [
-      ...visiblePublicationConditions(viewerId),
-      // Contenus écartés par le visiteur : « Pas intéressé » sur une publication
-      // ou masquage d'un auteur. Appliqué en SQL, donc valable sur tous les
-      // onglets et toutes les pages d'une session.
-      sql`not exists (
-        select 1 from content_feedback cf
-        where cf.user_id = ${viewerId}
-          and (
-            (cf.target_type = 'publication' and cf.target_id = ${publications.id})
-            or (cf.target_type = 'author' and cf.target_id = ${publications.authorId})
-          )
-      )`,
-    ];
+    return [...visiblePublicationConditions(viewerId), this.feedbackCondition(viewerId)];
+  }
+
+  /**
+   * Contenus écartés par le visiteur : « Pas intéressé » sur une publication
+   * ou masquage d'un auteur. Partagé entre le query builder et la requête
+   * brute de l'onglet Abonnements.
+   */
+  private feedbackCondition(viewerId: string) {
+    return sql`not exists (
+      select 1 from content_feedback cf
+      where cf.user_id = ${viewerId}
+        and (
+          (cf.target_type = 'publication' and cf.target_id = ${publications.id})
+          or (cf.target_type = 'author' and cf.target_id = ${publications.authorId})
+        )
+    )`;
   }
 
   private followsAuthor(viewerId: string) {
@@ -503,6 +729,15 @@ export class FeedService {
         reposted: Boolean(row.reposted),
         followingAuthor: Boolean(row.followingAuthor),
       },
+      quoted:
+        row.quotedId && row.quotedAuthorDisplayName !== null
+          ? {
+              id: row.quotedId,
+              authorUsername: row.quotedAuthorUsername ?? '',
+              authorDisplayName: row.quotedAuthorDisplayName,
+              caption: row.quotedCaption,
+            }
+          : null,
     }));
   }
 }

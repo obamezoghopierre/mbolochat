@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { Heart, MessageCircle } from 'lucide-react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
 
@@ -8,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Radii, Spacing, Type } from '@/constants/theme';
 import { primaryMedia } from './pager/feed-media';
 import { formatListTimestamp } from '@/lib/format';
+import { fr } from '@/i18n/fr';
 import type { FeedPost } from '@/lib/types';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -85,6 +87,23 @@ export function PostCard({
         />
       ) : null}
 
+      {post.quoted ? (
+        <Pressable
+          onPress={() => router.push(`/post/${post.quoted!.id}`)}
+          accessibilityRole="button"
+          accessibilityLabel={`Voir la publication de ${post.quoted.authorDisplayName}`}
+          style={styles.quoted}>
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+            {fr.social.quotedFrom(post.quoted.authorDisplayName)}
+          </ThemedText>
+          {post.quoted.caption ? (
+            <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+              {post.quoted.caption}
+            </ThemedText>
+          ) : null}
+        </Pressable>
+      ) : null}
+
       {post.caption ? (
         <ThemedText style={styles.caption}>{post.caption}</ThemedText>
       ) : null}
@@ -151,6 +170,10 @@ const styles = StyleSheet.create({
   name: {
     ...Type.body,
     fontWeight: '600',
+  },
+  quoted: {
+    gap: Spacing.half,
+    paddingVertical: Spacing.one,
   },
   caption: {
     ...Type.body,

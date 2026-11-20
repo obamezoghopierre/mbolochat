@@ -4,8 +4,8 @@ import {
   EyeOff,
   Flame,
   Heart,
-  Link2,
-  Send,
+  Quote,
+  Repeat2,
   ShieldAlert,
   Star,
   Trash2,
@@ -32,14 +32,18 @@ import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { useAuth } from '@/lib/auth-context';
+import { copyToClipboard } from '@/lib/clipboard';
 import { postDeepLink } from '@/lib/deep-link';
-import type { FeedPost, SocialReaction } from '@/lib/types';
+import { setPendingPostShare } from '@/lib/pending-post-share';
+import type { ConversationSummary, FeedPost, SocialReaction } from '@/lib/types';
 import { FeedActionRail } from './action-rail';
 import { isVideoPost, primaryMedia } from './feed-media';
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { ImagePage } from './image-page';
 import { isPageActive, videoPageMode } from './preload';
 import { PostInfoBlock } from './post-info';
+import { PostQrSheet } from './post-qr-sheet';
+import { ShareTargetsRow, type ShareSheetAction } from './share-targets';
 import { TextPage } from './text-page';
 import { FeedViewTracker } from './view-tracker';
 import { VideoPage } from './video-page';
@@ -131,7 +135,7 @@ export function FeedPager({
   // En 3G/4G on préfère la variante basse qualité : moins de buffering, moins
   // de données. Le Wi-Fi et l'Ethernet prennent le flux principal.
   const preferLowQuality = network.type === NetworkStateType.CELLULAR;
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const [activeIndex, setActiveIndex] = useState(0);
 
   const [muted, setMuted] = useState(false);
@@ -145,8 +149,10 @@ export function FeedPager({
     key: number;
     point: { x: number; y: number } | null;
   }>({ id: '', key: 0, point: null });
-  const [menuTarget, setMenuTarget] = useState<FeedPost | null>(null);
+  const [shareTarget, setShareTarget] = useState<FeedPost | null>(null);
+  const [qrTarget, setQrTarget] = useState<FeedPost | null>(null);
   const [reactionTarget, setReactionTarget] = useState<FeedPost | null>(null);
+  const [repostTarget, setRepostTarget] = useState<FeedPost | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -253,67 +259,31 @@ export function FeedPager({
 
   const copyLink = useCallback(
     async (post: FeedPost) => {
-      try {
-        await Share.share({ message: postDeepLink(post.id) });
-        showToast('Lien partagé');
-      } catch {
+      // Vrai presse-papiers, pas la feuille de partage : le libellé promet
+      // une copie, pas un envoi.
+      if (await copyToClipboard(postDeepLink(post.id))) {
+        showToast(fr.social.linkCopied);
+      } else {
         actions.notifyError(fr.social.shareError);
       }
     },
     [actions, showToast],
   );
 
-  const currentUserId = user?.id ?? null;
-
-  const menuActions = useMemo<SheetAction[]>(() => {
-    const target = menuTarget;
-    if (!target) {
-      return [];
-    }
-    const own = target.author.id === currentUserId;
-    const shareAction: SheetAction = {
-      key: 'share',
-      label: fr.social.shareLabel,
-      icon: Send,
-      onPress: () => void share(target),
-    };
-    const reportAction: SheetAction = {
-      key: 'report',
-      label: 'Signaler',
-      icon: ShieldAlert,
-      destructive: true,
-      onPress: () => actions.report(target),
-    };
-    const deleteAction: SheetAction = {
-      key: 'delete',
-      label: 'Supprimer',
-      icon: Trash2,
-      destructive: true,
-      onPress: () => void actions.remove(target),
-    };
-    const linkAction: SheetAction = {
-      key: 'link',
-      label: 'Copier le lien',
-      icon: Link2,
-      onPress: () => void copyLink(target),
-    };
-    // Signaux négatifs : ils changent le classement du fil, pas seulement l'écran.
-    const notInterestedAction: SheetAction = {
-      key: 'not-interested',
-      label: fr.social.notInterested,
-      icon: EyeOff,
-      onPress: () => void actions.dismiss(target),
-    };
-    const muteAction: SheetAction = {
-      key: 'mute-author',
-      label: fr.social.muteAuthor,
-      icon: UserX,
-      onPress: () => void actions.muteAuthor(target),
-    };
-    return own
-      ? [linkAction, shareAction, deleteAction, reportAction]
-      : [linkAction, shareAction, notInterestedAction, muteAction, reportAction];
-  }, [actions, copyLink, currentUserId, menuTarget, share]);
+  const sendPostToConversation = useCallback(
+    (conversation: ConversationSummary) => {
+      const target = shareTarget;
+      if (!target) {
+        return;
+      }
+      setShareTarget(null);
+      // Le chat envoie le lien profond via son transport (clair ou E2EE)
+      // à l'arrivée sur l'écran.
+      setPendingPostShare({ publicationId: target.id });
+      router.push(`/chat/${conversation.id}`);
+    },
+    [shareTarget],
+  );
 
   if (height <= 0) {
     return <View style={styles.flex} />;
@@ -468,9 +438,8 @@ export function FeedPager({
                       onPickReaction: () => setReactionTarget(item),
                       onOpenComments: () => actions.onOpenComments(item),
                       onToggleSave: () => void actions.toggleSave(item),
-                      onToggleRepost: () => void actions.toggleRepost(item),
-                      onShare: () => void share(item),
-                      onMore: () => setMenuTarget(item),
+                      onToggleRepost: () => setRepostTarget(item),
+                      onShare: () => setShareTarget(item),
                       onOpenProfile: () => openProfile(item),
                       onFollow: item.viewer.followingAuthor ? null : () => void actions.follow(item),
                     }}
@@ -503,13 +472,53 @@ export function FeedPager({
         </View>
       ) : null}
 
+      {/* Feuille de partage façon Instagram : discussions récentes en
+          en-tête, puis copier le lien ou feuille de partage système. */}
       <ActionSheet
-        visible={menuTarget !== null}
-        title="Options"
-        subtitle={menuTarget ? `Publication de ${menuTarget.author.displayName}` : undefined}
-        actions={menuActions}
-        onClose={() => setMenuTarget(null)}
+        visible={shareTarget !== null}
+        title={fr.social.shareLabel}
+        subtitle={shareTarget ? `Publication de ${shareTarget.author.displayName}` : undefined}
+        header={
+          shareTarget && token ? (
+            <ShareTargetsRow
+              token={token}
+              currentUserId={user?.id ?? null}
+              onPick={sendPostToConversation}
+              onCopyLink={() => {
+                setShareTarget(null);
+                void copyLink(shareTarget);
+              }}
+              onShare={() => {
+                setShareTarget(null);
+                void share(shareTarget);
+              }}
+              onShareTo={() => {
+                const target = shareTarget;
+                setShareTarget(null);
+                if (target) {
+                  router.push(`/share-post/${target.id}`);
+                }
+              }}
+              onShowQr={() => {
+                const target = shareTarget;
+                setShareTarget(null);
+                setQrTarget(target);
+              }}
+              extraActions={
+                shareTarget
+                  ? moderationActions(shareTarget, actions, user?.id ?? null, () =>
+                      setShareTarget(null),
+                    )
+                  : []
+              }
+            />
+          ) : null
+        }
+        actions={[]}
+        onClose={() => setShareTarget(null)}
       />
+
+      <PostQrSheet post={qrTarget} onClose={() => setQrTarget(null)} />
 
       {/* Sélecteur de réaction : appui long sur le cœur du rail. */}
       <ActionSheet
@@ -517,6 +526,14 @@ export function FeedPager({
         title={fr.social.reactionPickerTitle}
         actions={REACTION_ACTIONS(reactionTarget, actions, () => setReactionTarget(null))}
         onClose={() => setReactionTarget(null)}
+      />
+
+      {/* Republication façon Instagram : republier ou citer. */}
+      <ActionSheet
+        visible={repostTarget !== null}
+        title={fr.social.repostSheetTitle}
+        actions={REPOST_ACTIONS(repostTarget, actions, () => setRepostTarget(null))}
+        onClose={() => setRepostTarget(null)}
       />
     </View>
   );
@@ -576,6 +593,90 @@ function TopScrim() {
       ))}
     </View>
   );
+}
+
+/**
+ * Actions de modération de la feuille Partager (ex- menu ⋯) : « Pas
+ * intéressé » et « Masquer cet auteur » pour le contenu des autres,
+ * « Supprimer » pour le sien, « Signaler » dans les deux cas.
+ */
+function moderationActions(
+  target: FeedPost,
+  actions: FeedPagerActions,
+  currentUserId: string | null,
+  close: () => void,
+): ShareSheetAction[] {
+  const own = target.author.id === currentUserId;
+  const run = (fn: () => void | Promise<void>) => () => {
+    close();
+    void fn();
+  };
+  const list: ShareSheetAction[] = own
+    ? []
+    : [
+        {
+          key: 'not-interested',
+          label: fr.social.notInterested,
+          icon: EyeOff,
+          onPress: run(() => actions.dismiss(target)),
+        },
+        {
+          key: 'mute-author',
+          label: fr.social.muteAuthor,
+          icon: UserX,
+          onPress: run(() => actions.muteAuthor(target)),
+        },
+      ];
+  if (own) {
+    list.push({
+      key: 'delete',
+      label: fr.social.deletePublication,
+      icon: Trash2,
+      danger: true,
+      onPress: run(() => actions.remove(target)),
+    });
+  }
+  list.push({
+    key: 'report',
+    label: fr.social.reportPublication,
+    icon: ShieldAlert,
+    danger: true,
+    onPress: run(() => actions.report(target)),
+  });
+  return list;
+}
+
+/** Actions de republication : republier sur son profil ou citer avec avis. */
+function REPOST_ACTIONS(
+  target: FeedPost | null,
+  actions: FeedPagerActions,
+  close: () => void,
+): SheetAction[] {
+  if (!target) {
+    return [];
+  }
+  const reposted = target.viewer.reposted === true;
+  return [
+    {
+      key: 'repost',
+      label: reposted ? fr.social.unrepostLabel : fr.social.repostLabel,
+      icon: Repeat2,
+      selected: reposted,
+      onPress: () => {
+        close();
+        void actions.toggleRepost(target);
+      },
+    },
+    {
+      key: 'quote',
+      label: fr.social.quoteLabel,
+      icon: Quote,
+      onPress: () => {
+        close();
+        router.push(`/quote/${target.id}`);
+      },
+    },
+  ];
 }
 
 /** Actions du sélecteur de réaction, construites pour la publication ciblée. */

@@ -37,6 +37,7 @@ import type {
   SearchResult,
   SocialNotificationPage,
   SocialReaction,
+  SocialVisibility,
   FeedPost,
   UploadResult,
   User,
@@ -179,6 +180,23 @@ export const api = {
   /** Détail d'une publication (visibilité vérifiée par le serveur). */
   publication(token: string, publicationId: string) {
     return request<FeedPost>(`/publications/${publicationId}`, { token });
+  },
+
+  /**
+   * Crée une publication. `quotedPublicationId` en fait une citation
+   * (« Citer ») : les médias de l'originale sont copiés côté serveur.
+   * Idempotent par `clientId`.
+   */
+  createPublication(
+    token: string,
+    body: {
+      clientId: string;
+      caption?: string;
+      quotedPublicationId?: string;
+      visibility?: SocialVisibility;
+    },
+  ) {
+    return request<FeedPost>('/publications', { method: 'POST', token, body });
   },
 
   /** Supprime sa propre publication. */
@@ -474,6 +492,12 @@ export const api = {
       `/publications/${publicationId}/repost`,
       { method: 'DELETE', token },
     );
+  },
+
+  /** Republications d'un compte (grille de profil), paginé par curseur. */
+  userReposts(token: string, userId: string, cursor?: string) {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    return request<FeedPage>(`/feed/reposts/${userId}${query}`, { token });
   },
 
   refresh(refreshToken: string) {

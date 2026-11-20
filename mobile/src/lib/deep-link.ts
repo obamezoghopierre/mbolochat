@@ -10,3 +10,15 @@ export const APP_SCHEME = 'mbolochat';
 export function postDeepLink(publicationId: string): string {
   return `${APP_SCHEME}://post/${publicationId}`;
 }
+
+const POST_LINK_PATTERN = new RegExp(`^${APP_SCHEME}://post/([^/\\s]+)$`);
+
+/**
+ * Identifiant de publication dans un message qui ne contient *que* le lien
+ * profond de partage. `null` pour tout autre texte : le lien reste affiché
+ * comme du texte brut dans ce cas.
+ */
+export function postDeepLinkId(text: string): string | null {
+  const match = POST_LINK_PATTERN.exec(text.trim());
+  return match?.[1] ?? null;
+}

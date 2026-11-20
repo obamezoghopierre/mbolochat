@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { Check, Music2, Plus } from 'lucide-react-native';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
@@ -88,6 +89,37 @@ export const PostInfoBlock = memo(function PostInfoBlock({
           </Pressable>
         )}
       </Pressable>
+
+      {/* Republication dans le fil Abonnements : « X a republié »,
+          comme Instagram — le tap mène au profil du reposter. */}
+      {post.repostedBy ? (
+        <Pressable
+          onPress={() => router.push(`/user/${post.repostedBy!.id}`)}
+          accessibilityRole="button"
+          accessibilityLabel={`Voir le profil de ${post.repostedBy.displayName}`}>
+          <ThemedText style={[feedText.caption, OnMediaShadow, styles.quotedFrom]}>
+            {fr.social.republishedBy(post.repostedBy.displayName)}
+          </ThemedText>
+        </Pressable>
+      ) : null}
+
+      {/* Citation : le média vient de la publication d'origine, la ligne
+          mène à l'originale. */}
+      {post.quoted ? (
+        <Pressable
+          onPress={() => router.push(`/post/${post.quoted!.id}`)}
+          accessibilityRole="button"
+          accessibilityLabel={`Voir la publication de ${post.quoted.authorDisplayName}`}>
+          <ThemedText style={[feedText.caption, OnMediaShadow, styles.quotedFrom]}>
+            {fr.social.quotedFrom(post.quoted.authorDisplayName)}
+          </ThemedText>
+          {post.quoted.caption ? (
+            <ThemedText numberOfLines={2} style={[feedText.caption, OnMediaShadow, styles.quotedCaption]}>
+              {post.quoted.caption}
+            </ThemedText>
+          ) : null}
+        </Pressable>
+      ) : null}
 
       {caption.length > 0 && showCaption ? (
         <Pressable onPress={toggleCaption} accessibilityRole="button">
@@ -228,5 +260,11 @@ const styles = StyleSheet.create({
   },
   pressed: {
     opacity: 0.75,
+  },
+  quotedFrom: {
+    fontWeight: '600',
+  },
+  quotedCaption: {
+    opacity: 0.85,
   },
 });

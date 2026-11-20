@@ -27,6 +27,8 @@ import { SwipeableBubble, type BubbleAnchor } from '@/components/swipeable-bubbl
 import { ThemedText } from '@/components/themed-text';
 import { GifMessageBubble } from '@/features/media/GifMessageBubble';
 import { LinkPreviewInText } from './link-preview-card';
+import { PostShareCard } from './post-share-card';
+import { postDeepLinkId } from '@/lib/deep-link';
 import {
   DocumentMessageBubble,
   ImageMessageBubble,
@@ -569,6 +571,26 @@ function MessageBody({
         ) : (
           <MessageText text={trimmed} style={[styles.emojiText, { color: chat.primaryText }]} />
         )}
+        {failed ? (
+          <RetryActions message={message} chat={chat} onRetry={onRetry} onDiscard={onDiscard} />
+        ) : null}
+        {meta}
+      </View>,
+    );
+  }
+
+  // Publication partagée : le message ne contient que le lien profond,
+  // la bulle affiche la carte de la publication à la place du texte brut.
+  const sharedPostId = message.unreadable ? null : postDeepLinkId(trimmed);
+  if (sharedPostId) {
+    return swipe(
+      <View style={[styles.mediaBlock, message.mine ? styles.alignEnd : null]}>
+        {quote ? (
+          <View style={styles.quoteBlock}>
+            <QuoteBlock quote={quote} mine={message.mine} />
+          </View>
+        ) : null}
+        <PostShareCard publicationId={sharedPostId} token={token} />
         {failed ? (
           <RetryActions message={message} chat={chat} onRetry={onRetry} onDiscard={onDiscard} />
         ) : null}

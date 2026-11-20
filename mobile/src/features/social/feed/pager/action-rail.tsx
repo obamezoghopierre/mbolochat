@@ -3,7 +3,6 @@ import {
   Forward,
   Heart,
   MessageCircle,
-  MoreHorizontal,
   Repeat2,
 } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
@@ -28,7 +27,6 @@ export interface FeedActions {
   onToggleSave: () => void;
   onToggleRepost: () => void;
   onShare: () => void;
-  onMore: () => void;
   onOpenProfile: () => void;
   /** Abonnement : `null` quand c'est son propre contenu ou déjà abonné. */
   onFollow: (() => void) | null;
@@ -46,7 +44,8 @@ export interface FeedActionState {
 /**
  * Rail d'actions vertical, à droite, calqué sur les fils vidéo : avatar de
  * l'auteur surmonté d'une pastille « + », puis réaction, commentaires,
- * enregistrement, republication, partage et menu.
+ * enregistrement, republication et partage. Les options de modération
+ * vivent dans la feuille Partager.
  *
  * Chaque action est câblée sur une capacité réelle de l'API ; aucune n'est
  * décorative. Les compteurs viennent du serveur (état optimiste côté écran).
@@ -126,14 +125,6 @@ export const FeedActionRail = memo(function FeedActionRail({
         accessibilityLabel={fr.social.shareLabel}
         onPress={actions.onShare}
       />
-
-      <RailAction
-        icon={MoreHorizontal}
-        label=""
-        accessibilityLabel="Plus d’options"
-        onPress={actions.onMore}
-        compact
-      />
     </View>
   );
 });
@@ -148,7 +139,6 @@ function RailAction({
   fill = 'none',
   selected = false,
   scale,
-  compact = false,
 }: {
   icon: LucideIcon;
   label: string;
@@ -159,7 +149,6 @@ function RailAction({
   fill?: string;
   selected?: boolean;
   scale?: Animated.Value;
-  compact?: boolean;
 }) {
   const handlePress = useCallback(() => onPress(), [onPress]);
   const content = (
@@ -177,7 +166,6 @@ function RailAction({
       accessibilityLabel={accessibilityLabel}
       style={({ pressed }) => [
         styles.action,
-        compact && styles.actionCompact,
         pressed && { transform: [{ scale: PressScale }] },
       ]}>
       {scale ? <Animated.View style={{ transform: [{ scale }] }}>{content}</Animated.View> : content}
@@ -217,9 +205,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 42,
-  },
-  actionCompact: {
-    minHeight: 0,
   },
   // Borné à la largeur du rail : avec la mise à l'échelle système des polices,
   // un libellé long (« Enregistrer ») ne doit jamais déborder de l'écran.

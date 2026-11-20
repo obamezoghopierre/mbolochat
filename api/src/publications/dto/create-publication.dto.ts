@@ -39,6 +39,15 @@ export class CreatePublicationDto {
   @IsString({ each: true })
   assetIds?: string[];
 
+  /**
+   * Publication citée (« Citer »). La citation copie les médias de
+   * l'originale : `assetIds` doit alors être vide, et seules les
+   * publications publiques d'un compte public peuvent être citées.
+   */
+  @IsOptional()
+  @IsString()
+  quotedPublicationId?: string;
+
   @IsOptional()
   @IsIn(VISIBILITIES)
   visibility?: (typeof VISIBILITIES)[number];

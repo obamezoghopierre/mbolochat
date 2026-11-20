@@ -7,6 +7,7 @@ import { ProfileAction, ProfileHeader } from '@/components/profile-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
+import { RepostsSection } from '@/features/social/feed/reposts-section';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -94,6 +95,8 @@ export default function ProfileScreen() {
             }
           />
         ) : null}
+
+        {profile ? <RepostsSection userId={profile.id} token={token} /> : null}
 
         {error ? (
           <ThemedText type="small" style={{ color: theme.danger }}>
