@@ -1,4 +1,4 @@
-import { useEvent, useEventListener } from 'expo';
+import { useEventListener } from 'expo';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import * as Haptics from 'expo-haptics';
 import { Expand, Play, Volume2, VolumeX } from 'lucide-react-native';
@@ -25,6 +25,7 @@ import { isLoadStalled, loadKeyFor, showsInitialSpinner, VIDEO_STALL_TIMEOUT_MS 
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { HeartBurstOverlay } from './heart-burst';
 import { ProgressBar } from './progress-bar';
+import { usePlayerStatus } from './use-player-status';
 
 /** Décor commun fourni par le pager (hauteur, activité, cœur, échelle du like). */
 export interface FeedPageChrome {
@@ -169,7 +170,7 @@ export function VideoPage({
   // `status` sert de déclencheur de reprise : un lecteur recyclé peut être
   // encore `loading` au moment où sa page redevient active, et `play()` appelé
   // trop tôt est perdu. On relance donc aussi quand il devient `readyToPlay`.
-  const { status, error } = useEvent(player, 'statusChange', { status: player.status });
+  const { status, error } = usePlayerStatus(player);
 
   // Garde-fou du chargement : un flux peut rester en `loading` sans jamais
   // rendre d'image (décodeur bloqué, serveur muet). Sans cela, le poster reste

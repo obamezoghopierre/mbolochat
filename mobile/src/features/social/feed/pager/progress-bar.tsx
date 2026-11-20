@@ -1,4 +1,4 @@
-import { useEvent, useEventListener } from 'expo';
+import { useEventListener } from 'expo';
 import type { VideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo } from 'react';
 import { StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
@@ -15,6 +15,8 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { FeedMetrics, FeedSurface, Spacing } from '@/constants/theme';
+
+import { usePlayerStatus } from './use-player-status';
 
 /**
  * Tolérance de seek pendant le glissement, en secondes.
@@ -150,8 +152,9 @@ export function ProgressBar({
   //
   // `statusChange` re-rend le composant — c'est là que `player.duration` devient
   // disponible — et `useEventListener` garde le dernier listener dans une ref :
-  // la fermeture lit donc toujours `validDuration` à jour.
-  useEvent(player, 'statusChange', { status: player.status });
+  // la fermeture lit donc toujours `validDuration` à jour. Le hook rattrape la
+  // transition initiale émise avant l'abonnement (sinon `validDuration` reste 0).
+  usePlayerStatus(player);
   useEventListener(player, 'timeUpdate', ({ currentTime: at }) => {
     if (validDuration === 0) {
       return;
