@@ -11,12 +11,10 @@ Monorepo applicatif **sans workspace npm racine** : chaque projet s'installe et 
 
 Node 20+ (la CI utilise Node 24). Pas de `package.json` à la racine : ne jamais lancer `npm install` depuis la racine.
 
-## Priorité P0 — fusion Mbolo
+## Priorité
 
-- La feuille de route prioritaire est **`docs/PLAN-FUSION-MBOLO.md`** (fusion du réseau social Mbolo dans MboloChat). La lire avant toute tâche non triviale et rattacher le travail à une phase de ce plan.
-- Ce plan prime sur `docs/TRAVAIL-RESTANT.md` et sur toute évolution non bloquante : ne pas démarrer un chantier hors plan sans accord explicite.
 - `mbolo/` est une **référence produit en lecture seule** : ne jamais l'importer comme dépendance, le committer comme dépôt imbriqué, ni reprendre sa couche Firebase. Extraire uniquement les specs, composants et assets validés, adaptés aux règles ci-dessous.
-- Les invariants du plan sont obligatoires, notamment : séparation stricte E2EE / social, autorisation et compteurs côté serveur, médias par URLs présignées, aucune PII dans les DTO publics.
+- Invariants à respecter : séparation stricte E2EE / social, autorisation et compteurs côté serveur, médias par URLs présignées, aucune PII dans les DTO publics.
 
 ## Démarrage
 
@@ -174,6 +172,5 @@ Ces règles complètent la règle **UI** ci-dessus et s'appliquent à toute modi
 ## Références
 
 - `README.md` : démarrage et panorama des endpoints (peut avoir du retard sur le code).
-- **`docs/PLAN-FUSION-MBOLO.md` : feuille de route P0, prioritaire sur tout le reste.**
-- `docs/STICKERS.md` : packs de stickers. `docs/TRAVAIL-RESTANT.md` : backlog daté non prioritaire.
+- `docs/STICKERS.md` : packs de stickers. `docs/TRAVAIL-RESTANT.md` : backlog daté.
 - En cas de doute, le code (schéma, controllers, `app.json`, scripts) prime sur la prose.
