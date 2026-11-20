@@ -21,6 +21,41 @@ export const TRANSCODED_LOW_LABEL = 'mp4-low';
 const WEBP_QUALITY = 80;
 const POSTER_MAX_WIDTH = 720;
 /**
+ * Point d'extraction du poster, en secondes. La frame 0 est souvent noire
+ * (fondu d'ouverture) : on vise un dixième de la durée, borné pour rester près
+ * du début, et on saute le noir initial détecté par `blackdetect`.
+ */
+const POSTER_SEEK_FRACTION = 0.1;
+const POSTER_MAX_SEEK_S = 5;
+const POSTER_MIN_SEEK_S = 0.25;
+/** Marge au-delà de la fin du noir initial pour ne pas retomber dans le fondu. */
+const POSTER_BLACK_MARGIN_S = 0.5;
+/** Borne haute relative à la durée : ne jamais viser la fin d'un clip court. */
+const POSTER_END_FRACTION = 0.9;
+
+/**
+ * Choisit le point d'extraction du poster : légèrement entré dans la vidéo,
+ * au-delà du fondu noir initial s'il est détecté, sans dépasser la fin.
+ * Fonction pure (testable sans ffmpeg) ; `initialBlackEndS` vient de
+ * `detectInitialBlackEnd`, `null` si aucun noir initial n'a été détecté.
+ */
+export function computePosterSeekSeconds(
+  durationS: number,
+  initialBlackEndS: number | null,
+): number {
+  let seek = Math.min(
+    POSTER_MAX_SEEK_S,
+    Math.max(POSTER_MIN_SEEK_S, durationS * POSTER_SEEK_FRACTION),
+  );
+  if (initialBlackEndS !== null) {
+    seek = Math.max(seek, initialBlackEndS + POSTER_BLACK_MARGIN_S);
+  }
+  if (durationS > 0) {
+    seek = Math.min(seek, durationS * POSTER_END_FRACTION);
+  }
+  return Math.max(0, seek);
+}
+/**
  * Largeur maximale du rendu servi au fil. Un portrait 4K (2160 × 3840) devient
  * 1080 × 1920 : c'est la définition utile sur un téléphone, et cela divise le
  * débit par quatre par rapport à l'original.
@@ -135,12 +170,22 @@ export async function processVideo(
 
     if (options.step === 'poster') {
       const posterPath = join(directory, 'poster.jpg');
+      // La frame 0 est souvent noire (fondu d'ouverture) : on extrait un peu
+      // plus loin, au-delà du noir initial s'il est détecté, pour une vignette
+      // exploitable plutôt qu'un aplat noir.
+      const initialBlackEnd = await detectInitialBlackEnd(
+        inputPath,
+        options.ffmpegPath,
+        probe.durationMs,
+        timeoutMs,
+      );
+      const seekS = computePosterSeekSeconds((probe.durationMs ?? 0) / 1000, initialBlackEnd);
       await runFfmpeg(
         options.ffmpegPath,
         [
           '-y',
           '-ss',
-          '0',
+          String(seekS),
           '-i',
           inputPath,
           '-frames:v',
@@ -288,7 +333,7 @@ async function probeVideo(
   path: string,
   ffprobePath: string,
 ): Promise<{ width: number | null; height: number | null; durationMs: number | null }> {
-  const output = await run(
+  const { stdout: output } = await run(
     ffprobePath,
     [
       '-v',
@@ -314,12 +359,55 @@ async function probeVideo(
   };
 }
 
+/**
+ * Détecte la fin du noir initial (fondu d'ouverture) via `blackdetect`.
+ *
+ * N'analyse que les premières secondes : seul le noir qui ouvre la vidéo compte
+ * pour le poster. Renvoie `null` si la vidéo ne commence pas par du noir (ou si
+ * la détection échoue — le poster retombe alors sur le point d'extraction usuel).
+ */
+async function detectInitialBlackEnd(
+  path: string,
+  ffmpegPath: string,
+  durationMs: number | null,
+  timeoutMs: number,
+): Promise<number | null> {
+  const analyzeS = Math.min((durationMs ?? 10_000) / 1000, 10);
+  try {
+    const { stderr } = await run(
+      ffmpegPath,
+      [
+        '-hide_banner',
+        '-t',
+        String(analyzeS),
+        '-i',
+        path,
+        '-vf',
+        'blackdetect=d=0.1:pix_th=0.10',
+        '-an',
+        '-f',
+        'null',
+        '-',
+      ],
+      timeoutMs,
+    );
+    const match = stderr.match(/black_start:0(?:\.0+)?\s+black_end:([0-9.]+)/);
+    return match ? Number(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
 function runFfmpeg(ffmpegPath: string, args: string[], timeoutMs: number): Promise<void> {
   return run(ffmpegPath, args, timeoutMs).then(() => undefined);
 }
 
-/** Exécute un binaire et rend sa sortie standard ; rejette avec stderr. */
-function run(binary: string, args: string[], timeoutMs: number): Promise<string> {
+/** Exécute un binaire et rend ses sorties ; rejette avec stderr. */
+function run(
+  binary: string,
+  args: string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
@@ -328,7 +416,6 @@ function run(binary: string, args: string[], timeoutMs: number): Promise<string>
       proc.kill('SIGKILL');
       reject(new Error(`${binary} a dépassé ${timeoutMs} ms.`));
     }, timeoutMs);
-
     proc.stdout.on('data', (chunk) => {
       stdout += String(chunk);
     });
@@ -342,7 +429,7 @@ function run(binary: string, args: string[], timeoutMs: number): Promise<string>
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0) {
-        resolve(stdout);
+        resolve({ stdout, stderr });
         return;
       }
       reject(new Error(`${binary} a échoué (code ${code}) : ${stderr.slice(-500)}`));

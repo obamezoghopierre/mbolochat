@@ -437,7 +437,9 @@ export function VideoPage({
         <Image
           source={{ uri: posterUrl }}
           style={styles.surface}
-          resizeMode="cover"
+          // Même cadrage que la vidéo : sinon le poster (cover, plein écran)
+          // saute vers la bande letterbox (contain) au démarrage de la lecture.
+          resizeMode={letterboxed ? 'contain' : 'cover'}
           pointerEvents="none"
         />
       ) : null}
