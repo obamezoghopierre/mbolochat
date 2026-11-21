@@ -26,6 +26,9 @@ import { invalidateFeedCache } from '@/features/social/feed/use-feed';
 const MAX_PAGES = 10;
 const MAX_PAGE_LENGTH = 2000;
 
+/** Page du compositeur : l'identifiant sert de clé React stable. */
+type ComposerPage = { id: number; text: string };
+
 const BACKGROUND_KEYS = Object.keys(FeedTextPost.backgrounds) as (keyof typeof FeedTextPost.backgrounds)[];
 
 /**
@@ -37,7 +40,11 @@ export default function CreateScreen() {
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const [pages, setPages] = useState<string[]>(['']);
+  // Chaque page porte un identifiant stable : la clé React ne dépend plus de
+  // la position, donc supprimer une page ne décale ni le texte ni le focus
+  // des champs suivants.
+  const nextPageId = useRef(1);
+  const [pages, setPages] = useState<ComposerPage[]>([{ id: 0, text: '' }]);
   const [background, setBackground] = useState<keyof typeof FeedTextPost.backgrounds>('dark');
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,20 +53,26 @@ export default function CreateScreen() {
   const clientId = useRef(newClientId());
 
   const filledPages = useMemo(
-    () => pages.map((page) => page.trim()).filter((page) => page.length > 0),
+    () => pages.map((page) => page.text.trim()).filter((page) => page.length > 0),
     [pages],
   );
   const canPublish = filledPages.length > 0 && !publishing;
 
-  const updatePage = (index: number, value: string) =>
-    setPages((current) => current.map((page, i) => (i === index ? value : page)));
+  const updatePage = (id: number, value: string) =>
+    setPages((current) =>
+      current.map((page) => (page.id === id ? { ...page, text: value } : page)),
+    );
 
   const addPage = () =>
-    setPages((current) => (current.length >= MAX_PAGES ? current : [...current, '']));
-
-  const removePage = (index: number) =>
     setPages((current) =>
-      current.length <= 1 ? current : current.filter((_, i) => i !== index),
+      current.length >= MAX_PAGES
+        ? current
+        : [...current, { id: nextPageId.current++, text: '' }],
+    );
+
+  const removePage = (id: number) =>
+    setPages((current) =>
+      current.length <= 1 ? current : current.filter((page) => page.id !== id),
     );
 
   const publish = async () => {
@@ -142,14 +155,14 @@ export default function CreateScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
           {pages.map((page, index) => (
-            <View key={index} style={styles.pageBlock}>
+            <View key={page.id} style={styles.pageBlock}>
               <View style={styles.pageHeader}>
                 <ThemedText type="caption" style={[styles.pageLabel, { color: FeedSurface.onMediaSoft }]}>
                   {fr.social.createPage(index + 1)}
                 </ThemedText>
                 {pages.length > 1 ? (
                   <Pressable
-                    onPress={() => removePage(index)}
+                    onPress={() => removePage(page.id)}
                     hitSlop={10}
                     accessibilityRole="button"
                     accessibilityLabel={fr.social.createRemovePage}>
@@ -159,8 +172,8 @@ export default function CreateScreen() {
               </View>
               <View style={[styles.pageCard, { backgroundColor: swatch }]}>
                 <TextInput
-                  value={page}
-                  onChangeText={(value) => updatePage(index, value)}
+                  value={page.text}
+                  onChangeText={(value) => updatePage(page.id, value)}
                   placeholder={fr.social.createPlaceholder}
                   placeholderTextColor={FeedSurface.onMediaFaint}
                   multiline
