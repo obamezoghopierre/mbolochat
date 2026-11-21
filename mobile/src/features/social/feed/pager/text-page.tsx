@@ -362,16 +362,17 @@ export function TextPage({
               width={pageWidth}
               height={pagerHeight}
               onPress={handleCardPress}
+              interactive={interactive}
             />
           ) : (
             <>
               <ThemedText style={[styles.title, { color: tones.text }]} numberOfLines={5}>
-                {renderTokens(title, [styles.token, { color: tones.accent }])}
+                {renderTokens(title, [styles.token, { color: tones.accent }], { interactive })}
               </ThemedText>
 
               {preview ? (
                 <ThemedText style={[styles.body, { color: tones.textSoft }]} numberOfLines={hasLongBody ? 8 : 16}>
-                  {renderTokens(preview, [styles.token, { color: tones.accent }])}
+                  {renderTokens(preview, [styles.token, { color: tones.accent }], { interactive })}
                 </ThemedText>
               ) : null}
             </>
@@ -469,11 +470,14 @@ function TextPages({
   width,
   height,
   onPress,
+  interactive = false,
 }: {
   pages: string[];
   width: number;
   height: number;
   onPress: () => void;
+  /** Hashtags et mentions cliquables (désactivé sous les overlays masqués). */
+  interactive?: boolean;
 }) {
   const [index, setIndex] = useState(0);
   const tones = useTextPostTones();
@@ -502,12 +506,12 @@ function TextPages({
               style={{ width, gap: Spacing.two }}>
               {content.title ? (
                 <ThemedText style={[styles.title, { color: tones.text }]} numberOfLines={3}>
-                  {renderTokens(content.title, [styles.token, { color: tones.accent }])}
+                  {renderTokens(content.title, [styles.token, { color: tones.accent }], { interactive })}
                 </ThemedText>
               ) : null}
               {content.body ? (
                 <ThemedText style={[styles.body, { color: tones.textSoft }]} numberOfLines={10}>
-                  {renderTokens(content.body, [styles.token, { color: tones.accent }])}
+                  {renderTokens(content.body, [styles.token, { color: tones.accent }], { interactive })}
                 </ThemedText>
               ) : null}
             </Pressable>
