@@ -130,6 +130,12 @@
         "projectId": "c2a657b3-6950-4b9c-803b-9958ad288616"
       }
     },
-    "owner": "groupenzogho-dev"
+    "owner": "groupenzogho-dev",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c2a657b3-6950-4b9c-803b-9958ad288616"
+    }
   }
 }
