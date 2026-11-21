@@ -45,6 +45,15 @@ export default function DiscoverScreen() {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const requestId = useRef(0);
 
+  // Un hashtag touché dans le fil ouvre cet onglet avec `?q=#tag` : l'onglet
+  // peut déjà être monté, donc on suit le paramètre et pas seulement sa
+  // valeur initiale.
+  useEffect(() => {
+    if (typeof params.q === 'string') {
+      setQuery(params.q);
+    }
+  }, [params.q]);
+
   useEffect(() => {
     if (!token) {
       return;
