@@ -161,6 +161,103 @@ describe('Publications et interactions (e2e)', () => {
     }).expect(400);
   });
 
+  describe('cas limites des posts texte multi-pages', () => {
+    const page = (char: string, length = 2000) => char.repeat(length);
+
+    it('accepte 10 pages pleines de 2000 caractères', async () => {
+      const alice = await register('Dixpages');
+      const pages = Array.from({ length: 10 }, (_, index) =>
+        page(String.fromCharCode(97 + index)),
+      );
+
+      const response = await publish(alice, { textPages: pages }).expect(201);
+      expect(response.body.pages).toHaveLength(10);
+      expect(response.body.pages.every((value: string) => value.length === 2000)).toBe(true);
+      expect(response.body.caption).toBe(pages[0]);
+      expect((await publicationRow(response.body.id)).textPages).toEqual(pages);
+    });
+
+    it('rejette une 11e page et une page de plus de 2000 caractères', async () => {
+      const alice = await register('Tropdepages');
+      await publish(alice, {
+        textPages: Array.from({ length: 11 }, (_, index) => `Page ${index + 1}`),
+      }).expect(400);
+      await publish(alice, { textPages: ['Courte', page('x', 2001)] }).expect(400);
+      expect((await counters(alice.id)).publications).toBe(0);
+    });
+
+    it('rejette des pages qui ne sont pas du texte', async () => {
+      const alice = await register('Pagesnontexte');
+      await publish(alice, { textPages: [42, 'ok'] as unknown as string[] }).expect(400);
+    });
+
+    it('ignore les pages vides ou faites d’espaces et nettoie les autres', async () => {
+      const alice = await register('Espaces');
+      const response = await publish(alice, {
+        textPages: ['   ', '  Une  ', '\n\t', 'Deux '],
+      }).expect(201);
+      expect(response.body.pages).toEqual(['Une', 'Deux']);
+      expect(response.body.caption).toBe('Une');
+    });
+
+    it('une seule page non vide devient la légende, caption ignoré', async () => {
+      const alice = await register('Uniquepage');
+      const response = await publish(alice, {
+        caption: 'ignorée par le serveur',
+        textPages: ['   ', 'Unique'],
+      }).expect(201);
+      expect(response.body.caption).toBe('Unique');
+      expect(response.body.pages).toBeNull();
+    });
+
+    it('refuse un post dont toutes les pages sont vides', async () => {
+      const alice = await register('Pagesvides');
+      await publish(alice, {
+        caption: 'ignorée par le serveur',
+        textPages: ['  ', '\n\t'],
+      }).expect(400);
+      expect((await counters(alice.id)).publications).toBe(0);
+    });
+
+    it('rejette un fond inconnu et garde null sans fond', async () => {
+      const alice = await register('Fonds');
+      await publish(alice, { textBackground: 'neon' }).expect(400);
+      // Les clés de palette sont sensibles à la casse.
+      await publish(alice, { textBackground: 'OCEAN' }).expect(400);
+
+      const plain = await publish(alice).expect(201);
+      expect(plain.body.textBackground).toBeNull();
+    });
+
+    it('modère le texte de toutes les pages', async () => {
+      const moderator = await register('Moderapages');
+      await db.update(users).set({ role: 'admin' }).where(eq(users.id, moderator.id));
+      const alice = await register('Pagesmoderees');
+      // Mot unique fait de lettres seules, pour ne gêner aucun autre test.
+      const word = `interdit${String(suffix)
+        .split('')
+        .map((digit) => String.fromCharCode(97 + Number(digit)))
+        .join('')}`;
+
+      const added = await request(app.getHttpServer())
+        .post('/admin/blocked-words')
+        .set('Authorization', `Bearer ${moderator.token}`)
+        .send({ word })
+        .expect(201);
+      try {
+        const response = await publish(alice, {
+          textPages: ['Page sage', 'Toujours sage', `Ici un ${word} caché`],
+        }).expect(201);
+        expect((await publicationRow(response.body.id)).moderationStatus).toBe('flagged');
+      } finally {
+        await request(app.getHttpServer())
+          .delete(`/admin/blocked-words/${added.body.id}`)
+          .set('Authorization', `Bearer ${moderator.token}`)
+          .expect(200);
+      }
+    });
+  });
+
   it('rejoue la création sans créer de doublon', async () => {
     const alice = await register('Rejouee');
     const clientId = `idem-${suffix}-unique`;

@@ -280,7 +280,10 @@ export class PublicationsService {
     const storedPages = textPages.length > 1 ? textPages : [];
     // Quand des pages sont fournies, la première fait office de légende
     // (recherche plein texte, extraits, citation) et `caption` est ignoré.
-    const effectiveCaption = storedPages.length > 0 ? storedPages[0] : caption;
+    // Conforme au DTO : dès que des pages sont fournies, `caption` est ignoré,
+    // y compris quand une seule page est non vide (elle devient la légende).
+    const pagesProvided = (dto.textPages?.length ?? 0) > 0;
+    const effectiveCaption = pagesProvided ? (textPages[0] ?? '') : caption;
     if (
       effectiveCaption.length === 0 &&
       assetIds.length === 0 &&
@@ -326,7 +329,7 @@ export class PublicationsService {
     const kind = quoted ? 'post' : (dto.kind ?? 'post');
     // Auto-flag : un contenu qui contient un mot bloqué part en revue humaine
     // au lieu d'être publié directement. Toutes les pages sont modérées.
-    const moderationText = storedPages.length > 0 ? storedPages.join('\n') : caption;
+    const moderationText = storedPages.length > 0 ? storedPages.join('\n') : effectiveCaption;
     const flagged =
       moderationText.length > 0 ? await this.moderation.hasBlockedWord(moderationText) : false;
 
