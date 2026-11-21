@@ -130,6 +130,9 @@ export function TextPage({
     [paletteSet, scheme],
   );
   const [readerOpen, setReaderOpen] = useState(false);
+  // Page affichée, partagée entre la carte et le lecteur : on rouvre le
+  // lecteur sur la page en cours et la carte reprend où le lecteur s'arrête.
+  const [pageIndex, setPageIndex] = useState(0);
   const { width: windowWidth } = useWindowDimensions();
 
   // Entrée de carte : un fondu léger au montage de la page.
@@ -155,12 +158,9 @@ export function TextPage({
     [post.pages],
   );
   const isMultiPage = pages.length > 1;
-  // Le corps du lecteur rassemble toutes les pages, séparées par un filet.
-  const readerBody = isMultiPage
-    ? [body, ...pages.slice(1)]
-        .filter((part): part is string => Boolean(part && part.length > 0))
-        .join('\n\n———\n\n')
-    : (body ?? '');
+  // Multi-pages : le lecteur affiche les pages une par une (carrousel) ;
+  // `readerBody` ne sert qu'à la lecture continue d'un post classique.
+  const readerBody = body ?? '';
   const hasLongBody = body !== null && body.length > PREVIEW_MAX_CHARS;
   const preview = hasLongBody ? `${body.slice(0, PREVIEW_MAX_CHARS).trimEnd()}…` : body;
   // « Voir plus » ouvre aussi le lecteur quand le titre seul est très long :
@@ -363,6 +363,8 @@ export function TextPage({
               height={pagerHeight}
               onPress={handleCardPress}
               interactive={interactive}
+              index={pageIndex}
+              onIndexChange={setPageIndex}
             />
           ) : (
             <>
@@ -452,6 +454,10 @@ export function TextPage({
         visible={readerOpen}
         title={title}
         body={readerBody}
+        pages={isMultiPage ? pages : undefined}
+        initialPage={pageIndex}
+        onPageChange={setPageIndex}
+        interactive={interactive}
         backgroundColor={paletteSet[scheme === 'light' ? 'light' : 'dark'][2]}
         onClose={closeReader}
       />
@@ -471,6 +477,8 @@ function TextPages({
   height,
   onPress,
   interactive = false,
+  index,
+  onIndexChange,
 }: {
   pages: string[];
   width: number;
@@ -478,24 +486,37 @@ function TextPages({
   onPress: () => void;
   /** Hashtags et mentions cliquables (désactivé sous les overlays masqués). */
   interactive?: boolean;
+  /** Page affichée (contrôlée par la carte, partagée avec le lecteur). */
+  index: number;
+  onIndexChange: (index: number) => void;
 }) {
-  const [index, setIndex] = useState(0);
   const tones = useTextPostTones();
+  const scrollRef = useRef<ScrollView>(null);
+  // Le lecteur a pu changer de page : on recale le carrousel sans animation.
+  const shownIndex = useRef(index);
+  useEffect(() => {
+    if (shownIndex.current !== index) {
+      shownIndex.current = index;
+      scrollRef.current?.scrollTo({ x: index * width, animated: false });
+    }
+  }, [index, width]);
 
   return (
     <View style={styles.pagesWrap}>
       <ScrollView
+        ref={scrollRef}
         horizontal
         pagingEnabled
         showsHorizontalScrollIndicator={false}
-        onMomentumScrollEnd={(event) =>
-          setIndex(
-            Math.min(
-              pages.length - 1,
-              Math.max(0, Math.round(event.nativeEvent.contentOffset.x / width)),
-            ),
-          )
-        }
+        contentOffset={{ x: index * width, y: 0 }}
+        onMomentumScrollEnd={(event) => {
+          const next = Math.min(
+            pages.length - 1,
+            Math.max(0, Math.round(event.nativeEvent.contentOffset.x / width)),
+          );
+          shownIndex.current = next;
+          onIndexChange(next);
+        }}
         style={{ height }}>
         {pages.map((page, pageIndex) => {
           const content = splitCaption(page);

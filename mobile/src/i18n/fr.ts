@@ -846,6 +846,8 @@ export const fr = {
     /** Indicateur de page du carrousel de texte, ex. « 2/5 ». */
     textPageIndicator: (index: number, total: number) => `${index}/${total}`,
     textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
+    textPagePrevious: 'Page précédente',
+    textPageNext: 'Page suivante',
     notificationsTitle: 'Aucune notification',
     notificationsBody:
       'Les réactions, les commentaires et les nouveaux abonnés apparaîtront ici.',
