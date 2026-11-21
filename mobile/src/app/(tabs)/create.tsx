@@ -1,6 +1,6 @@
 import { router, Stack } from 'expo-router';
 import { ArrowLeft, Check, Plus, X } from 'lucide-react-native';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -19,12 +19,15 @@ import { Colors, FeedTextPost, FeedSurface, Radii, Spacing, Type } from '@/const
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { newClientId } from '@/lib/client-id';
+import { clearTextDraft, loadTextDraft, saveTextDraft } from '@/lib/text-draft';
 import { fr } from '@/i18n/fr';
 import { invalidateFeedCache } from '@/features/social/feed/use-feed';
 
 /** Bornes alignées sur le DTO (`MAX_TEXT_PAGES`, `MAX_TEXT_PAGE_LENGTH`). */
 const MAX_PAGES = 10;
 const MAX_PAGE_LENGTH = 2000;
+/** Délai d'inactivité avant sauvegarde du brouillon. */
+const DRAFT_SAVE_DELAY_MS = 600;
 /** Au-delà de ce seuil le compteur passe en avertissement. */
 const PAGE_LENGTH_WARNING = Math.floor(MAX_PAGE_LENGTH * 0.9);
 
@@ -47,7 +50,8 @@ const BACKGROUND_KEYS = Object.keys(FeedTextPost.backgrounds) as (keyof typeof F
  * posée sur la couleur du fond choisi — ce qui est tapé est ce qui sera lu.
  */
 export default function CreateScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const userId = user?.id ?? null;
   const insets = useSafeAreaInsets();
 
   // Chaque page porte un identifiant stable : la clé React ne dépend plus de
@@ -62,6 +66,64 @@ export default function CreateScreen() {
   // Même clé tant que l'écran est ouvert : un rejeu après coupure renvoie la
   // publication déjà créée au lieu d'en publier une seconde.
   const clientId = useRef(newClientId());
+  // Le brouillon n'est sauvegardé qu'une fois la restauration terminée, pour
+  // ne pas écraser un brouillon existant par l'état vide initial.
+  const [draftReady, setDraftReady] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  useEffect(() => {
+    if (!userId) {
+      return;
+    }
+    let cancelled = false;
+    void loadTextDraft(userId).then((draft) => {
+      if (cancelled) {
+        return;
+      }
+      if (draft && draft.pages.length > 0) {
+        const restored = draft.pages.slice(0, MAX_PAGES).map((text, i) => ({ id: i, text }));
+        nextPageId.current = restored.length;
+        setPages(restored);
+        if (draft.background in FeedTextPost.backgrounds) {
+          setBackground(draft.background as keyof typeof FeedTextPost.backgrounds);
+        }
+        setVisibility(draft.visibility);
+        clientId.current = draft.clientId;
+        setDraftRestored(true);
+      }
+      setDraftReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId || !draftReady || publishing) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      void saveTextDraft(userId, {
+        pages: pages.map((page) => page.text),
+        background,
+        visibility,
+        clientId: clientId.current,
+      });
+    }, DRAFT_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [userId, draftReady, publishing, pages, background, visibility]);
+
+  const discardDraft = () => {
+    if (userId) {
+      void clearTextDraft(userId);
+    }
+    nextPageId.current = 1;
+    setPages([{ id: 0, text: '' }]);
+    setBackground('dark');
+    setVisibility('public');
+    clientId.current = newClientId();
+    setDraftRestored(false);
+  };
 
   const filledPages = useMemo(
     () => pages.map((page) => page.text.trim()).filter((page) => page.length > 0),
@@ -103,6 +165,9 @@ export default function CreateScreen() {
         textBackground: background,
         visibility,
       });
+      if (userId) {
+        await clearTextDraft(userId);
+      }
       invalidateFeedCache(token);
       router.back();
     } catch {
@@ -166,6 +231,22 @@ export default function CreateScreen() {
           contentContainerStyle={styles.pagesList}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
+          {draftRestored ? (
+            <View style={[styles.draftBanner, { borderColor: FeedSurface.onMediaFaint }]}>
+              <ThemedText type="caption" style={{ color: FeedSurface.onMediaSoft, flex: 1 }}>
+                {fr.social.createDraftRestored}
+              </ThemedText>
+              <Pressable
+                onPress={discardDraft}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel={fr.social.createDraftDiscard}>
+                <ThemedText type="caption" style={[styles.draftDiscard, { color: FeedSurface.accent }]}>
+                  {fr.social.createDraftDiscard}
+                </ThemedText>
+              </Pressable>
+            </View>
+          ) : null}
           {pages.map((page, index) => (
             <View key={page.id} style={styles.pageBlock}>
               <View style={styles.pageHeader}>
@@ -371,6 +452,16 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   backgroundLabel: { fontWeight: '600' },
+  draftBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    borderWidth: 1,
+    borderRadius: Radii.lg,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  draftDiscard: { fontWeight: '700' },
   charCount: { alignSelf: 'flex-end', fontVariant: ['tabular-nums'] },
   visibilityBar: {
     flexDirection: 'row',

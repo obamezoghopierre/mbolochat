@@ -831,6 +831,8 @@ export const fr = {
     createBackground: 'Fond',
     createPlaceholder: 'Écris ta publication…',
     createVisibility: 'Visibilité',
+    createDraftRestored: 'Brouillon restauré.',
+    createDraftDiscard: 'Effacer',
     createVisibilityPublic: 'Public',
     createVisibilityFollowers: 'Abonnés',
     createVisibilityPrivate: 'Moi uniquement',
