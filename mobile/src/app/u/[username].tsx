@@ -10,10 +10,9 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 
 /**
- * Ouverture d'un profil à partir d'une `@mention`. L'API n'expose le profil
- * que par identifiant : on résout le nom d'utilisateur via la recherche
- * (correspondance exacte, insensible à la casse) puis on remplace cet écran
- * par `/user/[id]`, pour que « retour » revienne directement au post.
+ * Ouverture d'un profil à partir d'une `@mention` : l'API résout le nom
+ * d'utilisateur (`GET /users/by-username/:username`), puis on remplace cet
+ * écran par `/user/[id]`, pour que « retour » revienne directement au post.
  */
 export default function MentionProfileScreen() {
   const { token, loading } = useAuth();
@@ -25,18 +24,11 @@ export default function MentionProfileScreen() {
       return;
     }
     let cancelled = false;
-    const wanted = username.toLowerCase();
     api
-      .searchUsers(token, username)
-      .then((users) => {
-        if (cancelled) {
-          return;
-        }
-        const match = users.find((user) => user.username.toLowerCase() === wanted);
-        if (match) {
-          router.replace(`/user/${match.id}`);
-        } else {
-          setNotFound(true);
+      .getUserProfileByUsername(token, username)
+      .then((profile) => {
+        if (!cancelled) {
+          router.replace(`/user/${profile.id}`);
         }
       })
       .catch(() => {
