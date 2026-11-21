@@ -367,6 +367,8 @@ export const FeedTextPost = {
       verified: '#5AA9FF',
       follow: '#FFFC00',
       onFollow: '#000000',
+      /** Fond neutre de la page autour du visuel (format Instagram). */
+      surface: '#000000',
     },
     light: {
       text: '#0B0F14',
@@ -381,6 +383,8 @@ export const FeedTextPost = {
       verified: '#2563EB',
       follow: '#FFFC00',
       onFollow: '#000000',
+      /** Fond neutre de la page autour du visuel (format Instagram). */
+      surface: '#FFFFFF',
     },
   } as const,
   /** Carte de texte translucide sombre (utilisée par le compositeur, toujours sombre). */
