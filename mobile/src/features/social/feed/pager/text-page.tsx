@@ -95,6 +95,19 @@ const MULTIPAGE_BODY_ESTIMATE_CHARS = 480;
 /** Lignes visibles par page : borne le bloc comme le fait le fit. */
 const MULTIPAGE_BODY_MAX_LINES = 12;
 
+/** Posts déjà animés à l'entrée, bornés pour ne pas grossir sans fin. */
+const seenTextPosts = new Set<string>();
+const SEEN_TEXT_POSTS_MAX = 500;
+function rememberSeenTextPost(id: string) {
+  if (seenTextPosts.size >= SEEN_TEXT_POSTS_MAX) {
+    const oldest = seenTextPosts.values().next().value;
+    if (oldest !== undefined) {
+      seenTextPosts.delete(oldest);
+    }
+  }
+  seenTextPosts.add(id);
+}
+
 /** Fenêtre de discrimination tap simple / double-tap (comme les carrousels). */
 const DOUBLE_TAP_MS = 300;
 
@@ -150,9 +163,16 @@ export function TextPage({
   const [readerOpen, setReaderOpen] = useState(false);
   const { width: windowWidth } = useWindowDimensions();
 
-  // Entrée de carte : un fondu léger au montage de la page.
-  const enter = useMemo(() => new Animated.Value(0), []);
+  // Entrée de carte : un fondu léger, seulement la première fois qu'un post
+  // apparaît. Le pager démonte et remonte les pages : sans ce registre, chaque
+  // retour en arrière refaisait le fondu et donnait un effet de clignotement.
+  const alreadySeen = seenTextPosts.has(post.id);
+  const enter = useMemo(() => new Animated.Value(alreadySeen ? 1 : 0), [alreadySeen]);
   useEffect(() => {
+    if (alreadySeen) {
+      return;
+    }
+    rememberSeenTextPost(post.id);
     const animation = Animated.timing(enter, {
       toValue: 1,
       duration: ENTER_DURATION_MS,
@@ -160,7 +180,7 @@ export function TextPage({
     });
     animation.start();
     return () => animation.stop();
-  }, [enter]);
+  }, [alreadySeen, enter, post.id]);
 
   // Titre dédié (`textTitle`) prioritaire ; sinon convention « première
   // ligne » pour les publications plus anciennes sans champ titre.
@@ -222,7 +242,7 @@ export function TextPage({
 
   const visualWidth = windowWidth;
   const estimatedTop =
-    HEADER_AVATAR + (post.repostedBy ? 22 : 0) + (post.quoted ? 48 : 0);
+    HEADER_AVATAR + (post.repostedBy ? 22 : 0) + (post.quoted ? 96 : 0);
   const available =
     chrome.height -
     CARD_TOP_RESERVED -
@@ -268,43 +288,23 @@ export function TextPage({
   const bodyLineHeight = feedFit?.bodyLineHeight;
   const titleLineHeight = feedFit?.titleLineHeight;
 
-  // Tap sur la carte : un tap ouvre le lecteur, un double-tap like — la même
-  // convention que les carrousels. Les zones interactives (en-tête, actions)
-  // sont des Pressable enfants : elles captent leur propre toucher, seul le
-  // reste de la carte arrive ici.
+  // Double-tap sur le visuel = like. Les zones interactives (en-tête,
+  // actions, « Voir plus ») sont des Pressable enfants : elles captent leur
+  // propre toucher, seul le reste du visuel arrive ici.
   const lastTapAt = useRef(0);
-  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (tapTimer.current) {
-        clearTimeout(tapTimer.current);
-      }
-    },
-    [],
-  );
   const handleCardPress = () => {
     const now = Date.now();
     if (now - lastTapAt.current < DOUBLE_TAP_MS) {
-      if (tapTimer.current) {
-        clearTimeout(tapTimer.current);
-        tapTimer.current = null;
-      }
       lastTapAt.current = 0;
       if (interactive) {
         onDoubleTapLike?.();
       }
       return;
     }
+    // Comme sur Instagram, un tap simple sur le visuel ne fait rien : le
+    // lecteur s'ouvre par « Voir plus ». Plus d'attente de 300 ms pour
+    // distinguer un tap d'un double-tap, le like part dès le second tap.
     lastTapAt.current = now;
-    // Pas assez de texte pour un lecteur : le tap simple ne fait rien,
-    // seul le double-tap (like) reste utile sur une carte courte.
-    if (!showReader) {
-      return;
-    }
-    tapTimer.current = setTimeout(() => {
-      tapTimer.current = null;
-      openReader();
-    }, DOUBLE_TAP_MS);
   };
 
   return (
@@ -412,23 +412,44 @@ export function TextPage({
             </View>
           </View>
 
+          {/* Citation : mini-carte de la publication d'origine, comme un
+              post intégré (auteur, pseudo, début du texte). */}
           {post.quoted ? (
             <Pressable
               onPress={() => router.push(`/post/${post.quoted!.id}`)}
               accessibilityRole="button"
               accessibilityLabel={`Voir la publication de ${post.quoted.authorDisplayName}`}
-              style={({ pressed }) => pressed && styles.pressed}>
-              <ThemedText
-                style={[feedText.caption, styles.quotedFrom, { color: tones.textSoft }]}>
-                {fr.social.quotedFrom(post.quoted.authorDisplayName)}
-              </ThemedText>
+              style={({ pressed }) => [
+                styles.quotedCard,
+                { borderColor: tones.cardBorder, backgroundColor: tones.glass },
+                pressed && styles.pressed,
+              ]}>
+              <View style={styles.quotedHeader}>
+                <Avatar name={post.quoted.authorDisplayName} uri={null} size={20} shape="circle" />
+                <ThemedText
+                  numberOfLines={1}
+                  style={[styles.quotedAuthor, { color: tones.text }]}>
+                  {post.quoted.authorDisplayName}
+                </ThemedText>
+                <ThemedText
+                  numberOfLines={1}
+                  style={[styles.quotedHandle, { color: tones.textSoft }]}>
+                  @{post.quoted.authorUsername}
+                </ThemedText>
+              </View>
               {post.quoted.caption ? (
                 <ThemedText
-                  numberOfLines={2}
+                  numberOfLines={3}
                   style={[feedText.caption, styles.quotedCaption, { color: tones.textSoft }]}>
                   {post.quoted.caption}
                 </ThemedText>
-              ) : null}
+              ) : (
+                <ThemedText style={[feedText.caption, { color: tones.textSoft }]}>
+                  {fr.social.quotedFrom(post.quoted.authorDisplayName)}
+                </ThemedText>
+              )}
+            </Pressable>
+          ) : null}
             </Pressable>
           ) : null}
         </View>
@@ -453,10 +474,9 @@ export function TextPage({
         ) : (
           <Pressable
             onPress={handleCardPress}
-            accessibilityRole={showReader ? 'button' : undefined}
-            accessibilityLabel={
-              showReader ? fr.social.readPublication(author.displayName) : undefined
-            }
+            // Le lecteur d'écran lit le texte du visuel ; « Voir plus » reste
+            // le bouton qui ouvre le lecteur plein écran.
+            accessible={false}
             style={[styles.visual, { width: visualWidth, height: visualHeight }]}>
             <TextPostBackdrop backgroundKey={backgroundKey} />
             <View style={styles.visualInner}>
@@ -480,6 +500,9 @@ export function TextPage({
                     styles.body,
                     { color: tones.textSoft },
                     textStyle,
+                    // Couleur choisie : titre plein, corps légèrement adouci,
+                    // pour garder la hiérarchie titre / texte.
+                    chosenColor ? styles.bodyOnChosenColor : null,
                     bodyFontSize
                       ? { fontSize: bodyFontSize, lineHeight: bodyLineHeight }
                       : null,
@@ -586,8 +609,8 @@ export function TextPage({
                 style={styles.metaViews}
                 accessible
                 accessibilityLabel={`${formatCompactCount(post.counters.views)} ${fr.social.viewsUnit}`}>
-                <Icon icon={Eye} size={13} color={tones.textFaint} />
-                <ThemedText style={[styles.metaViewsCount, { color: tones.textFaint }]}>
+                <Icon icon={Eye} size={13} color={tones.textSoft} />
+                <ThemedText style={[styles.metaViewsCount, { color: tones.textSoft }]}>
                   {formatCompactCount(post.counters.views)}
                 </ThemedText>
               </View>
@@ -958,11 +981,31 @@ const styles = StyleSheet.create({
   locationText: {
     flexShrink: 1,
   },
-  quotedFrom: {
-    fontWeight: '600',
+  quotedCard: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: Radii.md,
+    padding: Spacing.two,
+    gap: Spacing.one,
+  },
+  quotedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  quotedAuthor: {
+    ...Type.caption,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  quotedHandle: {
+    ...Type.caption,
+    flexShrink: 1,
   },
   quotedCaption: {
-    opacity: 0.85,
+    opacity: 0.9,
+  },
+  bodyOnChosenColor: {
+    opacity: 0.88,
   },,
   title: {
     // « Text post » Instagram : grand titre gras, centré sur le dégradé.
@@ -1057,11 +1100,7 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: FeedSurface.onMediaFaint,
     opacity: 0.5,
-  },
-  pageDotActive: {
-    backgroundColor: FeedSurface.onMedia,
-    opacity: 1,
-  },
+  },,
   pressed: {
     opacity: 0.75,
   },
