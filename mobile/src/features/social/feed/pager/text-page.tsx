@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { Check, ChevronDown, Eye, MapPin, Plus } from 'lucide-react-native';
+import { BadgeCheck, ChevronDown, Ellipsis, Eye, MapPin } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Reanimated, {
   runOnJS,
@@ -26,7 +26,6 @@ import {
   FeedSurface,
   FeedTextPost,
   Radii,
-  Scrim,
   Spacing,
   Type,
 } from '@/constants/theme';
@@ -49,6 +48,8 @@ import { TextPostReader } from './text-post-reader';
 import {
   CHAR_RATIO,
   FEED_TEXT_FONT,
+  TEXT_CARD_ASPECT,
+  TEXT_CARD_PADDING,
   fitFeedTypography,
 } from '@/features/social/create/text-card';
 import {
@@ -72,9 +73,11 @@ const CARD_BOTTOM_RESERVED = 128;
 /** Taille de l'avatar de l'en-tête, calquée sur une publication Instagram. */
 const HEADER_AVATAR = 36;
 
-/** Bordure de la carte (styles.card.borderWidth). */
-const CARD_BORDER = 1;
-/** Pied de carte avant sa première mesure (actions + ligne de méta). */
+/** Écart vertical entre en-tête, visuel et pied. */
+const COLUMN_GAP = Spacing.two;
+/** En dessous, le visuel n'est plus lisible : on accepte de rogner le texte. */
+const MIN_VISUAL_HEIGHT = 200;
+/** Pied avant sa première mesure (actions + ligne de méta). */
 const FOOTER_ESTIMATE = 96;
 /** Points de pagination + écart au-dessus. */
 const PAGE_DOTS_BLOCK = 6 + Spacing.two;
@@ -201,10 +204,10 @@ export function TextPage({
   const interactive = Boolean(actions && state) && !chrome.hideOverlays;
   const author = post.author;
 
-  // Géométrie mesurée, plus d'estimations fixes : largeur réelle de la zone
-  // de texte et hauteur de l'en-tête / du pied de carte. Avant la première
-  // mesure, on part d'une estimation qui reprend toutes les marges.
-  const [contentWidth, setContentWidth] = useState<number | null>(null);
+  // Format Instagram : en-tête au-dessus, visuel pleine largeur au ratio du
+  // compositeur (TEXT_CARD_ASPECT = 4:5, ce qui est composé est ce qui est
+  // lu), actions en dessous, sur le fond neutre du fil. L'en-tête et le pied
+  // sont mesurés ; le visuel prend le 4:5 s'il tient, sinon la place restante.
   const [topHeight, setTopHeight] = useState<number | null>(null);
   const [footerHeight, setFooterHeight] = useState<number | null>(null);
   const measure =
@@ -214,43 +217,31 @@ export function TextPage({
         setter(Math.round(value));
       }
     };
-  const onContentLayout = measure(setContentWidth, contentWidth);
   const onTopLayout = measure(setTopHeight, topHeight);
   const onFooterLayout = measure(setFooterHeight, footerHeight);
 
-  // Marges : page (two) + carte (three + bordure) + zone de texte (three).
-  const pageWidth =
-    contentWidth ??
-    windowWidth - Spacing.two * 2 - Spacing.three * 2 - CARD_BORDER * 2 - Spacing.three * 2;
-  const cardMaxHeight = Math.max(160, chrome.height - CARD_TOP_RESERVED - CARD_BOTTOM_RESERVED);
+  const visualWidth = windowWidth;
   const estimatedTop =
     HEADER_AVATAR + (post.repostedBy ? 22 : 0) + (post.quoted ? 48 : 0);
-  const sections = interactive ? 3 : 2;
-  // Hauteur réellement disponible pour le texte dans la carte.
-  const contentAvailable = Math.max(
-    120,
-    cardMaxHeight -
-      Spacing.four * 2 -
-      CARD_BORDER * 2 -
-      (topHeight ?? estimatedTop) -
-      (interactive ? (footerHeight ?? FOOTER_ESTIMATE) : 0) -
-      (sections - 1) * Spacing.two,
+  const available =
+    chrome.height -
+    CARD_TOP_RESERVED -
+    CARD_BOTTOM_RESERVED -
+    (topHeight ?? estimatedTop) -
+    (interactive ? (footerHeight ?? FOOTER_ESTIMATE) : 0) -
+    (isMultiPage ? PAGE_DOTS_BLOCK : 0) -
+    COLUMN_GAP * 2;
+  const visualHeight = Math.round(
+    Math.max(MIN_VISUAL_HEIGHT, Math.min(visualWidth / TEXT_CARD_ASPECT, available)),
   );
+  // Largeur de texte : celle du visuel moins la marge du compositeur.
+  const pageWidth = visualWidth - TEXT_CARD_PADDING * 2;
   const linkReserve = post.linkPreview ? FeedTextPost.linkThumb + Spacing.two : 0;
-  // Carrousel : hauteur disponible moins les points, plafonnée au 4:5
-  // d'Instagram pour qu'un post court ne produise pas une carte géante.
-  const pagerHeight = Math.max(
-    160,
-    Math.min(
-      contentAvailable - linkReserve - PAGE_DOTS_BLOCK,
-      Math.round(pageWidth * 1.25),
-    ),
-  );
 
   // Typographie : la taille manuelle de l'auteur est un plafond — le texte
-  // s'ajuste en dessous pour tenir dans la carte au lieu d'être coupé.
-  // Sans taille manuelle, la police remplit la carte comme sur Instagram.
-  // Multi-pages : chaque carte a sa propre police/alignement/taille, le
+  // s'ajuste en dessous pour tenir dans le visuel au lieu d'être coupé.
+  // Sans taille manuelle, la police remplit le visuel comme sur Instagram.
+  // Multi-pages : chaque page a sa propre police/alignement/taille, le
   // calcul est donc refait par page dans `TextPages`.
   const feedFit = (() => {
     if (isMultiPage) {
@@ -258,7 +249,8 @@ export function TextPage({
     }
     const contentHeight = Math.max(
       120,
-      contentAvailable -
+      visualHeight -
+        TEXT_CARD_PADDING * 2 -
         linkReserve -
         (showReader ? MORE_LINK_HEIGHT + Spacing.two : 0) -
         (title && preview ? Spacing.two : 0),
@@ -316,12 +308,10 @@ export function TextPage({
   };
 
   return (
-    <View style={[styles.page, { height: chrome.height }]}>
-      <TextPostBackdrop backgroundKey={backgroundKey} />
-
+    <View style={[styles.page, { height: chrome.height, backgroundColor: tones.surface }]}>
       <Animated.View
         style={[
-          styles.cardEnter,
+          styles.column,
           {
             opacity: enter,
             transform: [
@@ -334,67 +324,53 @@ export function TextPage({
             ],
           },
         ]}>
-        <Pressable
-          onPress={handleCardPress}
-          accessibilityRole={showReader ? 'button' : undefined}
-          accessibilityLabel={
-            showReader ? fr.social.readPublication(author.displayName) : undefined
-          }
-          style={({ pressed }) => [
-            styles.card,
-            { backgroundColor: tones.card, borderColor: tones.cardBorder },
-            {
-              maxHeight: Math.max(
-                160,
-                chrome.height - CARD_TOP_RESERVED - CARD_BOTTOM_RESERVED,
-              ),
-            },
-            pressed && styles.cardPressed,
-          ]}>
         {/* Bloc du haut mesuré : republication, en-tête, citation. */}
         <View style={styles.top} onLayout={(event) => onTopLayout(event.nativeEvent.layout.height)}>
-        {/* « X a republié » au-dessus de l'en-tête, comme sur Instagram. */}
-        {post.repostedBy ? (
-          <Pressable
-            onPress={() => router.push(`/user/${post.repostedBy!.id}`)}
-            accessibilityRole="button"
-            accessibilityLabel={`Voir le profil de ${post.repostedBy.displayName}`}
-            style={({ pressed }) => pressed && styles.pressed}>
-            <ThemedText style={[feedText.caption, styles.repostedBy, { color: tones.textSoft }]}>
-              {fr.social.republishedBy(post.repostedBy.displayName)}
-            </ThemedText>
-          </Pressable>
-        ) : null}
-
-        {/* En-tête de publication : avatar + nom vérifié + date, pastille
-            Suivre à droite — le gabarit d'un post Instagram. */}
-        <View style={styles.header}>
-          <Pressable
-            onPress={actions?.onOpenProfile}
-            disabled={!actions}
-            accessibilityRole="button"
-            accessibilityLabel={`Voir le profil de ${author.displayName}`}
-            style={({ pressed }) => [styles.authorRow, pressed && styles.pressed]}>
-            <Avatar
-              name={author.displayName}
-              uri={author.avatarUrl}
-              size={HEADER_AVATAR}
-              shape="rounded"
-            />
-            <View style={styles.authorText}>
-              <ThemedText numberOfLines={1} style={[styles.authorName, { color: tones.text }]}>
-                {author.displayName}
-                {author.verified ? (
-                  <ThemedText style={{ color: tones.verified }}> ✓</ThemedText>
-                ) : null}
+          {post.repostedBy ? (
+            <Pressable
+              onPress={() => router.push(`/user/${post.repostedBy!.id}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`Voir le profil de ${post.repostedBy.displayName}`}
+              style={({ pressed }) => pressed && styles.pressed}>
+              <ThemedText style={[feedText.caption, styles.repostedBy, { color: tones.textSoft }]}>
+                {fr.social.republishedBy(post.repostedBy.displayName)}
               </ThemedText>
-              {/* Date et lieu sur la même ligne, même taille — comme IG. */}
-              <View style={styles.authorMetaRow}>
-                <ThemedText
-                  numberOfLines={1}
-                  style={[styles.authorMeta, { color: tones.textSoft }]}>
-                  · {formatRelativeTimestamp(post.createdAt)}
-                </ThemedText>
+            </Pressable>
+          ) : null}
+
+          {/* En-tête Instagram : avatar rond, nom + badge vérifié + date sur
+              une ligne, lieu dessous ; « Suivre » en texte et menu ⋯ à droite. */}
+          <View style={styles.header}>
+            <Pressable
+              onPress={actions?.onOpenProfile}
+              disabled={!actions}
+              accessibilityRole="button"
+              accessibilityLabel={`Voir le profil de ${author.displayName}${
+                author.verified ? `, ${fr.social.verifiedAccount}` : ''
+              }`}
+              style={({ pressed }) => [styles.authorRow, pressed && styles.pressed]}>
+              <Avatar
+                name={author.displayName}
+                uri={author.avatarUrl}
+                size={HEADER_AVATAR}
+                shape="circle"
+              />
+              <View style={styles.authorText}>
+                <View style={styles.authorLine}>
+                  <ThemedText
+                    numberOfLines={1}
+                    style={[styles.authorName, { color: tones.text }]}>
+                    {author.displayName}
+                  </ThemedText>
+                  {author.verified ? (
+                    <Icon icon={BadgeCheck} size={15} color={tones.verified} strokeWidth={2.4} />
+                  ) : null}
+                  <ThemedText
+                    numberOfLines={1}
+                    style={[styles.authorMeta, { color: tones.textSoft }]}>
+                    · {formatRelativeTimestamp(post.createdAt)}
+                  </ThemedText>
+                </View>
                 {post.location ? (
                   <View style={styles.locationInline}>
                     <Icon icon={MapPin} size={11} color={tones.textSoft} />
@@ -406,78 +382,84 @@ export function TextPage({
                   </View>
                 ) : null}
               </View>
-            </View>
-          </Pressable>
-
-          {actions?.onFollow ? (
-            <Pressable
-              onPress={actions.onFollow}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={`Suivre ${author.displayName}`}
-              style={({ pressed }) => [
-                styles.followChip,
-                { backgroundColor: tones.follow },
-                pressed && styles.pressed,
-              ]}>
-              <Icon icon={Plus} size={12} color={tones.onFollow} strokeWidth={3} />
-              <ThemedText style={[styles.followChipText, { color: tones.onFollow }]}>
-                {fr.social.follow}
-              </ThemedText>
             </Pressable>
-          ) : state?.following ? (
-            <View style={[styles.followChipMuted, { backgroundColor: tones.glass }]}>
-              <Icon icon={Check} size={12} color={tones.text} strokeWidth={3} />
+
+            <View style={styles.headerActions}>
+              {actions?.onFollow ? (
+                <Pressable
+                  onPress={actions.onFollow}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Suivre ${author.displayName}`}
+                  style={({ pressed }) => pressed && styles.pressed}>
+                  <ThemedText style={[styles.followText, { color: tones.accent }]}>
+                    {fr.social.follow}
+                  </ThemedText>
+                </Pressable>
+              ) : null}
+              {actions ? (
+                // Options (signaler, masquer…) : elles vivent dans la feuille
+                // Partager, ouverte ici comme le ⋯ d'Instagram.
+                <Pressable
+                  onPress={actions.onShare}
+                  hitSlop={10}
+                  accessibilityRole="button"
+                  accessibilityLabel={fr.social.shareMoreOptions}
+                  style={({ pressed }) => pressed && styles.pressed}>
+                  <Icon icon={Ellipsis} size={20} color={tones.text} />
+                </Pressable>
+              ) : null}
             </View>
+          </View>
+
+          {post.quoted ? (
+            <Pressable
+              onPress={() => router.push(`/post/${post.quoted!.id}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`Voir la publication de ${post.quoted.authorDisplayName}`}
+              style={({ pressed }) => pressed && styles.pressed}>
+              <ThemedText
+                style={[feedText.caption, styles.quotedFrom, { color: tones.textSoft }]}>
+                {fr.social.quotedFrom(post.quoted.authorDisplayName)}
+              </ThemedText>
+              {post.quoted.caption ? (
+                <ThemedText
+                  numberOfLines={2}
+                  style={[feedText.caption, styles.quotedCaption, { color: tones.textSoft }]}>
+                  {post.quoted.caption}
+                </ThemedText>
+              ) : null}
+            </Pressable>
           ) : null}
         </View>
 
-        {post.quoted ? (
+        {/* Visuel : pleine largeur, fond choisi par l'auteur, texte centré.
+            Tap = lecteur (post long), double-tap = like. */}
+        {isMultiPage ? (
+          <TextPages
+            pages={pages}
+            pageStyles={post.pageStyles}
+            width={visualWidth}
+            height={visualHeight}
+            fitHeight={Math.max(120, visualHeight - TEXT_CARD_PADDING * 2)}
+            baseBackground={backgroundKey}
+            baseFont={post.textFont}
+            baseAlign={post.textAlign}
+            baseColor={chosenColor ?? null}
+            baseSize={manualSize}
+            onPress={handleCardPress}
+            interactive={interactive}
+          />
+        ) : (
           <Pressable
-            onPress={() => router.push(`/post/${post.quoted!.id}`)}
-            accessibilityRole="button"
-            accessibilityLabel={`Voir la publication de ${post.quoted.authorDisplayName}`}
-            style={({ pressed }) => pressed && styles.pressed}>
-            <ThemedText
-              style={[feedText.caption, styles.quotedFrom, { color: tones.textSoft }]}>
-              {fr.social.quotedFrom(post.quoted.authorDisplayName)}
-            </ThemedText>
-            {post.quoted.caption ? (
-              <ThemedText
-                numberOfLines={2}
-                style={[feedText.caption, styles.quotedCaption, { color: tones.textSoft }]}>
-                {post.quoted.caption}
-              </ThemedText>
-            ) : null}
-          </Pressable>
-        ) : null}
-
-        </View>
-
-        {/* Contenu compressible : si la carte atteint son maxHeight, c'est
-            le texte qui se réduit — le pied de carte (actions, likes) reste
-            toujours à l'intérieur du fond arrondi. */}
-        <View
-          style={styles.content}
-          onLayout={(event) =>
-            onContentLayout(event.nativeEvent.layout.width - Spacing.three * 2)
-          }>
-          {isMultiPage ? (
-            <TextPages
-              pages={pages}
-              pageStyles={post.pageStyles}
-              width={pageWidth}
-              height={pagerHeight}
-              fitHeight={Math.max(140, pagerHeight - Spacing.two * 2)}
-              baseFont={post.textFont}
-              baseAlign={post.textAlign}
-              baseColor={chosenColor ?? null}
-              baseSize={manualSize}
-              onPress={handleCardPress}
-              interactive={interactive}
-            />
-          ) : (
-            <>
+            onPress={handleCardPress}
+            accessibilityRole={showReader ? 'button' : undefined}
+            accessibilityLabel={
+              showReader ? fr.social.readPublication(author.displayName) : undefined
+            }
+            style={[styles.visual, { width: visualWidth, height: visualHeight }]}>
+            <TextPostBackdrop backgroundKey={backgroundKey} />
+            <View style={styles.visualInner}>
               <ThemedText
                 style={[
                   styles.title,
@@ -509,70 +491,68 @@ export function TextPage({
                   })}
                 </ThemedText>
               ) : null}
-            </>
-          )}
 
-          {/* Carte du premier lien : métadonnées lues côté serveur à la
-              publication, le lecteur n'interroge jamais le site lié. */}
-          {post.linkPreview ? (
-            <Pressable
-              onPress={() => void Linking.openURL(post.linkPreview!.url).catch(() => undefined)}
-              accessibilityRole="link"
-              accessibilityLabel={post.linkPreview.title}
-              style={({ pressed }) => [
-                styles.linkCard,
-                { borderColor: tones.cardBorder, backgroundColor: tones.glass },
-                pressed && styles.pressed,
-              ]}>
-              {post.linkPreview.imageUrl ? (
-                <Image
-                  source={{ uri: post.linkPreview.imageUrl }}
-                  style={styles.linkImage}
-                  resizeMode="cover"
-                />
+              {/* Carte du premier lien : métadonnées lues côté serveur à la
+                  publication, le lecteur n'interroge jamais le site lié. */}
+              {post.linkPreview ? (
+                <Pressable
+                  onPress={() => void Linking.openURL(post.linkPreview!.url).catch(() => undefined)}
+                  accessibilityRole="link"
+                  accessibilityLabel={post.linkPreview.title}
+                  style={({ pressed }) => [
+                    styles.linkCard,
+                    { borderColor: tones.cardBorder, backgroundColor: tones.glass },
+                    pressed && styles.pressed,
+                  ]}>
+                  {post.linkPreview.imageUrl ? (
+                    <Image
+                      source={{ uri: post.linkPreview.imageUrl }}
+                      style={styles.linkImage}
+                      resizeMode="cover"
+                    />
+                  ) : null}
+                  <View style={styles.linkText}>
+                    <ThemedText numberOfLines={2} style={[styles.linkTitle, { color: tones.text }]}>
+                      {post.linkPreview.title}
+                    </ThemedText>
+                    {post.linkPreview.description ? (
+                      <ThemedText
+                        numberOfLines={2}
+                        style={[styles.linkDescription, { color: tones.textSoft }]}>
+                        {post.linkPreview.description}
+                      </ThemedText>
+                    ) : null}
+                    <ThemedText numberOfLines={1} style={[styles.linkHost, { color: tones.textSoft }]}>
+                      {post.linkPreview.host}
+                    </ThemedText>
+                  </View>
+                </Pressable>
               ) : null}
-              <View style={styles.linkText}>
-                <ThemedText numberOfLines={2} style={[styles.linkTitle, { color: tones.text }]}>
-                  {post.linkPreview.title}
-                </ThemedText>
-                {post.linkPreview.description ? (
-                  <ThemedText
-                    numberOfLines={2}
-                    style={[styles.linkDescription, { color: tones.textSoft }]}>
-                    {post.linkPreview.description}
+
+              {showReader ? (
+                <Pressable
+                  onPress={openReader}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={fr.social.seeFullPost}
+                  style={({ pressed }) => [styles.more, pressed && styles.morePressed]}>
+                  <ThemedText style={[styles.moreText, { color: tones.accent }]}>
+                    {fr.social.seeFullPost}
                   </ThemedText>
-                ) : null}
-                <ThemedText numberOfLines={1} style={[styles.linkHost, { color: tones.textSoft }]}>
-                  {post.linkPreview.host}
-                </ThemedText>
-              </View>
-            </Pressable>
-          ) : null}
+                  <Icon icon={ChevronDown} size={14} color={tones.accent} />
+                </Pressable>
+              ) : null}
+            </View>
+          </Pressable>
+        )}
 
-          {showReader ? (
-            <Pressable
-              onPress={openReader}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={fr.social.seeFullPost}
-              style={({ pressed }) => [styles.more, pressed && styles.morePressed]}>
-              <ThemedText style={[styles.moreText, { color: tones.accent }]}>
-                {fr.social.seeFullPost}
-              </ThemedText>
-              <Icon icon={ChevronDown} size={14} color={tones.accent} />
-            </Pressable>
-          ) : null}
-        </View>
-
-        {/* Pied de carte : barre d'actions horizontale + compteur de likes,
-            le « footer » d'une publication Instagram. Masqué quand la
-            feuille de commentaires est ouverte (hideOverlays). */}
+        {/* Pied Instagram : actions et compteurs, puis « Voir les N
+            commentaires » (seulement s'il y en a) et les vues. Masqué quand
+            la feuille de commentaires est ouverte (hideOverlays). */}
         {interactive && actions && state ? (
           <View
             style={styles.footer}
             onLayout={(event) => onFooterLayout(event.nativeEvent.layout.height)}>
-            {/* Filet de séparation contenu / actions, comme sur Instagram. */}
-            <View style={[styles.footerDivider, { backgroundColor: tones.textFaint }]} />
             <PostActionBar
               post={post}
               reacted={state.reacted}
@@ -586,19 +566,21 @@ export function TextPage({
               onToggleRepost={actions.onToggleRepost}
               onShare={actions.onShare}
             />
-            {/* Pied de carte façon Instagram : « Voir les commentaires » à
-                gauche, compteur de vues à droite. */}
             <View style={styles.metaRow}>
-              <Pressable
-                onPress={actions.onOpenComments}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel={fr.social.viewComments(post.counters.comments)}
-                style={({ pressed }) => pressed && styles.pressed}>
-                <ThemedText style={[styles.metaLink, { color: tones.textSoft }]}>
-                  {fr.social.viewComments(post.counters.comments)}
-                </ThemedText>
-              </Pressable>
+              {post.counters.comments > 0 ? (
+                <Pressable
+                  onPress={actions.onOpenComments}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel={fr.social.viewComments(post.counters.comments)}
+                  style={({ pressed }) => pressed && styles.pressed}>
+                  <ThemedText style={[styles.metaLink, { color: tones.textSoft }]}>
+                    {fr.social.viewComments(post.counters.comments)}
+                  </ThemedText>
+                </Pressable>
+              ) : (
+                <View />
+              )}
               {/* Œil + compteur, sans le mot « vues » — comme IG. */}
               <View
                 style={styles.metaViews}
@@ -612,7 +594,6 @@ export function TextPage({
             </View>
           </View>
         ) : null}
-        </Pressable>
       </Animated.View>
 
       <HeartBurstOverlay
@@ -646,6 +627,7 @@ function TextPages({
   width,
   height,
   fitHeight,
+  baseBackground = null,
   baseFont = null,
   baseAlign = null,
   baseColor = null,
@@ -660,6 +642,8 @@ function TextPages({
   height: number;
   /** Hauteur utile pour l'auto-fit de chaque page. */
   fitHeight: number;
+  /** Fond du post, pour les pages sans fond propre. */
+  baseBackground?: string | null;
   /** Style de repli du post (police, alignement, couleur, taille). */
   baseFont?: string | null;
   baseAlign?: string | null;
@@ -691,8 +675,8 @@ function TextPages({
               body: page.slice(0, MULTIPAGE_BODY_ESTIMATE_CHARS),
             },
           ],
-          // Le texte d'une page a sa propre marge (Spacing.three de chaque côté).
-          width - Spacing.three * 2,
+          // Même marge de texte que le compositeur (TEXT_CARD_PADDING).
+          width - TEXT_CARD_PADDING * 2,
           fitHeight,
           spec?.charRatio ?? CHAR_RATIO,
           manual ?? FEED_TEXT_FONT.max,
@@ -793,7 +777,7 @@ function TextPages({
               // Chaque carte est indépendante : fond et couleur choisis pour
               // cette page, quelle que soit la longueur de son texte.
               const style = pageStyles?.[pageIndex] ?? null;
-              const pageBg = style?.background ?? null;
+              const pageBg = style?.background ?? baseBackground;
               const pageFontKey =
                 style?.font && textFontByKey(style.font) ? style.font : baseFont;
               const pageFontSpec = textFontByKey(pageFontKey);
@@ -818,15 +802,15 @@ function TextPages({
                 <View
                   key={pageIndex}
                   style={{ width, height, overflow: 'hidden' }}>
-                  {pageBg ? <TextPostBackdrop backgroundKey={pageBg} /> : null}
+                  <TextPostBackdrop backgroundKey={pageBg} />
                   <Pressable
                     onPress={onPress}
                     style={{
                       flex: 1,
                       justifyContent: 'center',
-                      // Marge de texte : sans elle, un texte justifié colle
-                      // les deux bords de la carte (comme sur IG).
-                      paddingHorizontal: Spacing.three,
+                      // Même marge que le compositeur : un texte justifié ne
+                      // colle pas les bords du visuel (comme sur IG).
+                      padding: TEXT_CARD_PADDING,
                     }}>
                     <ThemedText
                       style={[
@@ -895,34 +879,38 @@ const styles = StyleSheet.create({
   pageIndicatorText: { fontWeight: '700', fontVariant: ['tabular-nums'] },
   page: {
     overflow: 'hidden',
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.two,
+    paddingTop: CARD_TOP_RESERVED,
+    paddingBottom: CARD_BOTTOM_RESERVED,
   },
-  cardEnter: {
+  column: {
     alignSelf: 'stretch',
+    gap: COLUMN_GAP,
   },
-  card: {
-    // Pleine largeur : plus de rail vertical sur la droite pour les posts
-    // texte, la carte porte ses propres actions en pied.
-    alignSelf: 'stretch',
-    borderRadius: Radii.lg,
-    borderWidth: CARD_BORDER,
-    borderColor: FeedTextPost.cardBorder,
-    backgroundColor: FeedTextPost.card,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
+  visual: {
+    overflow: 'hidden',
+  },
+  visualInner: {
+    flex: 1,
+    padding: TEXT_CARD_PADDING,
+    justifyContent: 'center',
     gap: Spacing.two,
-    // Ombre portée discrète : la carte se détache du dégradé de fond.
-    shadowColor: Scrim,
-    shadowOpacity: 1,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 10,
   },
-  cardPressed: {
-    opacity: 0.92,
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
   },
+  authorLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+    flexShrink: 1,
+  },
+  followText: {
+    ...Type.body,
+    fontWeight: '700',
+  },,,,
   token: {
     // Hashtags et mentions : l'accent du feed, identifiable dans le texte.
     color: FeedSurface.accent,
@@ -930,6 +918,7 @@ const styles = StyleSheet.create({
   },
   top: {
     gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
   },
   header: {
     flexDirection: 'row',
@@ -950,41 +939,16 @@ const styles = StyleSheet.create({
     ...Type.body,
     fontWeight: '700',
     color: FeedSurface.onMedia,
+    flexShrink: 1,
   },
   authorMeta: {
     ...Type.caption,
     color: FeedSurface.onMediaSoft,
     opacity: 0.8,
-  },
-  followChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.half,
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.half,
-    borderRadius: Radii.full,
-    backgroundColor: FeedSurface.follow,
-  },
-  followChipText: {
-    ...Type.caption,
-    fontWeight: '700',
-  },
-  followChipMuted: {
-    width: 26,
-    height: 26,
-    borderRadius: Radii.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: FeedSurface.glass,
-  },
+  },,,,
   repostedBy: {
     fontWeight: '600',
-  },
-  authorMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.one,
-  },
+  },,
   locationInline: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -999,16 +963,7 @@ const styles = StyleSheet.create({
   },
   quotedCaption: {
     opacity: 0.85,
-  },
-  content: {
-    flexShrink: 1,
-    minHeight: 0,
-    gap: Spacing.two,
-    overflow: 'hidden',
-    // Marge de texte supplémentaire : un texte justifié ne colle plus les
-    // bords de la carte, le rendu reste aéré comme sur Instagram.
-    paddingHorizontal: Spacing.three,
-  },
+  },,
   title: {
     // « Text post » Instagram : grand titre gras, centré sur le dégradé.
     ...Type.sectionTitle,
@@ -1063,13 +1018,8 @@ const styles = StyleSheet.create({
   },
   footer: {
     gap: Spacing.one,
-    paddingTop: Spacing.two,
-  },
-  footerDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: FeedSurface.onMediaFaint,
-    opacity: 0.4,
-  },
+    paddingHorizontal: Spacing.three,
+  },,
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -982,6 +982,7 @@ export const fr = {
       left > 1 ? `${left} caractères restants` : `${left} caractère restant`,
     /** Indicateur de page du carrousel de texte, ex. « 2/5 ». */
     textPageIndicator: (index: number, total: number) => `${index}/${total}`,
+    verifiedAccount: 'compte vérifié',
     textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
     notificationsTitle: 'Aucune notification',
     notificationsBody:
