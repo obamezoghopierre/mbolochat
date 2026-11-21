@@ -89,6 +89,7 @@
         }
       ],
       "./plugins/withMessagingNotifications",
+      "./plugins/withProguardRules",
       [
         "expo-sqlite",
         {
