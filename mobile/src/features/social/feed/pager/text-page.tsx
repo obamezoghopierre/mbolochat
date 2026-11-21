@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { Check, ChevronDown, ChevronRight, Eye, MapPin, Plus } from 'lucide-react-native';
+import { Check, ChevronDown, Eye, MapPin, Plus } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Reanimated, {
   runOnJS,
@@ -71,6 +71,17 @@ const CARD_BOTTOM_RESERVED = 128;
 
 /** Taille de l'avatar de l'en-tête, calquée sur une publication Instagram. */
 const HEADER_AVATAR = 36;
+
+/** Bordure de la carte (styles.card.borderWidth). */
+const CARD_BORDER = 1;
+/** Pied de carte avant sa première mesure (actions + ligne de méta). */
+const FOOTER_ESTIMATE = 96;
+/** Points de pagination + écart au-dessus. */
+const PAGE_DOTS_BLOCK = 6 + Spacing.two;
+/** Ligne « Voir plus » sous un post long. */
+const MORE_LINK_HEIGHT = 22;
+/** Le badge « 2/5 » s'efface après ce délai sans changement de page. */
+const PAGE_BADGE_VISIBLE_MS = 2500;
 
 /**
  * Estimation bornée pour une page de carrousel : le rendu ne montre que
@@ -168,12 +179,9 @@ export function TextPage({
     [post.pages],
   );
   const isMultiPage = pages.length > 1;
-  // Le corps du lecteur rassemble toutes les pages, séparées par un filet.
-  const readerBody = isMultiPage
-    ? [body, ...pages.slice(1)]
-        .filter((part): part is string => Boolean(part && part.length > 0))
-        .join('\n\n———\n\n')
-    : (body ?? '');
+  // Le lecteur ne s'ouvre que pour un post simple long (pas de lecteur en
+  // multi-pages, on glisse entre les pages) : il lit le corps seul.
+  const readerBody = body ?? '';
   const hasLongBody = body !== null && body.length > PREVIEW_MAX_CHARS;
   const preview = hasLongBody ? `${body.slice(0, PREVIEW_MAX_CHARS).trimEnd()}…` : body;
   // « Voir plus » et le tap→lecteur : posts simples longs uniquement.
@@ -193,11 +201,51 @@ export function TextPage({
   const interactive = Boolean(actions && state) && !chrome.hideOverlays;
   const author = post.author;
 
-  // Géométrie du carrousel de pages : largeur = fenêtre moins marges de la
-  // page (Spacing.two) et de la carte (Spacing.three) ; hauteur bornée pour
-  // que les points de page restent visibles sous le texte.
-  const pageWidth = windowWidth - Spacing.two * 2 - Spacing.three * 2;
-  const pagerHeight = Math.max(200, chrome.height - 480);
+  // Géométrie mesurée, plus d'estimations fixes : largeur réelle de la zone
+  // de texte et hauteur de l'en-tête / du pied de carte. Avant la première
+  // mesure, on part d'une estimation qui reprend toutes les marges.
+  const [contentWidth, setContentWidth] = useState<number | null>(null);
+  const [topHeight, setTopHeight] = useState<number | null>(null);
+  const [footerHeight, setFooterHeight] = useState<number | null>(null);
+  const measure =
+    (setter: (value: number) => void, current: number | null) =>
+    (value: number) => {
+      if (current === null || Math.abs(current - value) > 1) {
+        setter(Math.round(value));
+      }
+    };
+  const onContentLayout = measure(setContentWidth, contentWidth);
+  const onTopLayout = measure(setTopHeight, topHeight);
+  const onFooterLayout = measure(setFooterHeight, footerHeight);
+
+  // Marges : page (two) + carte (three + bordure) + zone de texte (three).
+  const pageWidth =
+    contentWidth ??
+    windowWidth - Spacing.two * 2 - Spacing.three * 2 - CARD_BORDER * 2 - Spacing.three * 2;
+  const cardMaxHeight = Math.max(160, chrome.height - CARD_TOP_RESERVED - CARD_BOTTOM_RESERVED);
+  const estimatedTop =
+    HEADER_AVATAR + (post.repostedBy ? 22 : 0) + (post.quoted ? 48 : 0);
+  const sections = interactive ? 3 : 2;
+  // Hauteur réellement disponible pour le texte dans la carte.
+  const contentAvailable = Math.max(
+    120,
+    cardMaxHeight -
+      Spacing.four * 2 -
+      CARD_BORDER * 2 -
+      (topHeight ?? estimatedTop) -
+      (interactive ? (footerHeight ?? FOOTER_ESTIMATE) : 0) -
+      (sections - 1) * Spacing.two,
+  );
+  const linkReserve = post.linkPreview ? FeedTextPost.linkThumb + Spacing.two : 0;
+  // Carrousel : hauteur disponible moins les points, plafonnée au 4:5
+  // d'Instagram pour qu'un post court ne produise pas une carte géante.
+  const pagerHeight = Math.max(
+    160,
+    Math.min(
+      contentAvailable - linkReserve - PAGE_DOTS_BLOCK,
+      Math.round(pageWidth * 1.25),
+    ),
+  );
 
   // Typographie : la taille manuelle de l'auteur est un plafond — le texte
   // s'ajuste en dessous pour tenir dans la carte au lieu d'être coupé.
@@ -208,15 +256,12 @@ export function TextPage({
     if (isMultiPage) {
       return null;
     }
-    const rowsHeight = post.linkPreview ? 104 : 0;
     const contentHeight = Math.max(
       120,
-      chrome.height -
-        CARD_TOP_RESERVED -
-        CARD_BOTTOM_RESERVED -
-        96 -
-        (interactive ? 104 : 0) -
-        rowsHeight,
+      contentAvailable -
+        linkReserve -
+        (showReader ? MORE_LINK_HEIGHT + Spacing.two : 0) -
+        (title && preview ? Spacing.two : 0),
     );
     return fitFeedTypography(
       [{ title, body: preview }],
@@ -306,6 +351,8 @@ export function TextPage({
             },
             pressed && styles.cardPressed,
           ]}>
+        {/* Bloc du haut mesuré : republication, en-tête, citation. */}
+        <View style={styles.top} onLayout={(event) => onTopLayout(event.nativeEvent.layout.height)}>
         {/* « X a republié » au-dessus de l'en-tête, comme sur Instagram. */}
         {post.repostedBy ? (
           <Pressable
@@ -405,17 +452,23 @@ export function TextPage({
           </Pressable>
         ) : null}
 
+        </View>
+
         {/* Contenu compressible : si la carte atteint son maxHeight, c'est
             le texte qui se réduit — le pied de carte (actions, likes) reste
             toujours à l'intérieur du fond arrondi. */}
-        <View style={styles.content}>
+        <View
+          style={styles.content}
+          onLayout={(event) =>
+            onContentLayout(event.nativeEvent.layout.width - Spacing.three * 2)
+          }>
           {isMultiPage ? (
             <TextPages
               pages={pages}
               pageStyles={post.pageStyles}
               width={pageWidth}
               height={pagerHeight}
-              fitHeight={Math.max(160, pagerHeight - 24)}
+              fitHeight={Math.max(140, pagerHeight - Spacing.two * 2)}
               baseFont={post.textFont}
               baseAlign={post.textAlign}
               baseColor={chosenColor ?? null}
@@ -515,7 +568,9 @@ export function TextPage({
             le « footer » d'une publication Instagram. Masqué quand la
             feuille de commentaires est ouverte (hideOverlays). */}
         {interactive && actions && state ? (
-          <View style={styles.footer}>
+          <View
+            style={styles.footer}
+            onLayout={(event) => onFooterLayout(event.nativeEvent.layout.height)}>
             {/* Filet de séparation contenu / actions, comme sur Instagram. */}
             <View style={[styles.footerDivider, { backgroundColor: tones.textFaint }]} />
             <PostActionBar
@@ -636,7 +691,8 @@ function TextPages({
               body: page.slice(0, MULTIPAGE_BODY_ESTIMATE_CHARS),
             },
           ],
-          width,
+          // Le texte d'une page a sa propre marge (Spacing.three de chaque côté).
+          width - Spacing.three * 2,
           fitHeight,
           spec?.charRatio ?? CHAR_RATIO,
           manual ?? FEED_TEXT_FONT.max,
@@ -694,9 +750,9 @@ function TextPages({
     transform: [{ translateX: translateX.value }],
   }));
 
-  /** Page suivante au tap sur le chevron, comme un mini-swipe. */
-  const goNext = () => {
-    const target = Math.min(lastIndex, index + 1);
+  /** Change de page (lecteur d'écran) avec le même ressort que le swipe. */
+  const goTo = (next: number) => {
+    const target = Math.min(lastIndex, Math.max(0, next));
     if (target === index) {
       return;
     }
@@ -706,6 +762,27 @@ function TextPages({
     translateX.value = withSpring(-target * width, PAGE_SPRING);
     setIndex(target);
   };
+
+  // La largeur est mesurée après le premier rendu : on recale la rangée sur
+  // la page courante, sinon elle resterait décalée de l'ancienne largeur.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
+    translateX.value = -index * width;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [width]);
+
+  // Badge « 2/5 » façon Instagram : visible au changement de page, puis il
+  // s'efface pour ne pas masquer le texte.
+  const badgeOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const animation = Animated.sequence([
+      Animated.timing(badgeOpacity, { toValue: 1, duration: 120, useNativeDriver: true }),
+      Animated.delay(PAGE_BADGE_VISIBLE_MS),
+      Animated.timing(badgeOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]);
+    animation.start();
+    return () => animation.stop();
+  }, [badgeOpacity, index]);
 
   return (
     <View style={styles.pagesWrap}>
@@ -774,29 +851,27 @@ function TextPages({
             })}
           </Reanimated.View>
         </GestureDetector>
-        {/* Invite au swipe : chevron discret au bord droit, masqué sur la
-            dernière page. Le tap avance aussi, pour qui n'ose pas glisser. */}
-        {index < lastIndex ? (
-          <View style={styles.nextPageZone} pointerEvents="box-none">
-            <Pressable
-              onPress={goNext}
-              hitSlop={12}
-              accessibilityRole="button"
-              accessibilityLabel={fr.social.nextPage}
-              style={({ pressed }) => [
-                styles.nextPageBadge,
-                { backgroundColor: tones.glass },
-                pressed && styles.pressed,
-              ]}>
-              <Icon icon={ChevronRight} size={18} color={tones.text} />
-            </Pressable>
-          </View>
-        ) : null}
+        {/* Badge « 2/5 » dans le coin du carrousel, en retrait des bords. */}
+        <Animated.View
+          pointerEvents="none"
+          importantForAccessibility="no-hide-descendants"
+          style={[styles.pageIndicator, { backgroundColor: tones.badge, opacity: badgeOpacity }]}>
+          <ThemedText type="caption" style={[styles.pageIndicatorText, { color: tones.text }]}>
+            {fr.social.textPageIndicator(index + 1, pages.length)}
+          </ThemedText>
+        </Animated.View>
       </View>
+      {/* Points seuls sous le carrousel (plus de chevron) ; pour le lecteur
+          d'écran, c'est un contrôle « ajustable » qui change de page. */}
       <View
         style={styles.pageDots}
         accessible
-        accessibilityLabel={fr.social.textPageA11y(index + 1, pages.length)}>
+        accessibilityRole="adjustable"
+        accessibilityLabel={fr.social.textPageA11y(index + 1, pages.length)}
+        accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+        onAccessibilityAction={(event) =>
+          goTo(event.nativeEvent.actionName === 'increment' ? index + 1 : index - 1)
+        }>
         {pages.map((_, dotIndex) => (
           <View
             key={dotIndex}
@@ -808,15 +883,6 @@ function TextPages({
           />
         ))}
       </View>
-      {/* Indicateur « 2/5 » façon Instagram, en haut à droite du carrousel. */}
-      <View
-        pointerEvents="none"
-        importantForAccessibility="no-hide-descendants"
-        style={[styles.pageIndicator, { backgroundColor: tones.textFaint }]}>
-        <ThemedText type="caption" style={[styles.pageIndicatorText, { color: tones.text }]}>
-          {fr.social.textPageIndicator(index + 1, pages.length)}
-        </ThemedText>
-      </View>
     </View>
   );
 }
@@ -824,8 +890,8 @@ function TextPages({
 const styles = StyleSheet.create({
   pageIndicator: {
     position: 'absolute',
-    top: 0,
-    right: 0,
+    top: Spacing.two,
+    right: Spacing.two,
     borderRadius: Radii.full,
     paddingHorizontal: Spacing.two,
     paddingVertical: 2,
@@ -845,7 +911,7 @@ const styles = StyleSheet.create({
     // texte, la carte porte ses propres actions en pied.
     alignSelf: 'stretch',
     borderRadius: Radii.lg,
-    borderWidth: 1,
+    borderWidth: CARD_BORDER,
     borderColor: FeedTextPost.cardBorder,
     backgroundColor: FeedTextPost.card,
     paddingHorizontal: Spacing.three,
@@ -865,6 +931,9 @@ const styles = StyleSheet.create({
     // Hashtags et mentions : l'accent du feed, identifiable dans le texte.
     color: FeedSurface.accent,
     fontWeight: '700',
+  },
+  top: {
+    gap: Spacing.two,
   },
   header: {
     flexDirection: 'row',
@@ -1030,19 +1099,6 @@ const styles = StyleSheet.create({
   },
   pagesRow: {
     flexDirection: 'row',
-  },
-  nextPageZone: {
-    ...StyleSheet.absoluteFill,
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-    paddingRight: Spacing.two,
-  },
-  nextPageBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: Radii.full,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   pageDots: {
     flexDirection: 'row',
