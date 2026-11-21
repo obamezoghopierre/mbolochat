@@ -25,6 +25,16 @@ import { invalidateFeedCache } from '@/features/social/feed/use-feed';
 /** Bornes alignées sur le DTO (`MAX_TEXT_PAGES`, `MAX_TEXT_PAGE_LENGTH`). */
 const MAX_PAGES = 10;
 const MAX_PAGE_LENGTH = 2000;
+/** Au-delà de ce seuil le compteur passe en avertissement. */
+const PAGE_LENGTH_WARNING = Math.floor(MAX_PAGE_LENGTH * 0.9);
+
+/** Visibilités acceptées par l'API (`VISIBILITIES` du DTO). */
+type Visibility = 'public' | 'followers' | 'private';
+const VISIBILITY_OPTIONS: { key: Visibility; label: string }[] = [
+  { key: 'public', label: fr.social.createVisibilityPublic },
+  { key: 'followers', label: fr.social.createVisibilityFollowers },
+  { key: 'private', label: fr.social.createVisibilityPrivate },
+];
 
 /** Page du compositeur : l'identifiant sert de clé React stable. */
 type ComposerPage = { id: number; text: string };
@@ -46,6 +56,7 @@ export default function CreateScreen() {
   const nextPageId = useRef(1);
   const [pages, setPages] = useState<ComposerPage[]>([{ id: 0, text: '' }]);
   const [background, setBackground] = useState<keyof typeof FeedTextPost.backgrounds>('dark');
+  const [visibility, setVisibility] = useState<Visibility>('public');
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Même clé tant que l'écran est ouvert : un rejeu après coupure renvoie la
@@ -90,6 +101,7 @@ export default function CreateScreen() {
           ? { textPages: filledPages }
           : { caption: filledPages[0] }),
         textBackground: background,
+        visibility,
       });
       invalidateFeedCache(token);
       router.back();
@@ -182,6 +194,22 @@ export default function CreateScreen() {
                   accessibilityLabel={fr.social.createPage(index + 1)}
                 />
               </View>
+              <ThemedText
+                type="caption"
+                accessibilityLabel={fr.social.createCharCountA11y(MAX_PAGE_LENGTH - page.text.length)}
+                style={[
+                  styles.charCount,
+                  {
+                    color:
+                      page.text.length >= MAX_PAGE_LENGTH
+                        ? Colors.dark.error
+                        : page.text.length >= PAGE_LENGTH_WARNING
+                          ? FeedSurface.accent
+                          : FeedSurface.onMediaFaint,
+                  },
+                ]}>
+                {fr.social.createCharCount(page.text.length, MAX_PAGE_LENGTH)}
+              </ThemedText>
             </View>
           ))}
 
@@ -208,6 +236,43 @@ export default function CreateScreen() {
             </ThemedText>
           ) : null}
         </ScrollView>
+
+        {/* Visibilité : mêmes valeurs que le DTO, public par défaut. */}
+        <View
+          style={[styles.visibilityBar, { borderTopColor: FeedSurface.onMediaFaint }]}
+          accessibilityRole="radiogroup"
+          accessibilityLabel={fr.social.createVisibility}>
+          <ThemedText type="caption" style={[styles.backgroundLabel, { color: FeedSurface.onMediaSoft }]}>
+            {fr.social.createVisibility}
+          </ThemedText>
+          <View style={styles.visibilityOptions}>
+            {VISIBILITY_OPTIONS.map((option) => {
+              const selected = option.key === visibility;
+              return (
+                <Pressable
+                  key={option.key}
+                  onPress={() => setVisibility(option.key)}
+                  accessibilityRole="radio"
+                  accessibilityLabel={option.label}
+                  accessibilityState={{ selected }}
+                  style={[
+                    styles.visibilityChip,
+                    { borderColor: selected ? FeedSurface.accent : FeedSurface.onMediaFaint },
+                    selected && { backgroundColor: FeedSurface.accent },
+                  ]}>
+                  <ThemedText
+                    type="caption"
+                    style={[
+                      styles.visibilityLabel,
+                      { color: selected ? FeedSurface.background : FeedSurface.onMediaSoft },
+                    ]}>
+                    {option.label}
+                  </ThemedText>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
 
         {/* Fonds de carte : pastilles aux couleurs des palettes persistées. */}
         <View
@@ -306,6 +371,23 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   backgroundLabel: { fontWeight: '600' },
+  charCount: { alignSelf: 'flex-end', fontVariant: ['tabular-nums'] },
+  visibilityBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  visibilityOptions: { flexDirection: 'row', gap: Spacing.two },
+  visibilityChip: {
+    borderWidth: 1,
+    borderRadius: Radii.full,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+  },
+  visibilityLabel: { fontWeight: '600' },
   swatches: { flexDirection: 'row', gap: Spacing.two },
   swatch: {
     width: 30,

@@ -830,6 +830,17 @@ export const fr = {
     createRemovePage: 'Supprimer la page',
     createBackground: 'Fond',
     createPlaceholder: 'Écris ta publication…',
+    createVisibility: 'Visibilité',
+    createVisibilityPublic: 'Public',
+    createVisibilityFollowers: 'Abonnés',
+    createVisibilityPrivate: 'Moi uniquement',
+    /** Compteur de caractères d'une page du compositeur. */
+    createCharCount: (count: number, max: number) => `${count}/${max}`,
+    createCharCountA11y: (left: number) =>
+      left > 1 ? `${left} caractères restants` : `${left} caractère restant`,
+    /** Indicateur de page du carrousel de texte, ex. « 2/5 ». */
+    textPageIndicator: (index: number, total: number) => `${index}/${total}`,
+    textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
     notificationsTitle: 'Aucune notification',
     notificationsBody:
       'Les réactions, les commentaires et les nouveaux abonnés apparaîtront ici.',
