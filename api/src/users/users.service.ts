@@ -373,6 +373,40 @@ export class UsersService {
   }
 
   /**
+   * Géocodage inverse pour taguer un lieu : même pipeline que la ville du
+   * profil (cache par cellule, Nominatim derrière), sans toucher au compte.
+   */
+  async reversePlace(
+    latitude: number,
+    longitude: number,
+  ): Promise<{ city: string; country: string | null } | null> {
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180
+    ) {
+      throw new BadRequestException('Position invalide.');
+    }
+    const place = await this.geocoding.reverse(latitude, longitude);
+    return place ? { city: place.city, country: place.country } : null;
+  }
+
+  /**
+   * Suggestions de villes pour le champ lieu du compositeur : recherche
+   * Nominatim côté serveur, aucun résultat n'est persisté.
+   */
+  async searchPlaces(query: string): Promise<{ city: string; country: string | null }[]> {
+    const q = query.trim();
+    if (q.length < 2 || q.length > 100) {
+      return [];
+    }
+    return this.geocoding.searchPlaces(q);
+  }
+
+  /**
    * Met à jour la ville depuis une position approximative. Le serveur géocode,
    * applique le délai de 24 h et l'anti-téléport, puis jette les coordonnées.
    */

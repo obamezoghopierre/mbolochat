@@ -194,12 +194,73 @@ export const api = {
       caption?: string;
       quotedPublicationId?: string;
       visibility?: SocialVisibility;
-      /** Post texte : fond de carte et pages (multi-cartes). */
+      /** Médias déjà téléversés et `ready` (image/vidéo, jamais mélangés). */
+      assetIds?: string[];
+      /** Post texte : fond de carte, pages (multi-cartes), police, alignement. */
       textBackground?: string;
       textPages?: string[];
+      /** Style par page (fond/couleur), aligné sur `textPages`. */
+      textPageStyles?: ({ background?: string; color?: string; font?: string; align?: string; size?: number } | null)[];
+      textFont?: string;
+      textAlign?: string;
+      textColor?: string;
+      /** Titre facultatif du post texte (champ dédié). */
+      textTitle?: string;
+      /** Taille manuelle du post texte en points (16–64), absent = auto. */
+      textSize?: number;
+      /** Lieu facultatif du post texte (≤ 100 caractères). */
+      location?: string;
+      /** Filtre visuel d'une publication média (clé de `MEDIA_FILTERS`). */
+      mediaFilter?: string;
     },
   ) {
     return request<FeedPost>('/publications', { method: 'POST', token, body });
+  },
+
+  /**
+   * Modifie sa propre publication : tous les champs sont optionnels
+   * (`undefined` = inchangé, `textTitle: null` efface le titre).
+   */
+  updatePublication(
+    token: string,
+    publicationId: string,
+    body: {
+      caption?: string;
+      textPages?: string[];
+      /** Style par page, aligné sur `textPages` (ou pages existantes). */
+      textPageStyles?: ({ background?: string; color?: string; font?: string; align?: string; size?: number } | null)[];
+      textTitle?: string | null;
+      textBackground?: string;
+      textFont?: string;
+      textAlign?: string;
+      textColor?: string | null;
+      /** Taille manuelle en points ; `null` revient à l'auto-ajustement. */
+      textSize?: number | null;
+      /** Lieu du post texte ; `null` ou vide l'efface. */
+      location?: string | null;
+    },
+  ) {
+    return request<FeedPost>(`/publications/${publicationId}`, {
+      method: 'PATCH',
+      token,
+      body,
+    });
+  },
+
+  /** Géocodage inverse : nom de ville/pays pour taguer un lieu. */
+  reverseGeo(token: string, latitude: number, longitude: number) {
+    return request<{ city: string; country: string | null } | null>(
+      `/users/geo/reverse?latitude=${latitude}&longitude=${longitude}`,
+      { token },
+    );
+  },
+
+  /** Suggestions de villes pour le champ lieu du compositeur. */
+  geoSearch(token: string, query: string) {
+    return request<{ city: string; country: string | null }[]>(
+      `/users/geo/search?q=${encodeURIComponent(query)}`,
+      { token },
+    );
   },
 
   /** Supprime sa propre publication. */
@@ -325,6 +386,11 @@ export const api = {
     });
   },
 
+  /** État d'un asset : `uploaded` puis `ready` quand le worker a fini. */
+  socialMediaAsset(token: string, assetId: string) {
+    return request<SocialMediaAsset>(`/media/uploads/${assetId}`, { token });
+  },
+
   /**
    * Upload complet d'un média social pour commentaire : ticket → PUT
    * présigné → confirmation. Renvoie l'asset `ready` à référencer par
@@ -334,7 +400,7 @@ export const api = {
     token: string,
     asset: {
       uri: string;
-      kind: 'image' | 'audio';
+      kind: 'image' | 'video' | 'audio';
       mime: string;
       durationMs?: number;
       sizeBytes?: number;

@@ -7,6 +7,7 @@ import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { Radii, Spacing, Type } from '@/constants/theme';
+import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { primaryMedia } from './pager/feed-media';
 import { formatListTimestamp } from '@/lib/format';
 import { fr } from '@/i18n/fr';
@@ -78,13 +79,16 @@ export function PostCard({
       </Pressable>
 
       {preview ? (
-        <Image
-          source={{ uri: preview }}
-          style={[styles.media, { backgroundColor: theme.backgroundSelected }]}
-          contentFit="cover"
-          transition={120}
-          accessibilityLabel={media?.altText ?? 'Média de la publication'}
-        />
+        <View>
+          <Image
+            source={{ uri: preview }}
+            style={[styles.media, { backgroundColor: theme.backgroundSelected }]}
+            contentFit="cover"
+            transition={120}
+            accessibilityLabel={media?.altText ?? 'Média de la publication'}
+          />
+          <MediaFilterOverlay filterKey={post.mediaFilter} style={styles.filterOverlay} />
+        </View>
       ) : null}
 
       {post.quoted ? (
@@ -182,6 +186,16 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 4 / 5,
     borderRadius: Radii.md,
+  },
+  /** Même boîte que le média, pour que le filtre suive ses coins arrondis. */
+  filterOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: Radii.md,
+    overflow: 'hidden',
   },
   footer: {
     flexDirection: 'row',

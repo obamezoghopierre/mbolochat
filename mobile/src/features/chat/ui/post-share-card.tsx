@@ -8,6 +8,7 @@ import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
+import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { fr } from '@/i18n/fr';
@@ -82,6 +83,10 @@ export function PostShareCard({ publicationId, token }: { publicationId: string;
             contentFit="cover"
             transition={120}
           />
+          <MediaFilterOverlay
+            filterKey={post?.mediaFilter}
+            style={{ borderRadius: 0 }}
+          />
           {media?.kind === 'video' || extras > 0 ? (
             <View style={styles.badge}>
               <Icon
@@ -135,6 +140,7 @@ const styles = StyleSheet.create({
   media: {
     width: '100%',
     aspectRatio: 1,
+    overflow: 'hidden',
   },
   mediaImage: {
     width: '100%',

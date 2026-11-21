@@ -1055,6 +1055,22 @@ export const sounds = pgTable(
 );
 
 /**
+ * Style d'une page de post texte multi-cartes : fond et couleur de texte
+ * propres à la carte (clés des catalogues mobiles). Toutes les clés sont
+ * optionnelles ; une page sans style garde le rendu par défaut.
+ */
+export interface TextPageStyle {
+  background?: string;
+  color?: string;
+  /** Police propre à la page (clé du catalogue mobile). */
+  font?: string;
+  /** Alignement propre à la page (`left`/`center`/`right`). */
+  align?: string;
+  /** Taille manuelle de la page (points), absente = auto-partagée. */
+  size?: number;
+}
+
+/**
  * Publication unifiée : post ou reel.
  *
  * Un seul agrégat pour les deux kinds (ADR-0001 §2.2) : interactions, compteurs,
@@ -1087,6 +1103,62 @@ export const publications = pgTable(
      * Quand présent, `caption` reflète la première page (recherche, extraits).
      */
     textPages: jsonb('text_pages').$type<string[]>(),
+    /**
+     * Style par page d'un post texte multi-cartes, aligné sur `text_pages`
+     * (même index). `null` ou entrée sans clé = style par défaut de la page.
+     * Chaque carte est indépendante, comme les carrousels Instagram.
+     */
+    textPageStyles: jsonb('text_page_styles').$type<Array<TextPageStyle | null>>(),
+    /**
+     * Police du post texte (clé du catalogue mobile : `classic`, `modern`,
+     * `typewriter`, `bold`, `elegant`). `null` = police système par défaut.
+     * Ignorée pour les publications avec média.
+     */
+    textFont: text('text_font'),
+    /**
+     * Alignement du texte d'un post texte : `left`, `center` ou `right`.
+     * `null` = centré, le rendu historique.
+     */
+    textAlign: text('text_align'),
+    /**
+     * Couleur du texte d'un post texte (clé du catalogue mobile : `white`,
+     * `cream`, `yellow`…). `null` = couleur du thème, le rendu historique.
+     */
+    textColor: text('text_color'),
+    /**
+     * Titre facultatif d'un post texte, saisi dans un champ dédié. `null` =
+     * pas de titre : le client retombe sur la convention « première ligne ».
+     * Ignoré pour les publications avec média.
+     */
+    textTitle: text('text_title'),
+    /**
+     * Taille de police choisie à la main pour un post texte (points),
+     * `null` = auto-ajustement selon le contenu. Ignoré pour les
+     * publications avec média.
+     */
+    textSize: integer('text_size'),
+    /**
+     * Lieu facultatif d'un post texte (nom de ville/lieu saisi ou détecté
+     * par géocodage inverse). `null` = pas de localisation.
+     */
+    location: text('location'),
+    /**
+     * Aperçu du premier lien du texte (métadonnées OG récupérées côté
+     * serveur à la publication). `null` = pas de lien ou page muette.
+     */
+    linkPreview: jsonb('link_preview').$type<{
+      url: string;
+      host: string;
+      title: string;
+      description: string;
+      imageUrl: string | null;
+    }>(),
+    /**
+     * Filtre visuel choisi à la publication (clé du catalogue mobile,
+     * ex. `vivid`, `warm`). `null` = rendu brut. Sans effet sur un post
+     * texte, qui a déjà son fond dédié.
+     */
+    mediaFilter: text('media_filter'),
     visibility: publicationVisibilityEnum('visibility').notNull().default('public'),
     moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
     /** Son utilisé par un reel, facultatif. */

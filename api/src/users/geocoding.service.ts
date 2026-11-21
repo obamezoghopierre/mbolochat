@@ -11,6 +11,12 @@ export type GeocodedCity = Coordinate & {
   country: string | null;
 };
 
+/** Suggestion de ville pour la saisie du lieu d'un post. */
+export type PlaceSuggestion = {
+  city: string;
+  country: string | null;
+};
+
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const NOMINATIM_MIN_INTERVAL_MS = 1000;
 
@@ -35,6 +41,10 @@ export class GeocodingService {
 
   private get userAgent(): string {
     return this.config.get<string>('GEOCODE_USER_AGENT') ?? 'MboloChat/1.0';
+  }
+
+  private get searchUrl(): string {
+    return this.config.get<string>('GEOCODE_SEARCH_URL') ?? 'https://nominatim.openstreetmap.org/search';
   }
 
   /** Cellule d'environ 1 km : suffisante pour une ville, inutile pour tracer. */
@@ -93,6 +103,68 @@ export class GeocodingService {
         },
       });
     return result;
+  }
+
+  /**
+   * Recherche de villes pour l'autocomplétion du lieu d'un post : Nominatim
+   * `/search`, filtré sur les localités, dédupliqué « ville, pays ».
+   * Aucune coordonnée n'est renvoyée ni conservée.
+   */
+  async searchPlaces(query: string): Promise<PlaceSuggestion[]> {
+    const q = query.trim();
+    if (q.length < 2) {
+      return [];
+    }
+    try {
+      const url = new URL(this.searchUrl);
+      url.searchParams.set('q', q);
+      url.searchParams.set('format', 'jsonv2');
+      url.searchParams.set('addressdetails', '1');
+      url.searchParams.set('limit', '5');
+      url.searchParams.set('accept-language', 'fr');
+      url.searchParams.set('featureType', 'city');
+      const response = await this.limited(() =>
+        fetch(url, {
+          headers: { 'User-Agent': this.userAgent, Accept: 'application/json' },
+          signal: AbortSignal.timeout(5000),
+        }),
+      );
+      if (!response.ok) {
+        return [];
+      }
+      const rows = (await response.json()) as { address?: Record<string, string> }[];
+      const seen = new Set<string>();
+      const places: PlaceSuggestion[] = [];
+      for (const row of rows) {
+        const address = row.address ?? {};
+        const city =
+          address.city ??
+          address.town ??
+          address.village ??
+          address.municipality ??
+          address.county ??
+          null;
+        if (!city) {
+          continue;
+        }
+        const country = address.country ?? null;
+        const key = `${city.toLowerCase()}|${(country ?? '').toLowerCase()}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        places.push({ city, country });
+        if (places.length >= 5) {
+          break;
+        }
+      }
+      return places;
+    } catch (error) {
+      this.logger.warn(
+        `Recherche de lieux indisponible (${error instanceof Error ? error.name : 'inconnu'})`,
+      );
+      return [];
+    }
   }
 
   /** Coordonnées approximatives d'une ville connue, pour l'anti-téléport. */

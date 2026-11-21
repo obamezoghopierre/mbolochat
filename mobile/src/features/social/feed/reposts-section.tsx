@@ -7,6 +7,7 @@ import { LayoutChangeEvent, Pressable, StyleSheet, View } from 'react-native';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
+import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { useTheme } from '@/hooks/use-theme';
 import { api } from '@/lib/api';
 import { fr } from '@/i18n/fr';
@@ -45,13 +46,16 @@ function RepostCell({ post, width, onPress }: { post: FeedPost; width: number; o
         pressed && styles.pressed,
       ]}>
       {uri ? (
-        <Image
-          source={{ uri }}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          transition={120}
-          accessibilityLabel={media?.altText ?? 'Média de la republication'}
-        />
+        <>
+          <Image
+            source={{ uri }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={120}
+            accessibilityLabel={media?.altText ?? 'Média de la republication'}
+          />
+          <MediaFilterOverlay filterKey={post.mediaFilter} />
+        </>
       ) : (
         <View style={styles.textPost}>
           <ThemedText numberOfLines={4} style={styles.textCaption}>

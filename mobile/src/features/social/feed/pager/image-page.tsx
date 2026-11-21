@@ -4,6 +4,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Radii, Spacing } from '@/constants/theme';
+import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { FeedGestureLayer } from './feed-gestures';
 import { HeartBurstOverlay } from './heart-burst';
 import { OnMediaShadow, feedText } from './feed-tokens';
@@ -53,6 +54,9 @@ export function ImagePage({
           accessibilityLabel={current.altText ?? post.caption ?? undefined}
         />
       ) : null}
+
+      {/* Filtre choisi à la publication : calques colorés par-dessus le média. */}
+      <MediaFilterOverlay filterKey={post.mediaFilter} />
 
       <FeedGestureLayer
         accessibilityLabel={

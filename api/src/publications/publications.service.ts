@@ -37,6 +37,7 @@ import {
   publications,
   userSocialSettings,
   users,
+  type TextPageStyle,
 } from '../db/schema.js';
 import { FollowsService } from '../follows/follows.service.js';
 import { ModerationService } from '../moderation/moderation.service.js';
@@ -58,7 +59,14 @@ import type {
 import { COMMENT_REACTION_KINDS, MAX_WATCH_MS } from './dto/interactions.dto.js';
 import { loadPublicationMedia, type PublicationMediaView } from './publication-media.js';
 import { PublicationEvents } from './publication-events.js';
-import type { CreatePublicationDto } from './dto/create-publication.dto.js';
+import {
+  MAX_TEXT_SIZE,
+  MIN_TEXT_SIZE,
+  type CreatePublicationDto,
+  type TextPageStyleDto,
+} from './dto/create-publication.dto.js';
+import type { UpdatePublicationDto } from './dto/update-publication.dto.js';
+import { previewForText, type LinkPreviewMeta } from './link-preview.js';
 
 /** Carte d'auteur réduite au strict public : aucune donnée personnelle. */
 export interface AuthorCard {
@@ -83,6 +91,24 @@ export interface PublicationView {
   textBackground?: string | null;
   /** Pages d'un post texte multi-cartes, `null` pour une publication classique. */
   pages?: string[] | null;
+  /** Style par page (fond/couleur), aligné sur `pages`, `null` = défaut. */
+  pageStyles?: Array<TextPageStyle | null> | null;
+  /** Police choisie pour un post texte, `null` = police système. */
+  textFont?: string | null;
+  /** Alignement d'un post texte (`left`/`center`/`right`), `null` = centré. */
+  textAlign?: string | null;
+  /** Couleur du texte d'un post texte, `null` = couleur du thème. */
+  textColor?: string | null;
+  /** Titre facultatif d'un post texte, `null` = déduit de la première ligne. */
+  textTitle?: string | null;
+  /** Taille manuelle d'un post texte (points), `null` = auto-ajustement. */
+  textSize?: number | null;
+  /** Lieu facultatif d'un post texte, `null` = pas de localisation. */
+  location?: string | null;
+  /** Aperçu OG du premier lien du texte, `null` = pas de lien exploitable. */
+  linkPreview?: LinkPreviewMeta | null;
+  /** Filtre visuel choisi pour une publication média, `null` = brut. */
+  mediaFilter?: string | null;
   visibility: 'public' | 'followers' | 'private';
   createdAt: Date;
   author: AuthorCard;
@@ -270,11 +296,18 @@ export class PublicationsService {
     const caption = (dto.caption ?? '').trim();
     // Pages d'un post texte multi-cartes : une seule page non vide reste une
     // publication classique (`caption` suffit), `textPages` n'est persisté
-    // qu'à partir de deux pages.
-    const textPages = (dto.textPages ?? [])
-      .map((page) => page.trim())
-      .filter((page) => page.length > 0);
-    const storedPages = textPages.length > 1 ? textPages : [];
+    // qu'à partir de deux pages. Le style de chaque page reste appairé à son
+    // index **avant** le filtrage des pages vides, pour ne pas le décaler.
+    const pagePairs = (dto.textPages ?? [])
+      .map((page, index) => ({
+        text: page.trim(),
+        style: this.cleanPageStyle(dto.textPageStyles?.[index]),
+      }))
+      .filter((pair) => pair.text.length > 0);
+    const storedPages = pagePairs.length > 1 ? pagePairs.map((pair) => pair.text) : [];
+    const storedPageStyles = this.packPageStyles(
+      storedPages.length > 0 ? pagePairs.map((pair) => pair.style) : [],
+    );
     // Quand des pages sont fournies, la première fait office de légende
     // (recherche plein texte, extraits, citation) et `caption` est ignoré.
     const effectiveCaption = storedPages.length > 0 ? storedPages[0] : caption;
@@ -389,6 +422,27 @@ export class PublicationsService {
           // Le fond n'a de sens que sur une carte texte sans média.
           textBackground: format === 'text' ? (dto.textBackground ?? null) : null,
           textPages: storedPages.length > 0 ? storedPages : null,
+          // Styles par page : réservés au post texte multi-cartes.
+          textPageStyles: format === 'text' ? storedPageStyles : null,
+          // Police et alignement : réservés au post texte sans média.
+          textFont: format === 'text' ? (dto.textFont ?? null) : null,
+          textAlign: format === 'text' ? (dto.textAlign ?? null) : null,
+          textColor: format === 'text' ? (dto.textColor ?? null) : null,
+          // Titre dédié : réservé au post texte, les blancs ne sont pas stockés.
+          textTitle:
+            format === 'text' ? (dto.textTitle?.trim() ? dto.textTitle.trim() : null) : null,
+          textSize: format === 'text' ? (dto.textSize ?? null) : null,
+          // Lieu : texte libre borné, blancs non stockés.
+          location:
+            format === 'text' ? (dto.location?.trim() ? dto.location.trim() : null) : null,
+          // Aperçu du premier lien : les métadonnées sont lues côté serveur
+          // pour que les lecteurs ne contactent jamais les sites liés.
+          linkPreview:
+            format === 'text'
+              ? await previewForText([effectiveCaption, ...storedPages])
+              : null,
+          // Idem pour le filtre : il ne s'applique qu'aux publications média.
+          mediaFilter: format !== 'text' ? (dto.mediaFilter ?? null) : null,
           visibility: dto.visibility ?? 'public',
           moderationStatus: flagged ? 'flagged' : 'pending',
           quotedPublicationId: quoted?.id ?? null,
@@ -458,6 +512,164 @@ export class PublicationsService {
   }
 
   /**
+   * Édition par l'auteur : légende et, pour un post texte, pages, titre et
+   * style. `undefined` = inchangé ; `textTitle: null` efface le titre.
+   * Une publication retirée par la modération ne peut plus être éditée.
+   */
+  async update(
+    publicationId: string,
+    viewerId: string,
+    dto: UpdatePublicationDto,
+  ): Promise<PublicationView> {
+    const { row } = await this.load(publicationId);
+    if (row.authorId !== viewerId) {
+      throw new ForbiddenException('Seul l’auteur peut modifier sa publication.');
+    }
+    if (row.deletedAt || row.moderationStatus === 'removed') {
+      throw new NotFoundException('Publication introuvable.');
+    }
+    const isTextPost = row.format === 'text';
+
+    // Pages fournies : même règle qu'à la création — plus d'une page non vide
+    // les persiste et fait de la première la légende ; sinon `caption` prime.
+    // Le style de chaque page reste appairé à son index **avant** le filtrage
+    // des pages vides, comme à la création.
+    const pagesProvided = dto.textPages !== undefined;
+    const stylesProvided = dto.textPageStyles !== undefined;
+    const submittedPairs = pagesProvided
+      ? (dto.textPages ?? []).map((page, index) => ({
+          text: page.trim(),
+          style: this.cleanPageStyle(dto.textPageStyles?.[index]),
+        }))
+      : null;
+    const nextPages = submittedPairs
+      ? submittedPairs.filter((pair) => pair.text.length > 0).map((pair) => pair.text)
+      : null;
+    let storedPages = nextPages !== null && nextPages.length > 1 ? nextPages : [];
+
+    // Légende seule sur un post multi-pages : elle devient la première page,
+    // comme à la création où la légende EST la première page.
+    const rowPages = row.textPages ?? [];
+    const syncCaptionToPages =
+      !pagesProvided && dto.caption !== undefined && rowPages.length > 1;
+    if (syncCaptionToPages && dto.caption !== undefined) {
+      storedPages = [dto.caption.trim(), ...rowPages.slice(1)];
+    }
+
+    const nextCaption =
+      dto.caption !== undefined
+        ? dto.caption.trim()
+        : storedPages.length > 0
+          ? storedPages[0]
+          : nextPages !== null && nextPages.length === 1
+            ? nextPages[0]
+            : row.caption;
+
+    const effectiveCaption =
+      storedPages.length > 0 ? storedPages[0] : (nextCaption ?? '').trim();
+
+    // Styles par page : réécrits dès que `textPages` ou `textPageStyles` est
+    // fourni (les pages changent ou on restyle l'existant). `stylesProvided`
+    // seul s'aligne sur les pages persistées ; repasser sous deux pages ou
+    // sur un post simple efface les styles devenus sans objet. Quand les
+    // pages sont fournies, c'est leur nouveau compte qui fait foi ; sinon
+    // on retombe sur les pages existantes.
+    const effectivePageCount =
+      storedPages.length > 0
+        ? storedPages.length
+        : pagesProvided
+          ? 0
+          : (row.textPages ?? []).length;
+    let resolvedPageStyles: Array<TextPageStyle | null> | null = null;
+    if (pagesProvided || stylesProvided) {
+      const source = submittedPairs
+        ? submittedPairs
+            .filter((pair) => pair.text.length > 0)
+            .map((pair) => pair.style)
+        : (dto.textPageStyles ?? []).map((style) => this.cleanPageStyle(style));
+      resolvedPageStyles =
+        effectivePageCount > 1
+          ? this.packPageStyles(
+              Array.from({ length: effectivePageCount }, (_, index) => source[index] ?? null),
+            )
+          : null;
+    }
+
+    const hasMedia = row.format !== 'text';
+    if (!hasMedia && effectiveCaption.length === 0) {
+      throw new BadRequestException('La légende ne peut pas être vide sans média.');
+    }
+
+    // Le texte réellement publié est re-scanné : une retouche qui introduit
+    // un mot bloqué repasse le post en revue.
+    const moderationText =
+      storedPages.length > 0 ? storedPages.join('\n') : effectiveCaption;
+    const flagged =
+      isTextPost && moderationText.length > 0
+        ? await this.moderation.hasBlockedWord(moderationText)
+        : false;
+
+    const updated = await this.db.transaction(async (tx) => {
+      const [result] = await tx
+        .update(publications)
+        .set({
+          caption: effectiveCaption.length > 0 ? effectiveCaption : null,
+          ...(pagesProvided || syncCaptionToPages
+            ? { textPages: storedPages.length > 0 ? storedPages : null }
+            : {}),
+          ...(pagesProvided || stylesProvided
+            ? { textPageStyles: isTextPost ? resolvedPageStyles : null }
+            : {}),
+          ...(isTextPost
+            ? {
+                ...(dto.textTitle !== undefined
+                  ? {
+                      textTitle:
+                        dto.textTitle === null
+                          ? null
+                          : dto.textTitle.trim()
+                            ? dto.textTitle.trim()
+                            : null,
+                    }
+                  : {}),
+                ...(dto.textBackground !== undefined
+                  ? { textBackground: dto.textBackground }
+                  : {}),
+                ...(dto.textFont !== undefined ? { textFont: dto.textFont } : {}),
+                ...(dto.textAlign !== undefined ? { textAlign: dto.textAlign } : {}),
+                ...(dto.textColor !== undefined ? { textColor: dto.textColor } : {}),
+                ...(dto.textSize !== undefined ? { textSize: dto.textSize } : {}),
+                ...(dto.location !== undefined
+                  ? {
+                      location:
+                        dto.location === null || !dto.location.trim()
+                          ? null
+                          : dto.location.trim(),
+                    }
+                  : {}),
+              }
+            : {}),
+          ...(flagged ? { moderationStatus: 'flagged' as const } : {}),
+          // Le texte a pu changer : l'aperçu du premier lien est recalculé
+          // (annulé s'il n'y a plus d'URL exploitable).
+          ...(isTextPost &&
+          (dto.caption !== undefined || dto.textPages !== undefined)
+            ? {
+                linkPreview: await previewForText([effectiveCaption, ...storedPages]),
+              }
+            : {}),
+        })
+        .where(eq(publications.id, publicationId))
+        .returning();
+      return result;
+    });
+    if (!updated) {
+      throw new NotFoundException('Publication introuvable.');
+    }
+    return this.view(updated, viewerId);
+  }
+
+  /**
    * Enregistre une vue et son temps de visionnage.
    *
    * Idempotent par construction : une seule ligne par `(publication, compte)`.
@@ -506,6 +718,11 @@ export class PublicationsService {
       return upserted;
     });
 
+    // Une vue n'incrémente le compteur qu'à la première consultation :
+    // on ne notifie les pairs que dans ce cas pour limiter le bruit.
+    if (result.inserted) {
+      void this.broadcastStats(publicationId);
+    }
     return {
       viewCount: await this.viewCount(publicationId),
       watchMs: result.watchMs,
@@ -534,6 +751,7 @@ export class PublicationsService {
     if (!row) {
       throw new NotFoundException('Publication introuvable.');
     }
+    void this.broadcastStats(publicationId);
     return { shareCount: row.shareCount };
   }
 
@@ -628,6 +846,7 @@ export class PublicationsService {
     // Effet push hors transaction : un échec réseau ne défait pas la réaction.
     await this.notifications.deliver(notification);
 
+    void this.broadcastStats(publicationId);
     return { reaction: kind, likeCount: await this.likeCount(publicationId) };
   }
 
@@ -654,6 +873,7 @@ export class PublicationsService {
       await this.refreshHotScore(tx, publicationId);
     });
 
+    void this.broadcastStats(publicationId);
     return { saved: true, saveCount: await this.saveCount(publicationId) };
   }
 
@@ -681,6 +901,7 @@ export class PublicationsService {
       await this.refreshHotScore(tx, publicationId);
     });
 
+    void this.broadcastStats(publicationId);
     return { saved: false, saveCount: await this.saveCount(publicationId) };
   }
 
@@ -725,6 +946,7 @@ export class PublicationsService {
     // Effet push hors transaction : un échec réseau ne défait pas le repost.
     await this.notifications.deliver(notification);
 
+    void this.broadcastStats(publicationId);
     return { reposted: true, repostCount: await this.repostCount(publicationId) };
   }
 
@@ -752,6 +974,7 @@ export class PublicationsService {
       await this.refreshHotScore(tx, publicationId);
     });
 
+    void this.broadcastStats(publicationId);
     return { reposted: false, repostCount: await this.repostCount(publicationId) };
   }
 
@@ -784,6 +1007,7 @@ export class PublicationsService {
       await this.refreshHotScore(tx, publicationId);
     });
 
+    void this.broadcastStats(publicationId);
     return { reaction: null, likeCount: await this.likeCount(publicationId) };
   }
 
@@ -956,6 +1180,7 @@ export class PublicationsService {
     // Le salon est scopé par publication et n'accueille que des viewers ayant
     // passé la même vérification de visibilité que la route REST.
     this.events.emitCommentCreated(publicationId, view);
+    void this.broadcastStats(publicationId);
     return view;
   }
 
@@ -1422,6 +1647,7 @@ export class PublicationsService {
       await this.refreshHotScore(tx, row.publicationId);
     });
     this.events.emitCommentDeleted(row.publicationId, commentId);
+    void this.broadcastStats(row.publicationId);
     return { deleted: true };
   }
 
@@ -1566,6 +1792,15 @@ export class PublicationsService {
       caption: row.caption,
       textBackground: row.textBackground ?? null,
       pages: row.textPages ?? null,
+      pageStyles: row.textPageStyles ?? null,
+      textFont: row.textFont ?? null,
+      textAlign: row.textAlign ?? null,
+      textColor: row.textColor ?? null,
+      textTitle: row.textTitle ?? null,
+      textSize: row.textSize ?? null,
+      location: row.location ?? null,
+      linkPreview: row.linkPreview ?? null,
+      mediaFilter: row.mediaFilter ?? null,
       visibility: row.visibility,
       createdAt: row.createdAt,
       author,
@@ -1811,5 +2046,74 @@ export class PublicationsService {
       .from(publications)
       .where(eq(publications.id, publicationId));
     return row?.repostCount ?? 0;
+  }
+
+  /**
+   * Normalise le style d'une page : seules les clés connues et non vides
+   * sont conservées (le DTO a déjà validé les valeurs, on blinde quand
+   * même contre un client qui contournerait la validation).
+   */
+  private cleanPageStyle(style: TextPageStyleDto | null | undefined): TextPageStyle | null {
+    if (!style || typeof style !== 'object') {
+      return null;
+    }
+    const clean: TextPageStyle = {};
+    if (typeof style.background === 'string' && style.background) {
+      clean.background = style.background;
+    }
+    if (typeof style.color === 'string' && style.color) {
+      clean.color = style.color;
+    }
+    if (typeof style.font === 'string' && style.font) {
+      clean.font = style.font;
+    }
+    if (typeof style.align === 'string' && style.align) {
+      clean.align = style.align;
+    }
+    if (typeof style.size === 'number' && Number.isFinite(style.size)) {
+      clean.size = Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, Math.trunc(style.size)));
+    }
+    return Object.keys(clean).length > 0 ? clean : null;
+  }
+
+  /**
+   * Aligne les styles sur les pages persistées : `null` si aucune page
+   * n'a de style (colonne laissée vide), sinon tableau de même longueur.
+   */
+  private packPageStyles(
+    styles: (TextPageStyle | null)[],
+  ): Array<TextPageStyle | null> | null {
+    if (styles.every((style) => style === null)) {
+      return null;
+    }
+    return styles;
+  }
+
+  /**
+   * Diffuse les compteurs courants de la publication aux clients du fil :
+   * une action sur un post (commentaire, réaction, save…) se répercute en
+   * temps réel chez tous les viewers connectés, sans attendre un rechargement.
+   * Best-effort : un échec ne doit jamais faire échouer l'action.
+   */
+  private async broadcastStats(publicationId: string): Promise<void> {
+    try {
+      const [row] = await this.db
+        .select({
+          likes: publications.likeCount,
+          comments: publications.commentCount,
+          reposts: publications.repostCount,
+          saves: publications.saveCount,
+          shares: publications.shareCount,
+          views: publications.viewCount,
+        })
+        .from(publications)
+        .where(eq(publications.id, publicationId))
+        .limit(1);
+      if (row) {
+        this.events.emitPublicationStats(publicationId, row);
+      }
+    } catch {
+      // Diffusion best-effort : le compteur reste correct en base.
+    }
   }
 }

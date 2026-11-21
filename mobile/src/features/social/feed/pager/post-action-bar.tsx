@@ -45,7 +45,7 @@ export function PostActionBar({
   const likeIcon = (
     <Icon
       icon={Heart}
-      size={26}
+      size={22}
       color={reacted ? tones.action : tones.text}
       fill={reacted ? tones.action : 'none'}
     />
@@ -108,7 +108,7 @@ export function PostActionBar({
         accessibilityLabel={`${post.counters.comments} commentaires`}
         style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
         {actionContent(
-          <Icon icon={MessageCircle} size={26} color={tones.text} />,
+          <Icon icon={MessageCircle} size={22} color={tones.text} />,
           post.counters.comments,
         )}
       </Pressable>
@@ -123,7 +123,7 @@ export function PostActionBar({
         {actionContent(
           <Icon
             icon={Repeat2}
-            size={26}
+            size={22}
             color={reposted ? tones.action : tones.text}
           />,
           post.counters.reposts,
@@ -137,7 +137,7 @@ export function PostActionBar({
         accessibilityLabel={fr.social.shareLabel}
         style={({ pressed }) => [styles.action, pressed && styles.pressed]}>
         {actionContent(
-          <Icon icon={Forward} size={26} color={tones.text} />,
+          <Icon icon={Forward} size={22} color={tones.text} />,
           post.counters.shares ?? 0,
         )}
       </Pressable>
@@ -152,7 +152,7 @@ export function PostActionBar({
         {actionContent(
           <Icon
             icon={Bookmark}
-            size={26}
+            size={22}
             color={saved ? tones.action : tones.text}
             fill={saved ? tones.action : 'none'}
           />,
@@ -170,21 +170,22 @@ const styles = StyleSheet.create({
     // Les actions se répartissent sur toute la largeur de la carte :
     // plus d'espace mort entre « Partager » et « Sauvegarder ».
     justifyContent: 'space-between',
-    gap: Spacing.three,
-    paddingTop: Spacing.two,
+    gap: Spacing.two,
+    paddingTop: Spacing.one,
   },
   action: {
     // Icône au-dessus, compteur compact en dessous — comme le rail vertical.
     flexDirection: 'column',
     alignItems: 'center',
     gap: Spacing.half,
-    minWidth: 36,
+    minWidth: 32,
     minHeight: 44,
     paddingHorizontal: Spacing.half,
     justifyContent: 'center',
   },
   count: {
     ...feedText.caption,
+    fontWeight: '700',
     color: FeedSurface.onMediaSoft,
   },
   pressed: { opacity: 0.7 },

@@ -292,6 +292,40 @@ describe('Publications avec médias (e2e)', () => {
     expect((await fetch(publicUrl)).status).toBe(404);
   });
 
+  it('persiste le filtre d’une publication média et l’ignore sur un post texte', async () => {
+    const author = await register('Filtre');
+    const assetId = await readyAsset(author, {
+      kind: 'image',
+      mime: 'image/png',
+      bytes: await png(),
+    });
+
+    const created = await publish(author, {
+      assetIds: [assetId],
+      caption: 'Photo filtrée',
+      mediaFilter: 'warm',
+    }).expect(201);
+    expect(created.body.mediaFilter).toBe('warm');
+
+    // Le filtre est aussi exposé dans le fil.
+    const detail = await request(app.getHttpServer())
+      .get(`/publications/${created.body.id}`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .expect(200);
+    expect(detail.body.mediaFilter).toBe('warm');
+
+    // Sur un post texte, le filtre est ignoré ; une clé inconnue est refusée.
+    const text = await publish(author, {
+      caption: 'Texte',
+      mediaFilter: 'noir',
+    }).expect(201);
+    expect(text.body.mediaFilter).toBeNull();
+    await publish(author, {
+      assetIds: [await readyAsset(author, { kind: 'image', mime: 'image/png', bytes: await png() })],
+      mediaFilter: 'inconnu',
+    }).expect(400);
+  });
+
   it('refuse un média d’un autre compte, non prêt, ou incohérent', async () => {
     const author = await register('Verifie');
     const other = await register('Autre');

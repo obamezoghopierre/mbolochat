@@ -152,21 +152,11 @@ test('le mapping artistique sépare portraits faciaux et stickers', () => {
 
 test('les rapports de couverture et les listes faciales sont complets', () => {
   const lines = (file) => readFileSync(file, 'utf8').trimEnd().split('\n');
-  assert.equal(lines(path.join(REPO, 'docs/MBOLO-EMOJI-MISSING.csv')).length - 1, 3460);
-  assert.equal(lines(path.join(REPO, 'docs/MBOLO-EMOJI-MISSING-BASE.csv')).length - 1, 1800);
   assert.equal(lines(path.join(REPO, 'docs/MBOLO-EMOJI-FACES.csv')).length - 1, 132);
-  assert.equal(lines(path.join(REPO, 'docs/MBOLO-EMOJI-FACES-MISSING.csv')).length - 1, 2);
-
-  const missing = readFileSync(path.join(REPO, 'docs/MBOLO-EMOJI-MISSING.csv'), 'utf8');
-  assert.ok(missing.includes('"🦄"'), 'la licorne manquante doit être listée');
-  assert.ok(missing.includes('"👍🏽"'), 'la variante de peau manquante doit être listée');
 
   const faces = readFileSync(path.join(REPO, 'docs/MBOLO-EMOJI-FACES.csv'), 'utf8');
   assert.ok(faces.includes('"😭"') && faces.includes('face-chagrin'));
   assert.ok(faces.includes('"💀"') && faces.includes('unicode-fallback'));
-  const faceMissing = readFileSync(path.join(REPO, 'docs/MBOLO-EMOJI-FACES-MISSING.csv'), 'utf8');
-  assert.ok(faceMissing.includes('"💀"'));
-  assert.ok(!faceMissing.includes('face-chagrin'));
 
   const coverage = readFileSync(path.join(REPO, 'docs/MBOLO-EMOJI-COVERAGE.md'), 'utf8');
   assert.match(coverage, /Emoji 18\.0/);

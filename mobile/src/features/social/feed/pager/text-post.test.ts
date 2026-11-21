@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { splitCaption } from './text-post';
+import { isShortTextPost, splitCaption } from './text-post';
 
 describe('splitCaption', () => {
   it('renvoie un titre vide sans contenu pour un caption absent', () => {
@@ -35,5 +35,28 @@ describe('splitCaption', () => {
 
   it('ne crée pas de corps vide quand le texte se termine par un saut de ligne', () => {
     expect(splitCaption('Titre\n')).toEqual({ title: 'Titre', body: null });
+  });
+});
+
+describe('isShortTextPost', () => {
+  it('accepte une page unique courte, avec ou sans titre', () => {
+    expect(isShortTextPost('', ['Bonjour'])).toBe(true);
+    expect(isShortTextPost('Mon titre', ['Corps de quelques mots'])).toBe(true);
+    expect(isShortTextPost('Titre', ['mot '.repeat(60)])).toBe(true);
+  });
+
+  it('refuse les pages vides et les multi-pages', () => {
+    expect(isShortTextPost('', [])).toBe(false);
+    expect(isShortTextPost('', ['   '])).toBe(false);
+    expect(isShortTextPost('', ['Un', 'Deux'])).toBe(false);
+  });
+
+  it('refuse un titre ou un corps trop long', () => {
+    expect(isShortTextPost('x'.repeat(161), ['Corps'])).toBe(false);
+    expect(isShortTextPost('Titre', ['y'.repeat(321)])).toBe(false);
+  });
+
+  it('ignore les espaces de bord et les pages vignes', () => {
+    expect(isShortTextPost('  Titre  ', ['  Salut  ', ''])).toBe(true);
   });
 });

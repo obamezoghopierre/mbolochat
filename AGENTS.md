@@ -84,7 +84,7 @@ Le seul workflow CI est `.github/workflows/crypto.yml`. **Aucun CI TypeScript** 
 - **Messagerie** : les messages classiques passent par l'outbox SQLite (`mobile/src/lib/outbox.ts` + `store.ts`), avec `clientId` idempotent. Ne pas envoyer directement par le socket, ne pas contourner la reprise hors ligne. Le chemin E2EE (`features/e2ee/text.ts`) envoie encore directement via le socket avec `clientId` : traiter les deux chemins, ne pas généraliser l'un en oubliant l'autre.
 - **Secrets** : rien de sensible dans le code. Les variables `EXPO_PUBLIC_*` sont embarquées dans le client et donc publiques. Ne jamais committer `.env`, clés Firebase ni `service-account*.json`.
 - **Config** : URL, délais, limites et règles métier en constantes nommées ou variables d'environnement. Le backend est l'autorité pour l'autorisation et la validation.
-- **UI** : textes en français ; nouveaux libellés centralisés dans `mobile/src/i18n/fr.ts`. Couleurs, rayons et espacements via `mobile/src/constants/theme.ts` (`useTheme`, `ThemedText`, `ThemedView`), jamais en dur, thèmes clair et sombre.
+- **UI** : textes en français ; nouveaux libellés centralisés dans `mobile/src/i18n/fr.ts`. **Ne jamais coder en dur** : aucune couleur (`#…`, `rgba(…)`), police (`fontSize`, graisses), espacement, dimension, rayon ou ombre en valeur littérale dans les composants — tout passe par `mobile/src/constants/theme.ts` (`useTheme`, `ThemedText`, `ThemedView`, `Colors`, `Type`, `Spacing`, `Radii`, `FeedSurface`, `FeedTextPost`, etc.), thèmes clair et sombre.
 
 ## UI/UX & qualité du code — règles strictes
 
@@ -102,9 +102,9 @@ Ces règles complètent la règle **UI** ci-dessus et s'appliquent à toute modi
 
 - Centraliser les design tokens.
 - Réutiliser les couleurs, la typographie, les espacements, les dimensions, les rayons et les ombres.
+- **Ne jamais coder en dur** : ni couleur, ni taille de police, ni espacement, ni dimension, ni rayon, ni ombre en littéral dans un composant ou une feuille de styles. Si une valeur n'a pas de token, l'ajouter à `theme.ts` (constante nommée et documentée) plutôt que d'écrire la valeur en dur — y compris pour une valeur utilisée une seule fois.
 - Ne jamais dupliquer inutilement des valeurs de design.
 - Prendre en charge les thèmes clair et sombre de façon cohérente.
-- Si un token manque, l'ajouter à `mobile/src/constants/theme.ts` plutôt que d'écrire une valeur en dur.
 
 ### 3. Performance
 

@@ -18,6 +18,7 @@ import {
   publicationSaves,
   publications,
   users,
+  type TextPageStyle,
 } from '../db/schema.js';
 import { loadPublicationMedia, type MediaAccess } from '../publications/publication-media.js';
 import { ObjectStorageService } from '../social-media/object-storage.service.js';
@@ -97,6 +98,21 @@ type PublicationRow = {
   caption: string | null;
   textBackground: string | null;
   textPages: string[] | null;
+  textPageStyles: Array<TextPageStyle | null> | null;
+  textFont: string | null;
+  textAlign: string | null;
+  textColor: string | null;
+  textTitle: string | null;
+  textSize: number | null;
+  location: string | null;
+  linkPreview: {
+    url: string;
+    host: string;
+    title: string;
+    description: string;
+    imageUrl: string | null;
+  } | null;
+  mediaFilter: string | null;
   visibility: 'public' | 'followers' | 'private';
   createdAt: Date;
   author: AuthorCard;
@@ -598,6 +614,15 @@ export class FeedService {
       caption: publications.caption,
       textBackground: publications.textBackground,
       textPages: publications.textPages,
+      textPageStyles: publications.textPageStyles,
+      textFont: publications.textFont,
+      textAlign: publications.textAlign,
+      textColor: publications.textColor,
+      textTitle: publications.textTitle,
+      textSize: publications.textSize,
+      location: publications.location,
+      linkPreview: publications.linkPreview,
+      mediaFilter: publications.mediaFilter,
       visibility: publications.visibility,
       createdAt: publications.createdAt,
       author: {
@@ -724,6 +749,15 @@ export class FeedService {
       caption: row.caption,
       textBackground: row.textBackground,
       pages: row.textPages,
+      pageStyles: row.textPageStyles,
+      textFont: row.textFont,
+      textAlign: row.textAlign,
+      textColor: row.textColor,
+      textTitle: row.textTitle,
+      textSize: row.textSize,
+      location: row.location,
+      linkPreview: row.linkPreview,
+      mediaFilter: row.mediaFilter,
       visibility: row.visibility,
       createdAt: row.createdAt,
       author: { ...row.author } as AuthorCard,

@@ -344,6 +344,62 @@
       "when": 1795174904596,
       "tag": "0048_bent_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1795181707813,
+      "tag": "0049_third_mandarin",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795212228005,
+      "tag": "0050_talented_sister_grimm",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1795212718827,
+      "tag": "0051_puzzling_wraith",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795216426223,
+      "tag": "0052_old_winter_soldier",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795247542491,
+      "tag": "0053_easy_millenium_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795248002941,
+      "tag": "0054_lovely_kang",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1795248163497,
+      "tag": "0055_large_exiles",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1795253169298,
+      "tag": "0056_loud_malcolm_colcord",
+      "breakpoints": true
     }
   ]
 }

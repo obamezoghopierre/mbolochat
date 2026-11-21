@@ -57,6 +57,17 @@ describe('Publications et interactions (e2e)', () => {
       clientId: string;
       textBackground: string;
       textPages: string[];
+      textPageStyles: ({
+        background?: string;
+        color?: string;
+        font?: string;
+        align?: string;
+        size?: number;
+      } | null)[];
+      textFont: string;
+      textAlign: string;
+      textColor: string;
+      textTitle: string;
       quotedPublicationId: string;
     }> = {},
   ) =>
@@ -149,6 +160,239 @@ describe('Publications et interactions (e2e)', () => {
     expect(single.body.caption).toBe('Seule page');
     expect(single.body.textBackground).toBe('forest');
     expect(single.body.pages).toBeNull();
+  });
+
+  it('persiste un style indépendant par page de carrousel texte', async () => {
+    const alice = await register('Cartouche');
+
+    const response = await publish(alice, {
+      textPages: ['Page une', 'Page deux', 'Page trois'],
+      textPageStyles: [
+        { background: 'ocean', color: 'white', font: 'elegant', align: 'center', size: 40 },
+        {},
+        { color: 'mint', font: 'typewriter', align: 'right', size: 20 },
+      ],
+    }).expect(201);
+    const body = response.body;
+
+    expect(body.pages).toEqual(['Page une', 'Page deux', 'Page trois']);
+    // Le style reste appairé à son index, `null` = rendu par défaut.
+    expect(body.pageStyles).toEqual([
+      { background: 'ocean', color: 'white', font: 'elegant', align: 'center', size: 40 },
+      null,
+      { color: 'mint', font: 'typewriter', align: 'right', size: 20 },
+    ]);
+
+    // Le détail expose les mêmes styles.
+    const detail = await see(alice, body.id).expect(200);
+    expect(detail.body.pageStyles).toEqual(body.pageStyles);
+
+    // Clés inconnues refusées par le DTO.
+    await publish(alice, {
+      textPages: ['a', 'b'],
+      textPageStyles: [{ background: 'chartreuse' }],
+    }).expect(400);
+    await publish(alice, {
+      textPages: ['a', 'b'],
+      textPageStyles: [{ color: 'chartreuse' }],
+    }).expect(400);
+    // Typographie invalide refusée aussi.
+    await publish(alice, {
+      textPages: ['a', 'b'],
+      textPageStyles: [{ font: 'comic-sans' }],
+    }).expect(400);
+    await publish(alice, {
+      textPages: ['a', 'b'],
+      textPageStyles: [{ align: 'block' }],
+    }).expect(400);
+    await publish(alice, {
+      textPages: ['a', 'b'],
+      textPageStyles: [{ size: 500 }],
+    }).expect(400);
+  });
+
+  it('réaligne les styles de page à l’édition', async () => {
+    const alice = await register('Retoucheuse');
+    const created = await publish(alice, {
+      textPages: ['Page un', 'Page deux', 'Page trois'],
+      textPageStyles: [{ background: 'rose' }, {}, { color: 'gold' }],
+    }).expect(201);
+    const id = created.body.id;
+
+    // Nouvelles pages + nouveaux styles : l'ancien style ne fuit pas.
+    const updated = await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({
+        textPages: ['Nouvelle un', 'Nouvelle deux'],
+        textPageStyles: [{ background: 'mint' }, { color: 'black' }],
+      })
+      .expect(200);
+    expect(updated.body.pageStyles).toEqual([
+      { background: 'mint' },
+      { color: 'black' },
+    ]);
+
+    // Styles seuls, sans toucher les pages : réalignés sur l'existant.
+    const restyled = await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ textPageStyles: [{}, { background: 'teal' }] })
+      .expect(200);
+    expect(restyled.body.pageStyles).toEqual([null, { background: 'teal' }]);
+    expect(restyled.body.pages).toEqual(['Nouvelle un', 'Nouvelle deux']);
+
+    // Repasser à une page efface les styles devenus sans objet.
+    const single = await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ textPages: ['Page unique'], textPageStyles: [{ background: 'red' }] })
+      .expect(200);
+    expect(single.body.pages).toBeNull();
+    expect(single.body.pageStyles).toBeNull();
+  });
+
+  it('persiste police, alignement et couleur d’un post texte', async () => {
+    const alice = await register('Stylee');
+
+    const response = await publish(alice, {
+      caption: 'Post stylé',
+      textBackground: 'coral',
+      textFont: 'typewriter',
+      textAlign: 'left',
+      textColor: 'mint',
+      textTitle: '  Mon titre  ',
+    }).expect(201);
+    const body = response.body;
+
+    expect(body.textBackground).toBe('coral');
+    expect(body.textFont).toBe('typewriter');
+    expect(body.textAlign).toBe('left');
+    expect(body.textColor).toBe('mint');
+    // Le titre est persisté sans ses espaces de bord.
+    expect(body.textTitle).toBe('Mon titre');
+
+    // Le détail et le fil exposent les mêmes champs.
+    const detail = await see(alice, body.id).expect(200);
+    expect(detail.body.textFont).toBe('typewriter');
+    expect(detail.body.textAlign).toBe('left');
+    expect(detail.body.textColor).toBe('mint');
+    expect(detail.body.textTitle).toBe('Mon titre');
+
+    // Un titre trop long est refusé par le DTO.
+    await publish(alice, { caption: 'x', textTitle: 't'.repeat(201) }).expect(400);
+
+    // Une clé inconnue est refusée par le DTO.
+    await publish(alice, { caption: 'x', textFont: 'comic-sans' }).expect(400);
+    await publish(alice, { caption: 'x', textAlign: 'block' }).expect(400);
+    await publish(alice, { caption: 'x', textColor: 'chartreuse' }).expect(400);
+  });
+
+  it('modifie une publication texte en conservant l’inchangé', async () => {
+    const alice = await register('Editrice');
+    const created = await publish(alice, {
+      textPages: ['Page un', 'Page deux'],
+      textBackground: 'ocean',
+      textFont: 'modern',
+      textAlign: 'left',
+      textColor: 'mint',
+      textTitle: 'Titre initial',
+    }).expect(201);
+    const id = created.body.id;
+
+    // Mise à jour partielle : légende, titre et style, pages inchangées.
+    const updated = await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ caption: 'Légende corrigée', textTitle: '  Nouveau titre  ', textFont: 'caps' })
+      .expect(200);
+
+    expect(updated.body.caption).toBe('Légende corrigée');
+    expect(updated.body.textTitle).toBe('Nouveau titre');
+    expect(updated.body.textFont).toBe('caps');
+    // La légende est la première page : elle est resynchronisée.
+    expect(updated.body.pages).toEqual(['Légende corrigée', 'Page deux']);
+    expect(updated.body.textBackground).toBe('ocean');
+    expect(updated.body.textAlign).toBe('left');
+    expect(updated.body.textColor).toBe('mint');
+
+    // `textTitle: null` efface le titre ; `textPages` refait la légende.
+    const cleared = await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ textTitle: null, textPages: ['  Une page  '] })
+      .expect(200);
+    expect(cleared.body.textTitle).toBeNull();
+    expect(cleared.body.pages).toBeNull();
+    expect(cleared.body.caption).toBe('Une page');
+
+    // Le détail expose les mêmes valeurs.
+    const detail = await see(alice, id).expect(200);
+    expect(detail.body.textTitle).toBeNull();
+    expect(detail.body.caption).toBe('Une page');
+  });
+
+  it('refuse la modification aux non-auteurs et après suppression', async () => {
+    const alice = await register('Proprietaire');
+    const bob = await register('VoisinEdit');
+    const created = await publish(alice, { caption: 'À moi' }).expect(201);
+    const id = created.body.id;
+
+    await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ caption: 'Détourné' })
+      .expect(403);
+
+    await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .send({ caption: 'Anonyme' })
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .delete(`/publications/${id}`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/publications/${id}`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .send({ caption: 'Posthume' })
+      .expect(404);
+  });
+
+  it('valide la mise à jour comme la création', async () => {
+    const alice = await register('Valideuse');
+    const created = await publish(alice, { caption: 'Post' }).expect(201);
+    const id = created.body.id;
+    const patch = (body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .patch(`/publications/${id}`)
+        .set('Authorization', `Bearer ${alice.token}`)
+        .send(body);
+
+    await patch({ textFont: 'comic-sans' }).expect(400);
+    await patch({ textAlign: 'block' }).expect(400);
+    await patch({ textColor: 'chartreuse' }).expect(400);
+    await patch({ textBackground: 'arc-en-ciel' }).expect(400);
+    await patch({ textTitle: 't'.repeat(201) }).expect(400);
+    await patch({ textPages: ['ok', 'x'.repeat(2001)] }).expect(400);
+    await patch({ textPages: Array.from({ length: 11 }, (_, i) => `p${i}`) }).expect(400);
+    await patch({ textSize: 10 }).expect(400);
+    await patch({ textSize: 65 }).expect(400);
+    await patch({ textSize: 1.5 }).expect(400);
+    await patch({ location: 'x'.repeat(101) }).expect(400);
+    // Une légende vide sur un post sans média est refusée.
+    await patch({ caption: '   ' }).expect(400);
+    // `textColor: null` est accepté : retour à la couleur du thème.
+    await patch({ textColor: null }).expect(200);
+    // Taille et lieu acceptés puis effaçables.
+    const sized = await patch({ textSize: 42, location: '  Paris  ' }).expect(200);
+    expect(sized.body.textSize).toBe(42);
+    expect(sized.body.location).toBe('Paris');
+    const clearedSize = await patch({ textSize: null, location: null }).expect(200);
+    expect(clearedSize.body.textSize).toBeNull();
+    expect(clearedSize.body.location).toBeNull();
   });
 
   it('rejette les pages sur une publication avec média ou citation', async () => {

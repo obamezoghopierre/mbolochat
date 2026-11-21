@@ -80,7 +80,74 @@ Après rebuild : réinstaller l'APK sur les deux appareils et rejouer la section
 - [ ] Purge optionnelle des comptes de test (`*@smoke.dev`, `*@e2e.dev`) et des
       groupes de test restants.
 
-## 8. Pour reprendre
+## 8. Publication façon Instagram — reste à vérifier
+
+Le flux « Créer » est en place côté code : sélecteur de photothèque
+(`app/create/index.tsx`), caméra et enregistrement (`app/create/camera.tsx`),
+compositeur texte (`app/create/text.tsx`), aperçu + filtres + audience
+(`app/create/preview.tsx`), catalogue de filtres partagé
+(`features/media/media-filter.tsx`, parité verrouillée par
+`mobile/tests/mediaFilters.test.mjs`) et colonne `publications.media_filter`
+(migration `0049`).
+
+- [ ] **rebuild APK obligatoire** : le plugin `expo-media-library` ajouté à
+      `app.json` change les permissions Android ; sans build, la grille
+      « Récentes » reste vide et le repli photothèque s'ouvre ;
+- [ ] vérifier sur appareil : sélection photo multiple (carrousel), vidéo
+      seule, caméra + flash + bascule, filtres (rendu identique aperçu → fil),
+      publication puis apparition dans le fil ;
+- [ ] Android < 10 : `mixBlendMode` est inopérant, les filtres retombent sur
+      les voiles de `fallback` — confirmer que « Chrome » et « Noir » restent
+      lisibles ;
+- [ ] vignettes : grille de republications, carte de partage en discussion et
+      citation affichent le filtre ; vérifier le rendu des coins arrondis.
+
+### Compositeur texte (refonte façon Instagram)
+
+- [x] carte 4:5 plein écran, une page à la fois, glissement horizontal, points
+      de pagination, « + » flottant, suppression par page ;
+- [x] police auto-ajustée à la longueur du texte (`features/social/create/text-card.ts`,
+      couvert par `text-card.test.ts`) ;
+- [x] brouillon persistant (AsyncStorage optionnel, `lib/text-draft.ts`) ;
+- [x] compteur et rappel de la troncature à 320 caractères du fil ;
+- [x] polices et alignement persistés (`text_font`, `text_align`, migration
+      `0050` + rendu dans `text-page.tsx` et `text-post-reader.tsx`) ;
+- [x] palette élargie (20 fonds au total) et couleur de texte persistée
+      (`text_color`, migration `0051`, 9 teintes + « auto »), parité verrouillée
+      par `tests/textBackgrounds.test.mjs` (fonds, polices, alignements,
+      couleurs) ;
+- [x] autocomplétion `@` (comptes via `/search`) et `#` (hashtags, tendances
+      à requête vide) dans le compositeur ;
+- [x] aperçu avant publication : « Suivant » ouvre un mode aperçu avec le
+      dégradé réel du fil (`TextPostBackdrop`), « Publier » enchaîne ;
+- [x] titre dédié (`text_title`, migration `0052`), titre ≤ 200 car. ;
+- [x] taille de police manuelle 16–64 pt (`text_size`, migration `0053`,
+      `null` = auto-ajustement), rendue dans la carte, les pages et le lecteur ;
+- [x] localisation facultative (`location`, migration `0054`, ≤ 100 car.,
+      saisie libre + GPS via `GET /users/geo/reverse`, coordonnées non
+      conservées) affichée avec une épingle dans le fil ;
+- [x] plusieurs brouillons (`mbolo:text-drafts:v1`, liste ≤ 10, expiration
+      7 j, migration de l'ancien format `mbolo:text-draft:v1`, feuille de
+      sélection `DraftsSheet`, seul le brouillon actif est effacé à la
+      publication) ;
+- [x] édition après publication (`PATCH /publications/:id`, auteur seul,
+      re-scan modération, resynchronisation légende ↔ page 1) ;
+- [x] aperçu de lien (`publications.link_preview`, migration `0055`, JSONB) :
+      première URL du texte fetchée côté serveur (OG/Twitter, SSRF filtré,
+      redirections revalidées, corps borné 512 Kio, délai 5 s, cache 10 min),
+      carte lien cliquable dans le fil, URLs soulignées cliquables ;
+- [x] règle « post long = fond normal » (`isShortTextPost`, seuils partagés
+      160/320), 26 fonds et 16 couleurs de texte ;
+- [ ] sur appareil : vérifier que le clavier ne rogne pas la carte sur un écran
+      court (l'`overflow` du pager masque le débordement mais rien n'est mesuré),
+      le rendu des polices système (`serif`/`monospace`/`Courier`/`Georgia`),
+      les suggestions `@`/`#` en conditions réelles, le contrôle de taille de
+      police, le tag GPS (`expo-location`, build natif requis) et la carte
+      d'aperçu de lien ;
+- [ ] reste à vérifier : la publication conserve bien police/alignement/fond
+      à l'affichage dans le fil (les anciens posts restent centrés/classiques).
+
+## 9. Pour reprendre
 
 ```bash
 # API (actuellement arrêtée)

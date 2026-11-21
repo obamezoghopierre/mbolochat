@@ -18,6 +18,7 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Radii, Spacing, Type } from '@/constants/theme';
+import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { useTheme } from '@/hooks/use-theme';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -185,15 +186,21 @@ export default function QuoteScreen() {
                 { backgroundColor: theme.backgroundElement, borderColor: theme.border },
               ]}>
               {preview ? (
-                <Image
-                  source={{ uri: preview }}
-                  style={[styles.previewThumb, { backgroundColor: theme.backgroundSelected }]}
-                  contentFit="cover"
-                  transition={120}
-                  accessibilityLabel={
-                    media?.altText ?? `Aperçu de la publication de ${post.author.displayName}`
-                  }
-                />
+                <View>
+                  <Image
+                    source={{ uri: preview }}
+                    style={[styles.previewThumb, { backgroundColor: theme.backgroundSelected }]}
+                    contentFit="cover"
+                    transition={120}
+                    accessibilityLabel={
+                      media?.altText ?? `Aperçu de la publication de ${post.author.displayName}`
+                    }
+                  />
+                  <MediaFilterOverlay
+                    filterKey={post.mediaFilter}
+                    style={styles.previewFilter}
+                  />
+                </View>
               ) : null}
               <View style={styles.previewBody}>
                 <View style={styles.previewHeader}>
@@ -302,6 +309,10 @@ const styles = StyleSheet.create({
     width: 72,
     aspectRatio: 1,
     borderRadius: Radii.md,
+  },
+  previewFilter: {
+    borderRadius: Radii.md,
+    overflow: 'hidden',
   },
   previewBody: {
     flex: 1,

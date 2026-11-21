@@ -6,6 +6,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -16,6 +17,7 @@ import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/jwt-payload.js';
 import { CreatePublicationDto } from './dto/create-publication.dto.js';
+import { UpdatePublicationDto } from './dto/update-publication.dto.js';
 import { CreateCommentDto, CommentReactDto, ReactDto, RecordViewDto } from './dto/interactions.dto.js';
 import {
   COMMENT_LIST_DEFAULT_LIMIT,
@@ -36,6 +38,15 @@ export class PublicationsController {
   @Get(':id')
   async get(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
     return this.publications.get(id, current.sub);
+  }
+
+  @Patch(':id')
+  async update(
+    @CurrentUser() current: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: UpdatePublicationDto,
+  ) {
+    return this.publications.update(id, current.sub, body ?? {});
   }
 
   @Delete(':id')

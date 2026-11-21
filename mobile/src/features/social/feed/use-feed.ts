@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { applyReaction, mergeFeedPage, toggleRepost, toggleSave } from './feed-model';
 import { ApiError, api } from '@/lib/api';
+import { connectSocket } from '@/lib/socket';
 import { fr } from '@/i18n/fr';
 import type { FeedPost, FeedTab, SocialReaction } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
@@ -135,6 +136,36 @@ export function useFeed(tab: FeedTab) {
     }
     // `load` change avec le curseur : la relancer à chaque page bouclerait.
   }, [tab, token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compteurs temps réel : le serveur diffuse `publication:stats` à chaque
+  // mutation (commentaire, réaction, save, repost, partage, vue). On recale
+  // les compteurs des publications déjà affichées — les valeurs serveur
+  // remplacent l'estimation optimiste locale.
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    const socket = connectSocket(token);
+    const handleStats = (payload: {
+      publicationId?: string;
+      counters?: FeedPost['counters'];
+    }) => {
+      if (!payload?.publicationId || !payload.counters) {
+        return;
+      }
+      setItems((current) =>
+        current.map((post) =>
+          post.id === payload.publicationId
+            ? { ...post, counters: { ...post.counters, ...payload.counters } }
+            : post,
+        ),
+      );
+    };
+    socket.on('publication:stats', handleStats);
+    return () => {
+      socket.off('publication:stats', handleStats);
+    };
+  }, [token]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);

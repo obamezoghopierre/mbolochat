@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Radii, Spacing } from '@/constants/theme';
+import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { fr } from '@/i18n/fr';
 import type { FeedPost } from '@/lib/types';
 import { FeedGestureLayer } from './feed-gestures';
@@ -443,6 +444,9 @@ export function VideoPage({
           pointerEvents="none"
         />
       ) : null}
+
+      {/* Filtre choisi à la publication : calques colorés par-dessus la vidéo. */}
+      <MediaFilterOverlay filterKey={post.mediaFilter} />
 
       {loading ? (
         <View pointerEvents="none" style={styles.loadingHint}>

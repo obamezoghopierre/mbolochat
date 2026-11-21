@@ -6,6 +6,7 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FeedTextPost, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
+import type { TextAlignKey, TextFontStyle } from '@/features/social/text-style';
 import { useTextPostTones } from './feed-tokens';
 
 /**
@@ -20,12 +21,18 @@ export function TextPostReader({
   visible,
   title,
   body,
+  textStyle,
+  textSize,
   backgroundColor,
   onClose,
 }: {
   visible: boolean;
   title: string;
   body: string;
+  /** Police et alignement de la publication d'origine. */
+  textStyle?: TextFontStyle & { textAlign?: TextAlignKey };
+  /** Taille manuelle du corps (points) ; absente = taille fixe de lecture. */
+  textSize?: number | null;
   /** Couleur de fond = dernier arrêt du dégradé de la carte (sombre ou clair). */
   backgroundColor?: string;
   onClose: () => void;
@@ -54,7 +61,19 @@ export function TextPostReader({
             ]}>
             <Icon icon={ChevronLeft} size={24} color={tones.text} strokeWidth={2.5} />
           </Pressable>
-          <ThemedText numberOfLines={1} style={[styles.title, { color: tones.text }]}>
+          <ThemedText
+            numberOfLines={1}
+            style={[
+              styles.title,
+              { color: tones.text },
+              textStyle,
+              textSize
+                ? {
+                    fontSize: Math.round((textSize * 4) / 3),
+                    lineHeight: Math.round(textSize * 1.73),
+                  }
+                : null,
+            ]}>
             {title}
           </ThemedText>
         </View>
@@ -66,7 +85,17 @@ export function TextPostReader({
             { paddingBottom: insets.bottom + Spacing.five },
           ]}
           showsVerticalScrollIndicator>
-          <ThemedText style={[styles.body, { color: tones.textSoft }]}>{body}</ThemedText>
+          <ThemedText
+            style={[
+              styles.body,
+              { color: tones.textSoft },
+              textStyle,
+              textSize
+                ? { fontSize: textSize, lineHeight: Math.round(textSize * 1.53) }
+                : null,
+            ]}>
+            {body}
+          </ThemedText>
         </ScrollView>
       </View>
     </Modal>

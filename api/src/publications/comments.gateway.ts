@@ -13,7 +13,7 @@ import type { Server, Socket } from 'socket.io';
 
 import { corsOrigin, socketAllowRequest } from '../common/cors.js';
 import { authenticateSocket } from '../chat/socket-auth.js';
-import { PublicationEvents } from './publication-events.js';
+import { FEED_STATS_ROOM, PublicationEvents } from './publication-events.js';
 import { PublicationsService } from './publications.service.js';
 
 /**
@@ -38,6 +38,8 @@ export class CommentsGateway implements OnGatewayInit, OnGatewayConnection {
 
   async handleConnection(client: Socket) {
     await authenticateSocket(client, this.jwtService);
+    // Compteurs du fil en temps réel : joint une fois pour toute la session.
+    await client.join(FEED_STATS_ROOM);
   }
 
   @SubscribeMessage('comments:join')

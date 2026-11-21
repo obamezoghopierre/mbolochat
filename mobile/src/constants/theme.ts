@@ -261,6 +261,86 @@ export const FeedTextPost = {
       dark: ['#3A2A14', '#8A5A24', '#241A3D'],
       light: ['#F2DFB9', '#E2C58E', '#CBAF6C'],
     },
+    rose: {
+      dark: ['#33101F', '#6E1E3F', '#1E0B26'],
+      light: ['#F7D3DE', '#F0AEC4', '#E08CA8'],
+    },
+    mint: {
+      dark: ['#0B2B22', '#1E5C46', '#0A1F2E'],
+      light: ['#C8ECD9', '#9BD9B8', '#74C39B'],
+    },
+    sky: {
+      dark: ['#0A2240', '#155A8A', '#081A30'],
+      light: ['#C4E2F8', '#93C8F0', '#63A8DE'],
+    },
+    lime: {
+      dark: ['#1E2B0B', '#4C6B1E', '#141F0A'],
+      light: ['#E4F0B9', '#D2E68C', '#B8D465'],
+    },
+    peach: {
+      dark: ['#33180E', '#7A3B1E', '#241019'],
+      light: ['#F9DCC3', '#F2BE97', '#E8A06E'],
+    },
+    orchid: {
+      dark: ['#241040', '#4E2A78', '#140B26'],
+      light: ['#E4D3F8', '#CBAEEC', '#AC84DC'],
+    },
+    coral: {
+      dark: ['#33120E', '#8A3A24', '#241021'],
+      light: ['#F8D9CE', '#F2B49B', '#E08E6E'],
+    },
+    aqua: {
+      dark: ['#0A2E33', '#14606B', '#081F2E'],
+      light: ['#C4ECEC', '#93DCDC', '#63C2C4'],
+    },
+    butter: {
+      dark: ['#33270B', '#7A5E1E', '#241A0B'],
+      light: ['#F7EDB9', '#F0DC85', '#E2C65E'],
+    },
+    lilac: {
+      dark: ['#241040', '#5C3A86', '#160B2B'],
+      light: ['#E7D9F9', '#D3B9F0', '#B795E0'],
+    },
+    wine: {
+      dark: ['#2E0B1E', '#6B1E3E', '#1A0B24'],
+      light: ['#F3D3DF', '#E5AEC4', '#CE84A4'],
+    },
+    slate: {
+      dark: ['#101820', '#2A3A4C', '#0B1018'],
+      light: ['#D4DEE9', '#B3C2D4', '#93A9C0'],
+    },
+    sage: {
+      dark: ['#14251B', '#3D5C42', '#0F1B2E'],
+      light: ['#D9E8D5', '#B9D6B4', '#95C08D'],
+    },
+    cocoa: {
+      dark: ['#241610', '#5C3B24', '#170F14'],
+      light: ['#E8D9C8', '#D4B894', '#B89468'],
+    },
+    yellow: {
+      dark: ['#4A3408', '#8F6B12', '#2E2006'],
+      light: ['#FFF3B0', '#FFE066', '#F5C518'],
+    },
+    gold: {
+      dark: ['#3D2408', '#7A5216', '#241505'],
+      light: ['#F7E7B8', '#EFCF7E', '#D9A94E'],
+    },
+    orange: {
+      dark: ['#3D1E08', '#8A4216', '#241004'],
+      light: ['#FFD9B8', '#FFB877', '#F08A3C'],
+    },
+    red: {
+      dark: ['#3D0B0B', '#8A1E1E', '#260707'],
+      light: ['#FFD0D0', '#FF9E9E', '#F07070'],
+    },
+    magenta: {
+      dark: ['#33082E', '#7A1E6B', '#20071C'],
+      light: ['#F5C8F0', '#EE9FE0', '#D96BC8'],
+    },
+    teal: {
+      dark: ['#0B2B2B', '#14605A', '#081F1F'],
+      light: ['#C2ECEA', '#8FD8D4', '#5CC2BE'],
+    },
   } as const satisfies Record<
     string,
     { dark: readonly [string, string, string]; light: readonly [string, string, string] }
@@ -306,6 +386,8 @@ export const FeedTextPost = {
   /** Carte de texte translucide sombre (utilisée par le compositeur, toujours sombre). */
   card: 'rgba(10, 10, 14, 0.45)',
   cardBorder: 'rgba(255, 255, 255, 0.18)',
+  /** Vignette de la carte d'aperçu de lien dans le fil. */
+  linkThumb: 72,
   /** Fond du bouton retour du lecteur plein écran. */
   badge: 'rgba(255, 255, 255, 0.16)',
 } as const;

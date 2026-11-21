@@ -96,6 +96,39 @@ export async function requestLocationAccess(): Promise<LocationAccess> {
 }
 
 /**
+ * Position brute de l'appareil pour un usage local (tag de lieu) :
+ * jamais stockée ni envoyée telle quelle — le serveur ne reçoit que le
+ * résultat du géocodage inverse via `/users/geo/reverse`.
+ */
+export async function currentCoordinates(): Promise<{
+  latitude: number;
+  longitude: number;
+} | null> {
+  const Location = await getLocation();
+  if (!Location) {
+    return null;
+  }
+  try {
+    const permission = await Location.getForegroundPermissionsAsync();
+    if (!permission.granted) {
+      return null;
+    }
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    if (position.mocked === true) {
+      return null;
+    }
+    return {
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Demande la position approximative et la confie au serveur, qui seul décide
  * de la ville. Ne déclenche jamais de demande de permission : une fois
  * l'accès accordé depuis les paramètres, la détection est silencieuse.

@@ -513,6 +513,33 @@ export interface FeedPost {
   textBackground?: string | null;
   /** Pages d'un post texte multi-cartes, `null` pour une publication classique. */
   pages?: string[] | null;
+  /**
+   * Style propre à chaque page (fond/couleur), aligné sur `pages`.
+   * `null` = la page garde le rendu par défaut.
+   */
+  pageStyles?: ({ background?: string; color?: string; font?: string; align?: string; size?: number } | null)[] | null;
+  /** Police choisie pour un post texte (clé de `TEXT_FONTS`), `null` = système. */
+  textFont?: string | null;
+  /** Alignement d'un post texte (`left`/`center`/`right`), `null` = centré. */
+  textAlign?: string | null;
+  /** Couleur du texte d'un post texte (clé de `TEXT_COLORS`), `null` = thème. */
+  textColor?: string | null;
+  /** Titre dédié d'un post texte, `null` = déduit de la première ligne. */
+  textTitle?: string | null;
+  /** Taille manuelle d'un post texte (points), `null` = auto-ajustement. */
+  textSize?: number | null;
+  /** Lieu facultatif d'un post texte, `null` = pas de localisation. */
+  location?: string | null;
+  /** Aperçu OG du premier lien du texte, `null` = pas de lien exploitable. */
+  linkPreview?: {
+    url: string;
+    host: string;
+    title: string;
+    description: string;
+    imageUrl: string | null;
+  } | null;
+  /** Filtre visuel d'une publication média (clé de `MEDIA_FILTERS`), `null` = brut. */
+  mediaFilter?: string | null;
   visibility: SocialVisibility;
   createdAt: string;
   author: SocialAuthor;

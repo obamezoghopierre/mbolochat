@@ -72,6 +72,21 @@ export class UsersController {
   }
 
   /**
+   * Géocodage inverse pour taguer un lieu (publication, story…) : renvoie le
+   * nom de ville/pays sans jamais exposer ni conserver les coordonnées fines.
+   */
+  @Get('geo/reverse')
+  async reverseGeo(@Query('latitude') latitude?: string, @Query('longitude') longitude?: string) {
+    return this.usersService.reversePlace(Number(latitude), Number(longitude));
+  }
+
+  /** Suggestions de villes pour l'autocomplétion du lieu d'un post. */
+  @Get('geo/search')
+  async searchPlaces(@Query('q') query?: string) {
+    return this.usersService.searchPlaces(query ?? '');
+  }
+
+  /**
    * Position approximative envoyée par l'appareil : le serveur géocode et
    * décide seul de la ville. Les coordonnées ne sont jamais conservées.
    */

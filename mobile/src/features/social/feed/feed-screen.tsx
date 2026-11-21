@@ -373,6 +373,8 @@ function FeedSurfaceView({
             toggleRepost: feed.toggleRepost,
             follow: feed.follow,
             remove: feed.remove,
+            // Réouverture du compositeur texte en mode édition.
+            edit: (post) => router.push(`/create/text?id=${post.id}`),
             report: (post) => report.open(post),
             onOpenComments,
             notifyError: feed.notifyError,

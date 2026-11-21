@@ -52,10 +52,9 @@ export default function TabsLayout() {
       />
       {/*
         Créer n'est pas un onglet : sa place est prise par les notifications.
-        La route reste disponible (`router.push('/create')`) pour le studio de la
-        phase 3, sans encombrer la barre.
+        Le hub vit dans `app/create/` (hors des onglets) et s'ouvre via
+        `router.push('/create')` depuis le bouton + du fil.
       */}
-      <Tabs.Screen name="create" options={{ href: null, title: fr.tabs.create }} />
       <Tabs.Screen
         name="chats"
         options={{

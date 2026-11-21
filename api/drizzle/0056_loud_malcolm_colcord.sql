@@ -1,0 +1,1 @@
+ALTER TABLE "publications" ADD COLUMN "text_page_styles" jsonb;
