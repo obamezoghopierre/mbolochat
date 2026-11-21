@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
@@ -34,13 +35,6 @@ import { TextPostReader } from './text-post-reader';
 import type { FeedPageChrome } from './video-page';
 
 /**
- * Nombre de bandes du dégradé de fond. `expo-linear-gradient` n'est pas
- * embarqué dans l'APK de développement : comme pour le scrim du pager, on
- * empile des bandes fines — l'œil lit un dégradé continu.
- */
-const BACKDROP_BANDS = 20;
-
-/**
  * Au-delà de cette longueur, la carte s'arrête de grandir et propose
  * « Voir plus » : le texte complet s'ouvre alors dans le lecteur plein écran.
  */
@@ -59,31 +53,39 @@ const DOUBLE_TAP_MS = 300;
 /** Entrée de carte : fade + léger remontage, discrète sous l'animation de page. */
 const ENTER_DURATION_MS = 220;
 
-/** Mélange deux couleurs hexadécimales : sert à construire le dégradé du fond. */
-function mixHex(from: string, to: string, ratio: number): string {
-  const parse = (hex: string) => [
-    parseInt(hex.slice(1, 3), 16),
-    parseInt(hex.slice(3, 5), 16),
-    parseInt(hex.slice(5, 7), 16),
-  ];
-  const a = parse(from);
-  const b = parse(to);
-  const channel = (index: number) =>
-    Math.round(a[index] + (b[index] - a[index]) * ratio)
-      .toString(16)
-      .padStart(2, '0');
-  return `#${channel(0)}${channel(1)}${channel(2)}`;
-}
-
-/** Dégradé en trois arrêts, découpé en bandes régulières. */
-function backdropColors(palette: readonly [string, string, string]): string[] {
+/**
+ * Fond dégradé vertical en trois arrêts, dessiné en SVG. `react-native-svg`
+ * est déjà embarqué (QR code, icônes) : pas de nouvelle dépendance native ni
+ * de rebuild, contrairement à `expo-linear-gradient`. Une seule vue native
+ * remplace les 20 bandes empilées de l'ancienne approximation.
+ */
+function Backdrop({
+  palette,
+  id,
+}: {
+  palette: readonly [string, string, string];
+  id: string;
+}) {
   const [top, middle, bottom] = palette;
-  return Array.from({ length: BACKDROP_BANDS }, (_, index) => {
-    const progress = index / (BACKDROP_BANDS - 1);
-    return progress < 0.5
-      ? mixHex(top, middle, progress * 2)
-      : mixHex(middle, bottom, (progress - 0.5) * 2);
-  });
+  const gradientId = `text-backdrop-${id}`;
+  return (
+    <Svg
+      style={StyleSheet.absoluteFill}
+      width="100%"
+      height="100%"
+      preserveAspectRatio="none"
+      pointerEvents="none"
+      accessible={false}>
+      <Defs>
+        <LinearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor={top} />
+          <Stop offset="0.5" stopColor={middle} />
+          <Stop offset="1" stopColor={bottom} />
+        </LinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${gradientId})`} />
+    </Svg>
+  );
 }
 
 /** Ensemble de palettes (sombre + clair) d'un post texte, défaut = dark. */
@@ -125,10 +127,7 @@ export function TextPage({
   const { scheme } = useThemePreference();
   const tones = useTextPostTones();
   const paletteSet = paletteSetFor(post);
-  const colors = useMemo(
-    () => backdropColors(paletteSet[scheme === 'light' ? 'light' : 'dark']),
-    [paletteSet, scheme],
-  );
+  const palette = paletteSet[scheme === 'light' ? 'light' : 'dark'];
   const [readerOpen, setReaderOpen] = useState(false);
   // Page affichée, partagée entre la carte et le lecteur : on rouvre le
   // lecteur sur la page en cours et la carte reprend où le lecteur s'arrête.
@@ -220,19 +219,7 @@ export function TextPage({
 
   return (
     <View style={[styles.page, { height: chrome.height }]}>
-      {colors.map((color, index) => (
-        <View
-          key={`${color}-${index}`}
-          style={[
-            styles.band,
-            {
-              backgroundColor: color,
-              top: `${(index * 100) / BACKDROP_BANDS}%`,
-              height: `${100 / BACKDROP_BANDS + 0.6}%`,
-            },
-          ]}
-        />
-      ))}
+      <Backdrop palette={palette} id={post.id} />
 
       <Animated.View
         style={[
@@ -458,7 +445,7 @@ export function TextPage({
         initialPage={pageIndex}
         onPageChange={setPageIndex}
         interactive={interactive}
-        backgroundColor={paletteSet[scheme === 'light' ? 'light' : 'dark'][2]}
+        backgroundColor={palette[2]}
         onClose={closeReader}
       />
     </View>
@@ -582,11 +569,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.two,
-  },
-  band: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
   },
   cardEnter: {
     alignSelf: 'stretch',
