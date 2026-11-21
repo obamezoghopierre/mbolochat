@@ -155,4 +155,39 @@ describe('Profil social (e2e)', () => {
     expect(JSON.stringify(response.body)).not.toContain('@e2e.dev');
     expect(JSON.stringify(response.body)).not.toContain('password123');
   });
+
+  describe('profil par nom d’utilisateur', () => {
+    const byUsername = (viewer: { token: string }, username: string) =>
+      request(app.getHttpServer())
+        .get(`/users/by-username/${encodeURIComponent(username)}`)
+        .set('Authorization', `Bearer ${viewer.token}`);
+
+    it('trouve le profil sans tenir compte de la casse ni du @', async () => {
+      const viewer = await register('Visiteur');
+      const target = await register('Recherchee');
+      const exact = await byUsername(viewer, target.username).expect(200);
+      expect(exact.body.id).toBe(target.id);
+      const upper = await byUsername(viewer, `@${target.username.toUpperCase()}`).expect(200);
+      expect(upper.body.id).toBe(target.id);
+      expect(JSON.stringify(exact.body)).not.toContain('@e2e.dev');
+    });
+
+    it('répond 404 pour un nom inconnu ou invalide', async () => {
+      const viewer = await register('Perdu');
+      await byUsername(viewer, `inconnu${Date.now()}`).expect(404);
+      await byUsername(viewer, 'a').expect(404);
+      await byUsername(viewer, 'nom avec espaces').expect(404);
+    });
+
+    it('cache un compte bloqué, dans les deux sens', async () => {
+      const blocker = await register('Bloqueuse');
+      const blocked = await register('Bloque');
+      await request(app.getHttpServer())
+        .post(`/users/${blocked.id}/block`)
+        .set('Authorization', `Bearer ${blocker.token}`)
+        .expect(201);
+      await byUsername(blocked, blocker.username).expect(404);
+      await byUsername(blocker, blocked.username).expect(404);
+    });
+  });
 });

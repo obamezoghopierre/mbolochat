@@ -223,6 +223,15 @@ export class UsersController {
     return { blocked: false };
   }
 
+  /** Profil public par nom d'utilisateur, pour ouvrir une `@mention`. */
+  @Get('by-username/:username')
+  async profileByUsername(
+    @CurrentUser() current: JwtPayload,
+    @Param('username') username: string,
+  ) {
+    return this.usersService.getProfileByUsername(username, current.sub);
+  }
+
   /**
    * Profil public d'un utilisateur (statistiques, hors données sensibles).
    * Déclaré après « search » et « blocked » pour ne pas capter ces routes.

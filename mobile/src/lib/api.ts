@@ -596,6 +596,11 @@ export const api = {
     return request<UserProfile>(`/users/${encodeURIComponent(id)}`, { token });
   },
 
+  /** Profil à partir d'un nom d'utilisateur (ouverture d'une `@mention`). */
+  getUserProfileByUsername(token: string, username: string) {
+    return request<UserProfile>(`/users/by-username/${encodeURIComponent(username)}`, { token });
+  },
+
   uploadAvatar(token: string, data: string, mimeType: string) {
     return request<User>('/users/me/avatar', { method: 'POST', token, body: { data, mimeType } });
   },
