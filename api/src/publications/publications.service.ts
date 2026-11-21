@@ -68,6 +68,9 @@ import {
 import type { UpdatePublicationDto } from './dto/update-publication.dto.js';
 import { previewForText, type LinkPreviewMeta } from './link-preview.js';
 
+/** Borne anti-spam : au-delà, les mentions suivantes ne notifient pas. */
+const MAX_MENTIONS_PER_PUBLICATION = 20;
+
 /** Carte d'auteur réduite au strict public : aucune donnée personnelle. */
 export interface AuthorCard {
   id: string;
@@ -310,7 +313,10 @@ export class PublicationsService {
     );
     // Quand des pages sont fournies, la première fait office de légende
     // (recherche plein texte, extraits, citation) et `caption` est ignoré.
-    const effectiveCaption = storedPages.length > 0 ? storedPages[0] : caption;
+    // Conforme au DTO : dès que des pages sont fournies, `caption` est ignoré,
+    // y compris quand une seule page est non vide (elle devient la légende).
+    const pagesProvided = (dto.textPages?.length ?? 0) > 0;
+    const effectiveCaption = pagesProvided ? (pagePairs[0]?.text ?? '') : caption;
     if (
       effectiveCaption.length === 0 &&
       assetIds.length === 0 &&
@@ -356,11 +362,12 @@ export class PublicationsService {
     const kind = quoted ? 'post' : (dto.kind ?? 'post');
     // Auto-flag : un contenu qui contient un mot bloqué part en revue humaine
     // au lieu d'être publié directement. Toutes les pages sont modérées.
-    const moderationText = storedPages.length > 0 ? storedPages.join('\n') : caption;
+    const moderationText = storedPages.length > 0 ? storedPages.join('\n') : effectiveCaption;
     const flagged =
       moderationText.length > 0 ? await this.moderation.hasBlockedWord(moderationText) : false;
 
     let quoteNotification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
+    let mentionNotifications: Awaited<ReturnType<SocialNotificationsService['create']>>[] = [];
 
     const inserted = await this.db.transaction(async (tx) => {
       const assets =
@@ -488,11 +495,25 @@ export class PublicationsService {
           publicationId: quoted.id,
         });
       }
+      // Mentions de la légende et de toutes les pages. Un post signalé attend
+      // une décision humaine : personne n'est notifié d'un contenu invisible.
+      if (!flagged && moderationText.length > 0) {
+        mentionNotifications = await this.applyPublicationMentions(
+          tx,
+          moderationText,
+          authorId,
+          row.id,
+          row.visibility,
+        );
+      }
       return row;
     });
 
     if (inserted) {
       await this.notifications.deliver(quoteNotification);
+      for (const notification of mentionNotifications) {
+        await this.notifications.deliver(notification);
+      }
       return this.view(inserted, authorId);
     }
     // Rejeu : on rend la publication déjà enregistrée pour ce `clientId`.
@@ -1819,6 +1840,64 @@ export class PublicationsService {
       },
       quoted,
     };
+  }
+
+  /**
+   * Notifie les comptes `@mentionnés` dans une publication, dans la
+   * transaction de création. Mêmes garde-fous que les commentaires (soi-même,
+   * blocage, réglage « qui peut me mentionner »), plus la visibilité du post :
+   * on ne notifie pas quelqu'un qui ne pourrait pas l'ouvrir (post « abonnés »
+   * pour un non-abonné, post privé). La clé de déduplication rend le rejeu
+   * inoffensif.
+   */
+  private async applyPublicationMentions(
+    tx: Parameters<Parameters<Database['transaction']>[0]>[0],
+    text: string,
+    authorId: string,
+    publicationId: string,
+    visibility: 'public' | 'followers' | 'private',
+  ): Promise<Awaited<ReturnType<SocialNotificationsService['create']>>[]> {
+    if (visibility === 'private') {
+      return [];
+    }
+    const usernames = extractMentions(text).slice(0, MAX_MENTIONS_PER_PUBLICATION);
+    if (usernames.length === 0) {
+      return [];
+    }
+    const targets = await tx
+      .select({ id: users.id, permission: userSocialSettings.mentionPermission })
+      .from(users)
+      .leftJoin(userSocialSettings, eq(userSocialSettings.userId, users.id))
+      .where(inArray(sql`lower(${users.username})`, usernames));
+
+    const delivered: Awaited<ReturnType<SocialNotificationsService['create']>>[] = [];
+    for (const target of targets) {
+      if (target.id === authorId) {
+        continue;
+      }
+      const facts = await this.follows.viewerFacts(authorId, target.id);
+      if (!canInteract(target.permission ?? 'everyone', facts)) {
+        continue;
+      }
+      if (visibility === 'followers') {
+        // La cible doit suivre l'auteur pour voir le post.
+        const targetFacts = await this.follows.viewerFacts(target.id, authorId);
+        if (!targetFacts.isFollower) {
+          continue;
+        }
+      }
+      const notification = await this.notifications.create(tx, {
+        recipientId: target.id,
+        actorId: authorId,
+        type: 'mention',
+        dedupeKey: `mention:publication:${publicationId}:${target.id}`,
+        publicationId,
+      });
+      if (notification) {
+        delivered.push(notification);
+      }
+    }
+    return delivered;
   }
 
   /** Mentions et hashtags d'un commentaire, écrits dans la même transaction. */

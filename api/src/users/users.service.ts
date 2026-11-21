@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, count, eq, ilike, inArray, max, ne, notInArray, or } from 'drizzle-orm';
+import { and, asc, count, eq, ilike, inArray, max, ne, notInArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   blocks,
@@ -676,6 +676,30 @@ export class UsersService {
       .from(pushTokens)
       .where(eq(pushTokens.userId, userId));
     return rows.map((row) => row.token);
+  }
+
+  /**
+   * Profil public à partir d'un nom d'utilisateur (ouverture d'une `@mention`).
+   * Correspondance exacte insensible à la casse. Un compte bloqué dans un sens
+   * ou dans l'autre répond « introuvable », comme s'il n'existait pas.
+   */
+  async getProfileByUsername(username: string, viewerId: string): Promise<UserProfile> {
+    const normalized = username.trim().replace(/^@/, '').toLowerCase();
+    if (!/^[a-z0-9][a-z0-9._]{1,29}$/.test(normalized)) {
+      throw new NotFoundException('User not found');
+    }
+    const [row] = await this.db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(sql`lower(${users.username})`, normalized))
+      .limit(1);
+    if (!row) {
+      throw new NotFoundException('User not found');
+    }
+    if (row.id !== viewerId && (await this.isBlockedBetween(viewerId, row.id))) {
+      throw new NotFoundException('User not found');
+    }
+    return this.getProfile(row.id, viewerId);
   }
 
   /** Profil public enrichi (statistiques + indicateurs "c'est moi"). */

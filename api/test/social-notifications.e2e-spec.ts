@@ -282,4 +282,89 @@ describe('Notifications sociales (e2e)', () => {
       ),
     ).toBe(true);
   });
+
+  describe('mentions dans une publication', () => {
+    const post = (actor: { token: string }, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/publications')
+        .set('Authorization', `Bearer ${actor.token}`)
+        .send({
+          clientId: `notif-m-${suffix}-${Math.random().toString(36).slice(2)}`,
+          ...body,
+        });
+
+    const mentionsOf = async (actor: { token: string }, publicationId: string) =>
+      (await notifications(actor).expect(200)).body.items.filter(
+        (item: { type: string; publicationId: string }) =>
+          item.type === 'mention' && item.publicationId === publicationId,
+      );
+
+    it('notifie une seule fois chaque compte mentionné, jamais l’auteur', async () => {
+      const author = await register('Mentionneur');
+      const target = await register('Mentionnee');
+      const created = await post(author, {
+        caption: `Salut @${target.username} et @${target.username.toUpperCase()} ! Moi : @${author.username}`,
+      }).expect(201);
+
+      const received = await mentionsOf(target, created.body.id);
+      expect(received).toHaveLength(1);
+      expect(received[0].actor.id).toBe(author.id);
+      expect(await mentionsOf(author, created.body.id)).toEqual([]);
+    });
+
+    it('lit les mentions de toutes les pages d’un post multi-pages', async () => {
+      const author = await register('Pages');
+      const target = await register('Pagee');
+      const created = await post(author, {
+        textPages: ['Première page sans mention', `Deuxième page pour @${target.username}`],
+      }).expect(201);
+      expect(await mentionsOf(target, created.body.id)).toHaveLength(1);
+    });
+
+    it('ne notifie pas un non-abonné pour un post réservé aux abonnés', async () => {
+      const author = await register('Reserve');
+      const outsider = await register('Dehors');
+      const fan = await register('Dedans');
+      await request(app.getHttpServer())
+        .post(`/users/${author.id}/follow`)
+        .set('Authorization', `Bearer ${fan.token}`)
+        .expect(201);
+
+      const created = await post(author, {
+        caption: `Pour @${outsider.username} et @${fan.username}`,
+        visibility: 'followers',
+      }).expect(201);
+      expect(await mentionsOf(outsider, created.body.id)).toEqual([]);
+      expect(await mentionsOf(fan, created.body.id)).toHaveLength(1);
+    });
+
+    it('ne notifie personne pour un post privé ni entre comptes bloqués', async () => {
+      const author = await register('Secret');
+      const target = await register('Cible');
+      const privatePost = await post(author, {
+        caption: `Note pour @${target.username}`,
+        visibility: 'private',
+      }).expect(201);
+      expect(await mentionsOf(target, privatePost.body.id)).toEqual([]);
+
+      await request(app.getHttpServer())
+        .post(`/users/${author.id}/block`)
+        .set('Authorization', `Bearer ${target.token}`)
+        .expect(201);
+      const blockedPost = await post(author, { caption: `Encore @${target.username}` }).expect(201);
+      expect(await mentionsOf(target, blockedPost.body.id)).toEqual([]);
+    });
+
+    it('un rejeu avec le même clientId ne notifie pas deux fois', async () => {
+      const author = await register('Rejoue');
+      const target = await register('Rejouee');
+      const body = {
+        caption: `Coucou @${target.username}`,
+        clientId: `notif-replay-${suffix}-${Math.random().toString(36).slice(2)}`,
+      };
+      const first = await post(author, body).expect(201);
+      await post(author, body).expect(201);
+      expect(await mentionsOf(target, first.body.id)).toHaveLength(1);
+    });
+  });
 });

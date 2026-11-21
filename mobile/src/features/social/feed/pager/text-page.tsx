@@ -421,6 +421,7 @@ export function TextPage({
               baseColor={chosenColor ?? null}
               baseSize={manualSize}
               onPress={handleCardPress}
+              interactive={interactive}
             />
           ) : (
             <>
@@ -432,7 +433,10 @@ export function TextPage({
                   titleFontSize ? { fontSize: titleFontSize, lineHeight: titleLineHeight } : null,
                 ]}
                 numberOfLines={5}>
-                {renderTokens(title, [styles.token, { color: tones.accent }], [styles.token, { color: tones.accent, textDecorationLine: 'underline' }])}
+                {renderTokens(title, [styles.token, { color: tones.accent }], {
+                  interactive,
+                  linkStyle: [styles.token, { color: tones.accent, textDecorationLine: 'underline' }],
+                })}
               </ThemedText>
 
               {preview ? (
@@ -446,7 +450,10 @@ export function TextPage({
                       : null,
                   ]}
                   numberOfLines={hasLongBody ? 8 : 16}>
-                  {renderTokens(preview, [styles.token, { color: tones.accent }], [styles.token, { color: tones.accent, textDecorationLine: 'underline' }])}
+                  {renderTokens(preview, [styles.token, { color: tones.accent }], {
+                    interactive,
+                    linkStyle: [styles.token, { color: tones.accent, textDecorationLine: 'underline' }],
+                  })}
                 </ThemedText>
               ) : null}
             </>
@@ -589,6 +596,7 @@ function TextPages({
   baseColor = null,
   baseSize = null,
   onPress,
+  interactive = false,
 }: {
   pages: string[];
   /** Style propre à chaque page, `null` = défaut du post. */
@@ -603,6 +611,8 @@ function TextPages({
   baseColor?: string | null;
   baseSize?: number | null;
   onPress: () => void;
+  /** Hashtags et mentions cliquables (désactivé sous les overlays masqués). */
+  interactive?: boolean;
 }) {
   const [index, setIndex] = useState(0);
   const tones = useTextPostTones();
@@ -753,7 +763,10 @@ function TextPages({
                         fit ? { fontSize: fit.bodySize, lineHeight: fit.bodyLineHeight } : null,
                       ]}
                       numberOfLines={MULTIPAGE_BODY_MAX_LINES}>
-                      {renderTokens(page, [styles.token, { color: tones.accent }], [styles.token, { color: tones.accent, textDecorationLine: 'underline' }])}
+                      {renderTokens(page, [styles.token, { color: tones.accent }], {
+                        interactive,
+                        linkStyle: [styles.token, { color: tones.accent, textDecorationLine: 'underline' }],
+                      })}
                     </ThemedText>
                   </Pressable>
                 </View>
@@ -780,7 +793,10 @@ function TextPages({
           </View>
         ) : null}
       </View>
-      <View style={styles.pageDots}>
+      <View
+        style={styles.pageDots}
+        accessible
+        accessibilityLabel={fr.social.textPageA11y(index + 1, pages.length)}>
         {pages.map((_, dotIndex) => (
           <View
             key={dotIndex}
@@ -792,11 +808,29 @@ function TextPages({
           />
         ))}
       </View>
+      {/* Indicateur « 2/5 » façon Instagram, en haut à droite du carrousel. */}
+      <View
+        pointerEvents="none"
+        importantForAccessibility="no-hide-descendants"
+        style={[styles.pageIndicator, { backgroundColor: tones.textFaint }]}>
+        <ThemedText type="caption" style={[styles.pageIndicatorText, { color: tones.text }]}>
+          {fr.social.textPageIndicator(index + 1, pages.length)}
+        </ThemedText>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  pageIndicator: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    borderRadius: Radii.full,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: 2,
+  },
+  pageIndicatorText: { fontWeight: '700', fontVariant: ['tabular-nums'] },
   page: {
     overflow: 'hidden',
     alignItems: 'center',

@@ -5,6 +5,7 @@ import { isTransientSessionError } from './auth-restore';
 import { resetEmojiFavorites } from '@/features/emoji/useEmojiFavorites';
 import { resetRecentEmoji } from '@/features/emoji/useRecentEmoji';
 import { resetStickerLibrary } from '@/features/stickers/stickerLibrary';
+import { purgeTextDrafts, setTextDraftOwner } from '@/lib/text-draft';
 import { sweepSecureMedia } from '@/features/e2ee/mediaStore';
 import { resetE2eeInitState } from '@/features/e2ee/initState';
 import { getActiveE2eeUser, setActiveE2eeUser } from '@/features/e2ee/activeUser';
@@ -68,6 +69,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     void syncPushToken(token);
   }, [token]);
+
+  // Les brouillons de publication sont cloisonnés par compte : un changement
+  // de session recharge la liste du nouveau propriétaire.
+  useEffect(() => {
+    setTextDraftOwner(user?.id ?? null);
+  }, [user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -233,6 +240,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         void resetRecentEmoji();
         void resetEmojiFavorites();
         void resetStickerLibrary();
+        // Brouillons de publication : propres au compte, ils ne doivent pas
+        // réapparaître pour une autre personne sur un appareil partagé.
+        if (user) void purgeTextDrafts(user.id);
       },
     }),
     [token, user, loading],

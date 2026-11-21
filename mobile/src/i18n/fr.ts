@@ -967,6 +967,22 @@ export const fr = {
     createSuggestionsLabel: 'Suggestions',
     createMentionUser: (name: string) => `Mentionner ${name}`,
     createPlaceholder: 'Écris ta publication…',
+    createVisibility: 'Visibilité',
+    openHashtagA11y: (tag: string) => `Voir les publications #${tag}`,
+    openMentionA11y: (username: string) => `Ouvrir le profil de @${username}`,
+    mentionNotFound: (username: string) => `Le compte @${username} est introuvable.`,
+    createDraftRestored: 'Brouillon restauré.',
+    createDraftDiscard: 'Effacer',
+    createVisibilityPublic: 'Public',
+    createVisibilityFollowers: 'Abonnés',
+    createVisibilityPrivate: 'Moi uniquement',
+    /** Compteur de caractères d'une page du compositeur. */
+    createCharCount: (count: number, max: number) => `${count}/${max}`,
+    createCharCountA11y: (left: number) =>
+      left > 1 ? `${left} caractères restants` : `${left} caractère restant`,
+    /** Indicateur de page du carrousel de texte, ex. « 2/5 ». */
+    textPageIndicator: (index: number, total: number) => `${index}/${total}`,
+    textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
     notificationsTitle: 'Aucune notification',
     notificationsBody:
       'Les réactions, les commentaires et les nouveaux abonnés apparaîtront ici.',

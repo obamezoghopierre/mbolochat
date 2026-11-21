@@ -92,11 +92,20 @@ import {
   writeTextDraft,
   type TextDraft,
 } from '@/lib/text-draft';
-import type { SearchHashtag, SearchUser } from '@/lib/types';
+import type { SearchHashtag, SearchUser, SocialVisibility } from '@/lib/types';
 
 /** Bornes alignées sur le DTO (`MAX_TEXT_PAGES`, `MAX_TEXT_PAGE_LENGTH`). */
 const MAX_PAGES = 10;
 const MAX_PAGE_LENGTH = 2000;
+/** Visibilités du DTO `POST /publications`, « public » par défaut. */
+const VISIBILITIES: readonly SocialVisibility[] = ['public', 'followers', 'private'];
+const VISIBILITY_LABELS: Record<SocialVisibility, string> = {
+  public: fr.social.createVisibilityPublic,
+  followers: fr.social.createVisibilityFollowers,
+  private: fr.social.createVisibilityPrivate,
+};
+/** Seuil d'avertissement du compteur, comme sur Instagram. */
+const PAGE_LENGTH_WARNING = Math.floor(MAX_PAGE_LENGTH * 0.9);
 /** Longueur au-delà de laquelle le fil tronque avec « Voir plus ». */
 const FEED_PREVIEW_CHARS = 320;
 /** Suggestions `@`/`#` : délai de frappe et nombre de résultats affichés. */
@@ -212,6 +221,10 @@ export default function CreateTextScreen() {
   );
   /** Lieu facultatif : nom saisi à la main ou détecté par géocodage inverse. */
   const [location, setLocation] = useState(initialDraft?.location ?? '');
+  /** Visibilité du post : « public » par défaut, modifiable avant publication. */
+  const [visibility, setVisibility] = useState<SocialVisibility>(
+    () => initialDraft?.visibility ?? 'public',
+  );
   const [locating, setLocating] = useState(false);
   /** Suggestions de villes pendant la saisie du lieu (Nominatim côté serveur). */
   const [placeSuggestions, setPlaceSuggestions] = useState<
@@ -273,6 +286,10 @@ export default function CreateTextScreen() {
         setTextSize(draft.textSize);
       }
       setLocation(draft.location ?? '');
+      setVisibility(draft.visibility ?? 'public');
+      // La clé d'idempotence du brouillon est conservée : republier après
+      // restauration ne crée pas de doublon si le premier essai aboutit.
+      clientId.current = draft.clientId ?? newClientId();
     });
     return () => {
       alive = false;
@@ -352,8 +369,10 @@ export default function CreateTextScreen() {
       color,
       textSize: textSize ?? undefined,
       location: location.trim() || undefined,
+      visibility,
+      clientId: clientId.current,
     });
-  }, [align, background, color, font, location, pageStyles, pages, textSize, title]);
+  }, [align, background, color, font, location, pageStyles, pages, textSize, title, visibility]);
 
   // La carte prend toute la largeur ; sa hauteur est bornée par le ratio 4:5
   // et par la place réellement visible. Clavier ouvert, elle devient large et
@@ -720,6 +739,8 @@ export default function CreateTextScreen() {
     }
     setTextSize(typeof draft.textSize === 'number' ? draft.textSize : null);
     setLocation(draft.location ?? '');
+    setVisibility(draft.visibility ?? 'public');
+    clientId.current = draft.clientId ?? newClientId();
     setIndex(0);
     setPreview(false);
     setError(null);
@@ -745,6 +766,8 @@ export default function CreateTextScreen() {
     setColor('auto');
     setTextSize(null);
     setLocation('');
+    setVisibility('public');
+    clientId.current = newClientId();
     setIndex(0);
     setPreview(false);
     setError(null);
@@ -933,6 +956,7 @@ export default function CreateTextScreen() {
       } else {
         await api.createPublication(token, {
           clientId: clientId.current,
+          visibility,
           // Une seule page = publication classique (`caption`) ; plusieurs =
           // `textPages`, le serveur en déduit la légende (première page).
           ...(filled.length > 1
@@ -952,6 +976,7 @@ export default function CreateTextScreen() {
           ...(location.trim() ? { location: location.trim() } : {}),
         });
       }
+      clientId.current = newClientId();
       clearTextDraft();
       invalidateFeedCache(token);
       // Retour au fil : la pile de création est remplacée par le résultat.
@@ -960,7 +985,7 @@ export default function CreateTextScreen() {
       setError(fr.social.createPublishError);
       setPublishing(false);
     }
-  }, [align, color, editingId, effectiveBackground, font, location, pageStyles, pages, publishing, textSize, title, token]);
+  }, [align, color, editingId, effectiveBackground, font, location, pageStyles, pages, publishing, textSize, title, token, visibility]);
 
   const renderEditPage = useCallback(
     ({ item, index: pageIndex }: { item: string; index: number }) => {
@@ -1351,13 +1376,24 @@ export default function CreateTextScreen() {
                 ))
               : null}
           </View>
-          {!preview ? (
-            <ThemedText type="caption" style={styles.counter}>
-              {current.length > FEED_PREVIEW_CHARS
-                ? fr.social.createTextCounter(current.length, MAX_PAGE_LENGTH)
-                : ''}
-            </ThemedText>
-          ) : null}
+          <ThemedText
+            type="caption"
+            accessibilityLabel={fr.social.createCharCountA11y(
+              MAX_PAGE_LENGTH - current.length,
+            )}
+            style={[
+              styles.counter,
+              {
+                color:
+                  current.length >= MAX_PAGE_LENGTH
+                    ? Colors.dark.error
+                    : current.length >= PAGE_LENGTH_WARNING
+                      ? FeedSurface.accent
+                      : FeedSurface.onMediaFaint,
+              },
+            ]}>
+            {fr.social.createCharCount(current.length, MAX_PAGE_LENGTH)}
+          </ThemedText>
         </View>
 
         {!preview && current.length > FEED_PREVIEW_CHARS ? (
@@ -1433,6 +1469,48 @@ export default function CreateTextScreen() {
                 paddingBottom: insets.bottom + Spacing.two,
               },
             ]}>
+            {/* Visibilité du post : choisie à l'aperçu, envoyée à la création.
+                Masquée en édition : le PATCH ne reprend pas ce champ. */}
+            {!editingId ? (
+              <View
+                style={styles.visibilityRow}
+                accessibilityRole="radiogroup"
+                accessibilityLabel={fr.social.createVisibility}>
+                <ThemedText type="caption" style={styles.visibilityLabel}>
+                  {fr.social.createVisibility}
+                </ThemedText>
+                <View style={styles.visibilityOptions}>
+                  {VISIBILITIES.map((option) => {
+                    const active = visibility === option;
+                    return (
+                      <Pressable
+                        key={option}
+                        onPress={() => setVisibility(option)}
+                        disabled={publishing}
+                        accessibilityRole="button"
+                        accessibilityLabel={VISIBILITY_LABELS[option]}
+                        accessibilityState={{ selected: active }}
+                        style={[
+                          styles.visibilityChip,
+                          active && styles.visibilityChipActive,
+                        ]}>
+                        <ThemedText
+                          style={[
+                            Type.caption,
+                            {
+                              color: active
+                                ? FeedSurface.onMedia
+                                : FeedSurface.onMediaSoft,
+                            },
+                          ]}>
+                          {VISIBILITY_LABELS[option]}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
             <Pressable
               onPress={closePreview}
               disabled={publishing}
@@ -1989,6 +2067,21 @@ const styles = StyleSheet.create({
     backgroundColor: FeedSurface.glass,
   },
   previewSecondaryText: { color: FeedSurface.onMedia, fontWeight: '700' },
+  visibilityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingBottom: Spacing.two,
+  },
+  visibilityLabel: { color: FeedSurface.onMediaSoft, fontWeight: '600' },
+  visibilityOptions: { flexDirection: 'row', gap: Spacing.two, flex: 1 },
+  visibilityChip: {
+    borderRadius: Radii.full,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.one,
+    backgroundColor: FeedSurface.glass,
+  },
+  visibilityChipActive: { backgroundColor: FeedSurface.glassStrong },
   backgroundBar: {
     flexDirection: 'row',
     alignItems: 'center',

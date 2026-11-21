@@ -40,6 +40,16 @@ export default function DiscoverScreen() {
   const params = useLocalSearchParams<{ q?: string }>();
 
   const [query, setQuery] = useState(typeof params.q === 'string' ? params.q : '');
+  // Un hashtag touché dans le fil ouvre cet onglet avec `?q=#tag` : l'onglet
+  // peut déjà être monté, donc on suit le paramètre et pas seulement sa
+  // valeur initiale (ajustement d'état au render, sans effet en cascade).
+  const [seenQuery, setSeenQuery] = useState(params.q);
+  if (params.q !== seenQuery) {
+    setSeenQuery(params.q);
+    if (typeof params.q === 'string') {
+      setQuery(params.q);
+    }
+  }
   const [trending, setTrending] = useState<SearchHashtag[]>([]);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');

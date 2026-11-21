@@ -6,8 +6,15 @@
  * réouverture. Tout est gardé en mémoire (lecture immédiate) et sur disque
  * via AsyncStorage, chargé à la demande — un build sans le module natif
  * perd simplement les brouillons au redémarrage, il ne casse rien.
+ *
+ * Le stockage est cloisonné par compte (`setTextDraftOwner`) : un brouillon
+ * saisi par un utilisateur ne réapparaît jamais pour un autre sur un
+ * appareil partagé, et `purgeTextDrafts` l'efface à la déconnexion.
  */
 import { newClientId } from './client-id';
+
+/** Visibilités acceptées par `POST /publications`. */
+export type TextDraftVisibility = 'public' | 'followers' | 'private';
 
 export interface TextDraft {
   /** Identifiant stable : c'est lui que les écritures suivant ciblent. */
@@ -22,7 +29,7 @@ export interface TextDraft {
   background: string;
   /** Clé de `TEXT_FONTS` (`features/social/text-style.ts`). */
   font?: string;
-  /** Clé d'alignement : `left`, `center` ou `right`. */
+  /** Clé d'alignement : `left`, `center`, `right` ou `justify`. */
   align?: string;
   /** Clé de `TEXT_COLORS` ; absent = couleur du thème. */
   color?: string;
@@ -30,6 +37,10 @@ export interface TextDraft {
   textSize?: number;
   /** Lieu facultatif du post (nom saisi ou géocodé). */
   location?: string;
+  /** Visibilité choisie au moment de la saisie. */
+  visibility?: TextDraftVisibility;
+  /** Clé d'idempotence conservée : un rejeu après échec ne duplique rien. */
+  clientId?: string;
   /** Horodatage de la dernière écriture, pour jeter les brouillons trop vieux. */
   updatedAt: number;
 }
@@ -43,9 +54,13 @@ interface Storage {
   removeItem(key: string): Promise<void>;
 }
 
-const KEY = 'mbolo:text-drafts:v1';
+const KEY_PREFIX = 'mbolo:text-drafts:v1';
+/** Ancienne clé de la liste globale (avant cloisonnement par compte). */
+const LEGACY_LIST_KEY = 'mbolo:text-drafts:v1';
 /** Clé de l'ancien brouillon unique : migrée en brouillon de la liste. */
 const LEGACY_KEY = 'mbolo:text-draft:v1';
+/** Format du brouillon unique de la première itération (une page de styles). */
+const REMOTE_KEY_PREFIX = 'mbolochat:text-draft:';
 /** Au-delà, un brouillon est considéré abandonné. */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Liste bornée : les plus anciens sautent en premier. */
@@ -53,12 +68,21 @@ const MAX_DRAFTS = 10;
 /** Regroupe les frappes : une écriture disque après une courte pause. */
 const WRITE_DELAY_MS = 500;
 
+const VISIBILITIES: readonly TextDraftVisibility[] = ['public', 'followers', 'private'];
+
 let storage: Storage | null | undefined;
+/** Compte propriétaire des brouillons chargés ; `null` = clé générique. */
+let ownerId: string | null = null;
 /** Liste complète en mémoire ; `null` = pas encore chargée depuis le disque. */
 let drafts: TextDraft[] | null = null;
 /** Brouillon que le compositeur ouvert est en train d'éditer. */
 let activeId: string | null = null;
 let writeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Clé de stockage du compte courant (ou générique hors session). */
+function storageKey(): string {
+  return ownerId ? `${KEY_PREFIX}:${ownerId}` : LEGACY_LIST_KEY;
+}
 
 function getStorage(): Storage | null {
   if (storage === undefined) {
@@ -79,6 +103,10 @@ function getStorage(): Storage | null {
 
 function isFresh(draft: TextDraft): boolean {
   return Date.now() - draft.updatedAt < MAX_AGE_MS;
+}
+
+function isVisibility(value: unknown): value is TextDraftVisibility {
+  return typeof value === 'string' && (VISIBILITIES as readonly string[]).includes(value);
 }
 
 function parseDraft(raw: unknown): TextDraft | null {
@@ -135,6 +163,43 @@ function parseDraft(raw: unknown): TextDraft | null {
     ...(typeof parsed.color === 'string' ? { color: parsed.color } : {}),
     ...(typeof parsed.textSize === 'number' ? { textSize: parsed.textSize } : {}),
     ...(typeof parsed.location === 'string' ? { location: parsed.location } : {}),
+    ...(isVisibility(parsed.visibility) ? { visibility: parsed.visibility } : {}),
+    ...(typeof parsed.clientId === 'string' && parsed.clientId.length > 0
+      ? { clientId: parsed.clientId }
+      : {}),
+    updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+  };
+}
+
+/**
+ * Convertit le brouillon unique de la première itération (`version: 1`,
+ * une seule page de styles, pas de liste) en brouillon de la liste.
+ */
+function parseLegacySingle(raw: unknown): TextDraft | null {
+  const parsed = raw as {
+    version?: unknown;
+    pages?: unknown;
+    background?: unknown;
+    visibility?: unknown;
+    clientId?: unknown;
+    updatedAt?: unknown;
+  } | null;
+  if (
+    !parsed ||
+    parsed.version !== 1 ||
+    !Array.isArray(parsed.pages) ||
+    typeof parsed.background !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    id: newClientId(),
+    pages: parsed.pages.filter((page): page is string => typeof page === 'string'),
+    background: parsed.background,
+    ...(isVisibility(parsed.visibility) ? { visibility: parsed.visibility } : {}),
+    ...(typeof parsed.clientId === 'string' && parsed.clientId.length > 0
+      ? { clientId: parsed.clientId }
+      : {}),
     updatedAt: typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
   };
 }
@@ -147,7 +212,27 @@ function sorted(list: TextDraft[]): TextDraft[] {
     .slice(0, MAX_DRAFTS);
 }
 
-/** Charge la liste depuis le disque une fois, en migrant l'ancien format. */
+/** Lit une clé brute et la transforme en liste de brouillons. */
+async function readList(store: Storage, key: string): Promise<TextDraft[]> {
+  try {
+    const raw = await store.getItem(key);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    const list = Array.isArray(parsed) ? parsed : [];
+    return sorted(list.map(parseDraft).filter((d): d is TextDraft => d !== null));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Charge la liste du compte depuis le disque une fois, en migrant les
+ * formats antérieurs : brouillon unique (`mbolo:text-draft:v1`), liste
+ * globale d'avant le cloisonnement, et brouillon unique par compte de la
+ * première itération (`mbolochat:text-draft:<userId>`).
+ */
 async function ensureLoaded(): Promise<TextDraft[]> {
   if (drafts !== null) {
     return drafts;
@@ -157,26 +242,63 @@ async function ensureLoaded(): Promise<TextDraft[]> {
     drafts = [];
     return drafts;
   }
+  const own = await readList(store, storageKey());
+  if (own.length > 0 || (await store.getItem(storageKey())) !== null) {
+    drafts = own;
+    return drafts;
+  }
+  const migrated: TextDraft[] = [];
   try {
-    const raw = await store.getItem(KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as unknown;
-      const list = Array.isArray(parsed) ? parsed : [];
-      drafts = sorted(list.map(parseDraft).filter((d): d is TextDraft => d !== null));
-    } else {
-      // Migration : l'ancien brouillon unique devient un brouillon de la liste.
-      const legacy = await store.getItem(LEGACY_KEY);
-      const migrated = legacy ? parseDraft(JSON.parse(legacy)) : null;
-      drafts = migrated && migrated.pages.length > 0 ? [migrated] : [];
-      if (migrated) {
-        await store.setItem(KEY, JSON.stringify(drafts)).catch(() => undefined);
-        await store.removeItem(LEGACY_KEY).catch(() => undefined);
+    // Brouillon unique de la première itération, propre au compte.
+    if (ownerId) {
+      const remoteRaw = await store.getItem(`${REMOTE_KEY_PREFIX}${ownerId}`);
+      if (remoteRaw) {
+        const single = parseLegacySingle(JSON.parse(remoteRaw));
+        if (single && single.pages.some((page) => page.trim().length > 0)) {
+          migrated.push(single);
+        }
+        await store.removeItem(`${REMOTE_KEY_PREFIX}${ownerId}`).catch(() => undefined);
+      }
+    }
+    // Ancien brouillon unique, puis ancienne liste globale.
+    const legacyRaw = await store.getItem(LEGACY_KEY);
+    if (legacyRaw) {
+      const single = parseDraft(JSON.parse(legacyRaw));
+      if (single && single.pages.length > 0) {
+        migrated.push(single);
+      }
+      await store.removeItem(LEGACY_KEY).catch(() => undefined);
+    }
+    if (ownerId) {
+      const globalRaw = await store.getItem(LEGACY_LIST_KEY);
+      if (globalRaw) {
+        const parsed = JSON.parse(globalRaw) as unknown;
+        if (Array.isArray(parsed)) {
+          migrated.push(
+            ...parsed
+              .map(parseDraft)
+              .filter((d): d is TextDraft => d !== null && d.pages.length > 0),
+          );
+        }
+        await store.removeItem(LEGACY_LIST_KEY).catch(() => undefined);
       }
     }
   } catch {
-    drafts = [];
+    // Migration best-effort : au pire les brouillons restent où ils étaient.
+  }
+  drafts = sorted(migrated);
+  if (drafts.length > 0) {
+    void store.setItem(storageKey(), JSON.stringify(drafts)).catch(() => undefined);
   }
   return drafts;
+}
+
+function persistNow(): void {
+  const store = getStorage();
+  if (!store || drafts === null) {
+    return;
+  }
+  void store.setItem(storageKey(), JSON.stringify(sorted(drafts))).catch(() => undefined);
 }
 
 function scheduleWrite(): void {
@@ -185,12 +307,28 @@ function scheduleWrite(): void {
   }
   writeTimer = setTimeout(() => {
     writeTimer = null;
-    const store = getStorage();
-    if (!store || drafts === null) {
-      return;
-    }
-    void store.setItem(KEY, JSON.stringify(sorted(drafts))).catch(() => undefined);
+    persistNow();
   }, WRITE_DELAY_MS);
+}
+
+/**
+ * Désigne le compte propriétaire des brouillons (appelé quand la session
+ * change). Change de compte = état mémoire réinitialisé ; une écriture
+ * différée en cours est d'abord vidée sous l'ancienne clé pour ne rien
+ * perdre ni mélanger.
+ */
+export function setTextDraftOwner(userId: string | null): void {
+  if (userId === ownerId) {
+    return;
+  }
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+    persistNow();
+  }
+  ownerId = userId;
+  drafts = null;
+  activeId = null;
 }
 
 /** Brouillon actif en mémoire sans attendre le disque (premier rendu). */
@@ -277,10 +415,7 @@ export async function deleteTextDraft(id: string): Promise<void> {
   if (activeId === id) {
     activeId = drafts.length > 0 ? drafts[0].id : null;
   }
-  const store = getStorage();
-  if (store) {
-    void store.setItem(KEY, JSON.stringify(sorted(drafts ?? []))).catch(() => undefined);
-  }
+  persistNow();
 }
 
 /** Efface le brouillon actif (après publication). */
@@ -294,9 +429,24 @@ export function clearTextDraft(): void {
       clearTimeout(writeTimer);
       writeTimer = null;
     }
-    const store = getStorage();
-    if (store) {
-      void store.setItem(KEY, JSON.stringify(sorted(drafts ?? []))).catch(() => undefined);
-    }
+    persistNow();
   });
+}
+
+/**
+ * Efface tous les brouillons stockés d'un compte (déconnexion). La clé est
+ * supprimée même si le compte n'est plus le propriétaire courant.
+ */
+export async function purgeTextDrafts(userId: string): Promise<void> {
+  const store = getStorage();
+  if (store) {
+    await store
+      .removeItem(`${KEY_PREFIX}:${userId}`)
+      .catch(() => undefined);
+    await store.removeItem(`${REMOTE_KEY_PREFIX}${userId}`).catch(() => undefined);
+  }
+  if (ownerId === userId) {
+    drafts = [];
+    activeId = null;
+  }
 }
