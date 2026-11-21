@@ -45,11 +45,7 @@ import {
   Type,
 } from '@/constants/theme';
 import { TextPostBackdrop } from '@/features/social/feed/pager/text-backdrop';
-import {
-  isShortTextPost,
-  TEXT_POST_BODY_MAX_CHARS,
-  TEXT_TITLE_INPUT_MAX_CHARS,
-} from '@/features/social/feed/pager/text-post';
+import { TEXT_TITLE_INPUT_MAX_CHARS } from '@/features/social/feed/pager/text-post';
 import {
   CHAR_RATIO,
   TEXT_CARD_ASPECT,
@@ -388,10 +384,9 @@ export default function CreateTextScreen() {
   const textColor = color === 'auto' ? null : (textColorByKey(color)?.color ?? null);
 
   const canPublish = cleanPages(pages).length > 0 && !publishing;
-  // Comme Facebook : le fond coloré ne vaut que pour les posts courts. Texte
-  // long ou multi-pages → fond normal, appliqué à l'aperçu et à la publication
-  // (la pastille reste sélectionnée : elle s'appliquera si le texte raccourcit).
-  const effectiveBackground = isShortTextPost(title, pages) ? background : 'dark';
+  // Le fond choisi s'applique toujours, quelle que soit la longueur du texte :
+  // l'aperçu et la publication montrent exactement la pastille sélectionnée.
+  const effectiveBackground = background;
 
   const markDirty = useCallback(() => {
     dirtyRef.current = true;
@@ -1065,12 +1060,10 @@ export default function CreateTextScreen() {
           : manualTypography(itemSize);
       const itemAlign = pageAlignAt(pageIndex);
       const previewTitle = pageIndex === 0 ? title.trim() : '';
-      // Multi-cartes : le fond coloré d'une page ne vaut que si son propre
-      // texte est court — même règle que le fil, carte par carte.
+      // Multi-cartes : chaque page garde le fond choisi pour elle, quelle que
+      // soit la longueur de son texte — même règle que le fil.
       const pageBg = isMultiPageUi
-        ? item.trim().length <= TEXT_POST_BODY_MAX_CHARS
-          ? (pageStyleAt(pageIndex)?.background ?? 'dark')
-          : 'dark'
+        ? (pageStyleAt(pageIndex)?.background ?? 'dark')
         : effectiveBackground;
       const pageColor = pageTextColorAt(pageIndex);
       return (

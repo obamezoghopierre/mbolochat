@@ -186,14 +186,14 @@ export function TextPage({
   const preview = hasLongBody ? `${body.slice(0, PREVIEW_MAX_CHARS).trimEnd()}…` : body;
   // « Voir plus » et le tap→lecteur : posts simples longs uniquement.
   // Multi-pages : comme Instagram, on glisse entre les pages, pas de
-  // lecteur. Le fond normal s'applique dès que le post est long OU
-  // multi-pages — les fonds colorés restent réservés aux posts courts.
+  // lecteur.
   const isLongPost = hasLongBody || title.length > TEXT_POST_TITLE_MAX_CHARS;
   // Comme Instagram : « Voir plus » n'existe que sur un post simple long.
   // Un carrousel multi-pages n'en a jamais — on balaie les pages, il n'y a
   // rien de plus à lire au-delà.
   const showReader = isLongPost && !isMultiPage;
-  const backgroundKey = isLongPost || isMultiPage ? null : post.textBackground;
+  // Le fond choisi par l'auteur s'applique toujours, comme dans le compositeur.
+  const backgroundKey = post.textBackground ?? null;
   const paletteSet = textPostPaletteSet(backgroundKey);
   const openReader = () => setReaderOpen(true);
   const closeReader = () => setReaderOpen(false);
@@ -791,13 +791,9 @@ function TextPages({
           <Reanimated.View style={[styles.pagesRow, { height }, rowStyle]}>
             {pages.map((page, pageIndex) => {
               // Chaque carte est indépendante : fond et couleur choisis pour
-              // cette page. Comme pour un post simple, le fond coloré ne
-              // s'applique que si le texte de la page reste court.
+              // cette page, quelle que soit la longueur de son texte.
               const style = pageStyles?.[pageIndex] ?? null;
-              const pageBg =
-                style?.background && page.trim().length <= TEXT_POST_BODY_MAX_CHARS
-                  ? style.background
-                  : null;
+              const pageBg = style?.background ?? null;
               const pageFontKey =
                 style?.font && textFontByKey(style.font) ? style.font : baseFont;
               const pageFontSpec = textFontByKey(pageFontKey);
