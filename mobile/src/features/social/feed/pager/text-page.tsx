@@ -450,8 +450,6 @@ export function TextPage({
               )}
             </Pressable>
           ) : null}
-            </Pressable>
-          ) : null}
         </View>
 
         {/* Visuel : pleine largeur, fond choisi par l'auteur, texte centré.
@@ -780,7 +778,7 @@ function TextPages({
 
   // Badge « 2/5 » façon Instagram : visible au changement de page, puis il
   // s'efface pour ne pas masquer le texte.
-  const badgeOpacity = useRef(new Animated.Value(1)).current;
+  const [badgeOpacity] = useState(() => new Animated.Value(1));
   useEffect(() => {
     const animation = Animated.sequence([
       Animated.timing(badgeOpacity, { toValue: 1, duration: 120, useNativeDriver: true }),
@@ -933,7 +931,7 @@ const styles = StyleSheet.create({
   followText: {
     ...Type.body,
     fontWeight: '700',
-  },,,,
+  },
   token: {
     // Hashtags et mentions : l'accent du feed, identifiable dans le texte.
     color: FeedSurface.accent,
@@ -968,10 +966,10 @@ const styles = StyleSheet.create({
     ...Type.caption,
     color: FeedSurface.onMediaSoft,
     opacity: 0.8,
-  },,,,
+  },
   repostedBy: {
     fontWeight: '600',
-  },,
+  },
   locationInline: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1006,7 +1004,7 @@ const styles = StyleSheet.create({
   },
   bodyOnChosenColor: {
     opacity: 0.88,
-  },,
+  },
   title: {
     // « Text post » Instagram : grand titre gras, centré sur le dégradé.
     ...Type.sectionTitle,
@@ -1062,7 +1060,7 @@ const styles = StyleSheet.create({
   footer: {
     gap: Spacing.one,
     paddingHorizontal: Spacing.three,
-  },,
+  },
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1100,7 +1098,7 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: FeedSurface.onMediaFaint,
     opacity: 0.5,
-  },,
+  },
   pressed: {
     opacity: 0.75,
   },
