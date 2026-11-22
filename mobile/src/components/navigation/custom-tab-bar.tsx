@@ -23,7 +23,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { TabBarHeight, TabBarSurface } from '@/constants/theme';
-import { useFeedPageIsLight } from '@/lib/feed-page-tone';
+import { feedChromeHidden } from '@/lib/feed-chrome';
 import { useThemePreference } from '@/lib/theme-preference';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -41,12 +41,12 @@ const TAB_ICONS: Record<string, LucideIcon> = {
   profile: User,
 };
 
-/** Identifiant de route du fil : la barre y devient transparente. */
+/** Identifiant de route du fil : la barre s'y masque au défilement. */
 export const FEED_ROUTE = 'index';
 
 /** Opacité du fond opaque, atteinte uniquement hors du fil. */
 const OPAQUE_PROGRESS = 1;
-/** Opacité du fond transparent sur le fil. */
+/** Opacité du fond transparent (conservée pour l'interpolation). */
 const TRANSPARENT_PROGRESS = 0;
 
 /**
@@ -61,10 +61,9 @@ export const TAB_COLORS = {
 /**
  * Barre de navigation inférieure.
  *
- * - sur le fil, elle est **transparente et superposée** à la vidéo ;
- * - ailleurs, elle a un **fond opaque** et un filet supérieur ;
- * - le passage transparent ↔ opaque est animé sur le thread UI (`Reanimated`),
- *   donc fluide même pendant le scroll du pager.
+ * - **fond opaque** et filet supérieur partout, fil compris ;
+ * - sur le fil, elle **glisse hors de l'écran** quand on descend et revient
+ *   quand on remonte un peu (comme Instagram), sur le thread UI.
  *
  * Les animations par onglet vivent dans `TabButton` : la barre elle-même ne se
  * re-rend jamais quand un onglet change d'état visuel.
@@ -79,21 +78,19 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
   const onFeed = state.routes[state.index]?.name === FEED_ROUTE;
   const theme = useTheme();
   const { scheme } = useThemePreference();
-  // Page texte claire en thème clair : les icônes blanches du fil seraient
-  // invisibles sur le dégradé pastel — la barre passe aux teintes foncées.
-  const lightPage = useFeedPageIsLight();
 
-  // Une seule valeur partagée pilote le fond ET le filet.
-  const opaque = useSharedValue(onFeed ? TRANSPARENT_PROGRESS : OPAQUE_PROGRESS);
+  // Fond opaque partout, fil compris (comme Instagram) : le fil défile
+  // dessous. Une seule valeur partagée pilote le fond ET le filet.
+  const opaque = useSharedValue(OPAQUE_PROGRESS);
 
-  // `useEffect` (et non un calcul au rendu) : les SharedValue sont immuables
-  // pendant le rendu pour le React Compiler. `withTiming` interpole sur le
-  // thread UI, donc aucun rendu React n'est déclenché pendant la transition.
-  useEffect(() => {
-    opaque.value = withTiming(onFeed ? TRANSPARENT_PROGRESS : OPAQUE_PROGRESS, {
-      duration: 220,
-    });
-  }, [onFeed, opaque]);
+  // Sur le fil, la barre glisse hors de l'écran au défilement vers le bas et
+  // revient dès qu'on remonte (valeur partagée avec la barre du haut).
+  const hiddenProgress = useDerivedValue(() => (onFeed ? feedChromeHidden.value : 0));
+  const barSlideStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: hiddenProgress.value * (TabBarHeight + insets.bottom + 2) },
+    ],
+  }));
 
   // `interpolateColor` (et non une chaîne `rgba` éditable) : Reanimated anime
   // la couleur sur le thread UI, sans re-rendu React.
@@ -122,12 +119,11 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
     scheme === 'light'
       ? { inactive: theme.textSecondary, active: theme.accent }
       : { inactive: TabBarSurface.inactive, active: TabBarSurface.active };
+  // Barre opaque partout : libellés aux teintes du thème, fil compris.
   const labelColors =
-    onFeed && !lightPage
-      ? { inactive: TabBarSurface.inactive, active: TabBarSurface.active }
-      : scheme === 'light'
-        ? { inactive: theme.text, active: theme.accent }
-        : { inactive: TabBarSurface.inactive, active: TabBarSurface.active };
+    scheme === 'light'
+      ? { inactive: theme.text, active: theme.accent }
+      : { inactive: TabBarSurface.inactive, active: TabBarSurface.active };
   const iconStroke = scheme === 'light' ? theme.text : undefined;
   const iconFill = scheme === 'light' ? '#FFFFFF' : undefined;
 
@@ -144,6 +140,7 @@ export function CustomTabBar({ state, descriptors, emitter, navigateToTab, inset
         styles.bar,
         { height: TabBarHeight + insets.bottom, paddingBottom: insets.bottom },
         containerStyle,
+        barSlideStyle,
       ]}>
       <View style={styles.row}>
         {/* Sur le fil, la barre est transparente et TOUTES les icônes sont

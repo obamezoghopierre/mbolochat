@@ -42,6 +42,7 @@ import { COMMENTS_SHEET_SNAP_RATIO, CommentsSheet } from './pager/comments-sheet
 import { FLOW_TOP_BAR, FeedPager, type FeedPagerActions } from './pager/feed-pager';
 import { OnMediaShadow, useTextPostTones } from './pager/feed-tokens';
 import { useFeed } from './use-feed';
+import { feedChromeHidden, resetFeedChromeTracking, showFeedChrome } from '@/lib/feed-chrome';
 import { markLaunchReady } from '@/lib/launch-gate';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { Image } from 'expo-image';
@@ -173,6 +174,15 @@ export function FeedScreen() {
     pager.current?.scrollTo({ x: initialIndex * width, animated: false });
   }, [initialIndex, width]);
 
+  // Barres toujours visibles quand on change de fil, ouvre les Reels ou les
+  // commentaires, ou quitte l'écran : le masquage ne vaut que pendant le
+  // défilement d'un fil.
+  useEffect(() => {
+    showFeedChrome();
+    resetFeedChromeTracking();
+  }, [tab, reelsOpen, commentsPost, screenFocused]);
+  useEffect(() => () => showFeedChrome(), []);
+
   const changeTab = useCallback(
     (next: FeedTab) => {
       const index = TABS.findIndex((entry) => entry.id === next);
@@ -256,14 +266,22 @@ function FeedTopBar({
   // posts défilent dessous.
   const tones = useTextPostTones();
   const openSearch = useCallback(() => router.push('/discover'), []);
+  // Masquée au défilement vers le bas, comme Instagram : la barre remonte de
+  // toute sa hauteur et revient dès qu'on remonte un peu.
+  const barHeight = topInset + FLOW_TOP_BAR;
+  const slideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -barHeight * feedChromeHidden.value }],
+  }));
   const openCreate = useCallback(() => router.push('/create'), []);
 
   return (
-    <View
+    <>
+    <ReAnimated.View
       pointerEvents="box-none"
       style={[
         styles.fixedTop,
-        { height: topInset + FLOW_TOP_BAR, backgroundColor: tones.surface },
+        { height: barHeight, backgroundColor: tones.surface },
+        slideStyle,
       ]}>
       <View
         style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
@@ -314,7 +332,14 @@ function FeedTopBar({
         ]}>
         <Icon icon={Plus} size={24} color={tones.text} strokeWidth={2.6} />
       </Pressable>
-    </View>
+    </ReAnimated.View>
+    {/* Zone de la barre d'état : reste couverte quand la barre glisse, comme
+        Instagram — le fil ne passe jamais sous l'heure et la batterie. */}
+    <View
+      pointerEvents="none"
+      style={[styles.fixedTop, { height: topInset, backgroundColor: tones.surface }]}
+    />
+    </>
   );
 }
 

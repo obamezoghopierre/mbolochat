@@ -19,6 +19,8 @@ import {
   Animated,
   FlatList,
   type FlatListProps,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Image,
   Platform,
   RefreshControl,
@@ -36,6 +38,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { copyToClipboard } from '@/lib/clipboard';
 import { postDeepLink } from '@/lib/deep-link';
+import { trackFeedScroll } from '@/lib/feed-chrome';
 import { setFeedPageIsLight } from '@/lib/feed-page-tone';
 import { setPendingPostShare } from '@/lib/pending-post-share';
 import { useThemePreference } from '@/lib/theme-preference';
@@ -348,6 +351,15 @@ export function FeedPager({
         initialScrollIndex={!flow && initialIndex > 0 ? initialIndex : undefined}
         // Fil libre : la barre d'onglets du haut et celle du bas flottent
         // par-dessus ; la liste leur laisse la place.
+        // Fil libre : le défilement pilote le masquage des barres haut et bas
+        // (seulement pour l'onglet visible, pas pour les fils voisins montés).
+        onScroll={
+          flow && playbackActive
+            ? (event: NativeSyntheticEvent<NativeScrollEvent>) =>
+                trackFeedScroll(event.nativeEvent.contentOffset.y)
+            : undefined
+        }
+        scrollEventThrottle={flow ? 16 : undefined}
         contentContainerStyle={
           flow ? { paddingTop: insets.top + FLOW_TOP_BAR, paddingBottom: barInset } : undefined
         }
