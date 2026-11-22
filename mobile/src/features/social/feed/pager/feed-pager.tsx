@@ -716,16 +716,14 @@ function moderationActions(
         },
       ];
   if (own) {
-    // « Modifier » n'a de sens que pour un post texte : le compositeur
-    // d'édition ne sait pas encore reprendre les publications média.
-    if (target.format === 'text') {
-      list.push({
-        key: 'edit',
-        label: fr.social.editPublication,
-        icon: Pencil,
-        onPress: run(() => actions.edit(target)),
-      });
-    }
+    // Post texte : compositeur complet. Photo, carrousel ou vidéo : la
+    // légende seule, comme Instagram (les médias ne changent pas).
+    list.push({
+      key: 'edit',
+      label: fr.social.editPublication,
+      icon: Pencil,
+      onPress: run(() => actions.edit(target)),
+    });
     list.push({
       key: 'delete',
       label: fr.social.deletePublication,

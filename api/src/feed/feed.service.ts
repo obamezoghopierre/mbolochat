@@ -122,6 +122,7 @@ type PublicationRow = {
   mediaFilter: string | null;
   visibility: 'public' | 'followers' | 'private';
   createdAt: Date;
+  editedAt?: Date | null;
   author: AuthorCard;
   authorPrivateAccount: boolean;
   likeCount: number;
@@ -632,6 +633,7 @@ export class FeedService {
       mediaFilter: publications.mediaFilter,
       visibility: publications.visibility,
       createdAt: publications.createdAt,
+      editedAt: publications.editedAt,
       author: {
         id: users.id,
         username: users.username,
@@ -774,6 +776,7 @@ export class FeedService {
       mediaFilter: row.mediaFilter,
       visibility: row.visibility,
       createdAt: row.createdAt,
+      editedAt: row.editedAt ?? null,
       author: { ...row.author } as AuthorCard,
       counters: {
         likes: row.likeCount,

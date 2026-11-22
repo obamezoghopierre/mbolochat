@@ -770,6 +770,15 @@ export const fr = {
     qrCodeHint: 'Fais scanner ce code pour ouvrir la publication.',
     deletePublication: 'Supprimer',
     editPublication: 'Modifier',
+    editCaptionTitle: 'Modifier la légende',
+    editCaptionPlaceholder: 'Écris une légende…',
+    editCaptionHint:
+      'Les photos et vidéos restent inchangées. Les personnes que tu mentionnes pour la première fois seront prévenues.',
+    editSave: 'Enregistrer',
+    editLoadError: 'Impossible de charger la publication.',
+    editSaveError: 'Enregistrement impossible. Vérifie ta connexion.',
+    /** Suffixe de date d'une publication retouchée, comme Instagram. */
+    postEdited: 'Modifié',
     reportPublication: 'Signaler',
     reportTitle: 'Signaler cette publication',
     reportSubtitle: 'Choisis le motif qui correspond le mieux.',

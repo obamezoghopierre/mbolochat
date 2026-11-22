@@ -363,6 +363,7 @@ export function ImagePage({
                   ) : null}
                   <ThemedText numberOfLines={1} style={[styles.authorMeta, { color: tones.textSoft }]}>
                     · {formatRelativeTimestamp(post.createdAt)}
+                    {post.editedAt ? ` · ${fr.social.postEdited}` : ''}
                   </ThemedText>
                 </View>
                 {post.location ? (

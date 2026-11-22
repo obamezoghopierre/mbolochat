@@ -506,6 +506,8 @@ export interface QuotedPost {
 /** Publication du fil social (posts et reels unifiés côté API). */
 export interface FeedPost {
   id: string;
+  /** Dernière retouche du texte par l'auteur (ISO), `null` = jamais modifiée. */
+  editedAt?: string | null;
   kind: 'post' | 'reel';
   format: 'text' | 'image' | 'carousel' | 'video';
   caption: string | null;

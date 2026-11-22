@@ -1188,6 +1188,12 @@ export const publications = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
     /** Suppression logique : les interactions restent auditables jusqu'à purge. */
+    /**
+     * Dernière retouche du texte par l'auteur (légende, pages, titre). `null`
+     * = jamais modifiée. Distinct de `updated_at`, qui bouge aussi pour la
+     * modération : c'est ce champ qui affiche « Modifié » dans l'app.
+     */
+    editedAt: timestamp('edited_at', { withTimezone: true }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     /**
      * Vecteur de recherche plein texte, tenu par PostgreSQL. La colonne n'est

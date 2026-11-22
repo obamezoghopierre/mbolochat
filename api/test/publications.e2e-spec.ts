@@ -405,6 +405,63 @@ describe('Publications et interactions (e2e)', () => {
     }).expect(400);
   });
 
+  describe('modifier une publication après coup', () => {
+    const edit = (actor: { token: string }, id: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .patch(`/publications/${id}`)
+        .set('Authorization', `Bearer ${actor.token}`)
+        .send(body);
+
+    const mentionsOf = async (actor: { token: string }, publicationId: string) =>
+      (
+        await request(app.getHttpServer())
+          .get('/social/notifications')
+          .set('Authorization', `Bearer ${actor.token}`)
+          .expect(200)
+      ).body.items.filter(
+        (item: { type: string; publicationId: string }) =>
+          item.type === 'mention' && item.publicationId === publicationId,
+      );
+
+    it('marque « modifié » seulement quand le texte change', async () => {
+      const alice = await register('Retouche');
+      const created = await publish(alice, { caption: 'Premier jet' }).expect(201);
+      expect(created.body.editedAt ?? null).toBeNull();
+
+      // Style seul : pas de mention « modifié ».
+      const restyled = await edit(alice, created.body.id, { textBackground: 'rose' }).expect(200);
+      expect(restyled.body.editedAt ?? null).toBeNull();
+
+      const edited = await edit(alice, created.body.id, { caption: 'Version corrigée' }).expect(200);
+      expect(edited.body.caption).toBe('Version corrigée');
+      expect(edited.body.editedAt).toEqual(expect.any(String));
+
+      const seen = await see(alice, created.body.id).expect(200);
+      expect(seen.body.editedAt).toEqual(expect.any(String));
+    });
+
+    it('notifie seulement les nouvelles mentions ajoutées par la retouche', async () => {
+      const alice = await register('Ajouteuse');
+      const first = await register('Premiere');
+      const second = await register('Seconde');
+      const created = await publish(alice, { caption: `Avec @${first.username}` }).expect(201);
+      expect(await mentionsOf(first, created.body.id)).toHaveLength(1);
+
+      await edit(alice, created.body.id, {
+        caption: `Avec @${first.username} et @${second.username}`,
+      }).expect(200);
+      expect(await mentionsOf(first, created.body.id)).toHaveLength(1);
+      expect(await mentionsOf(second, created.body.id)).toHaveLength(1);
+    });
+
+    it('refuse la retouche à un autre compte', async () => {
+      const alice = await register('Proprio');
+      const mallory = await register('Intruse');
+      const created = await publish(alice, { caption: 'À moi' }).expect(201);
+      await edit(mallory, created.body.id, { caption: 'Piratée' }).expect(403);
+    });
+  });
+
   describe('cas limites des posts texte multi-pages', () => {
     const page = (char: string, length = 2000) => char.repeat(length);
 

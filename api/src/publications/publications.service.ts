@@ -115,6 +115,8 @@ export interface PublicationView {
   mediaFilter?: string | null;
   visibility: 'public' | 'followers' | 'private';
   createdAt: Date;
+  /** Dernière retouche du texte par l'auteur, `null` = jamais modifiée. */
+  editedAt?: Date | null;
   author: AuthorCard;
   counters: {
     likes: number;
@@ -662,14 +664,28 @@ export class PublicationsService {
       throw new BadRequestException('La légende ne peut pas être vide sans média.');
     }
 
-    // Le texte réellement publié est re-scanné : une retouche qui introduit
-    // un mot bloqué repasse le post en revue.
+    // Le texte réellement publié est re-scanné, légende d'une photo ou d'une
+    // vidéo comprise : une retouche qui introduit un mot bloqué repasse le
+    // post en revue.
     const moderationText =
       storedPages.length > 0 ? storedPages.join('\n') : effectiveCaption;
     const flagged =
-      isTextPost && moderationText.length > 0
-        ? await this.moderation.hasBlockedWord(moderationText)
-        : false;
+      moderationText.length > 0 ? await this.moderation.hasBlockedWord(moderationText) : false;
+
+    // « Modifié » : seulement si le texte lu change vraiment (légende, pages
+    // ou titre), pas pour un simple changement de fond ou de police.
+    const previousText = [
+      (row.textPages ?? []).length > 1 ? (row.textPages ?? []).join('\n') : (row.caption ?? ''),
+      row.textTitle ?? '',
+    ].join('\u0000');
+    const nextTitle =
+      isTextPost && dto.textTitle !== undefined
+        ? dto.textTitle === null
+          ? ''
+          : dto.textTitle.trim()
+        : (row.textTitle ?? '');
+    const textChanged = previousText !== [moderationText, nextTitle].join('\u0000');
+    let mentionNotifications: Awaited<ReturnType<SocialNotificationsService['create']>>[] = [];
 
     const updated = await this.db.transaction(async (tx) => {
       const [result] = await tx
@@ -712,6 +728,8 @@ export class PublicationsService {
               }
             : {}),
           ...(flagged ? { moderationStatus: 'flagged' as const } : {}),
+          ...(textChanged ? { editedAt: new Date() } : {}),
+          updatedAt: new Date(),
           // Le texte a pu changer : l'aperçu du premier lien est recalculé
           // (annulé s'il n'y a plus d'URL exploitable).
           ...(isTextPost &&
@@ -723,10 +741,27 @@ export class PublicationsService {
         })
         .where(eq(publications.id, publicationId))
         .returning();
+      // Nouvelles mentions ajoutées par la retouche : notifiées comme à la
+      // création (la clé de déduplication ignore celles déjà prévenues). Un
+      // post en revue attend la décision de la modération.
+      const visible =
+        result && result.moderationStatus !== 'flagged' && result.moderationStatus !== 'removed';
+      if (result && textChanged && visible && moderationText.length > 0) {
+        mentionNotifications = await this.applyPublicationMentions(
+          tx,
+          moderationText,
+          viewerId,
+          result.id,
+          result.visibility,
+        );
+      }
       return result;
     });
     if (!updated) {
       throw new NotFoundException('Publication introuvable.');
+    }
+    for (const notification of mentionNotifications) {
+      await this.notifications.deliver(notification);
     }
     return this.view(updated, viewerId);
   }
@@ -1871,6 +1906,7 @@ export class PublicationsService {
       mediaFilter: row.mediaFilter ?? null,
       visibility: row.visibility,
       createdAt: row.createdAt,
+      editedAt: row.editedAt ?? null,
       author,
       counters: {
         likes: row.likeCount,

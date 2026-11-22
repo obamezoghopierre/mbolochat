@@ -422,7 +422,10 @@ function FeedSurfaceView({
     follow: feed.follow,
     remove: feed.remove,
     // Réouverture du compositeur texte en mode édition.
-    edit: (post: FeedPost) => router.push(`/create/text?id=${post.id}`),
+    edit: (post: FeedPost) =>
+      router.push(
+        post.format === 'text' ? `/create/text?id=${post.id}` : `/post/edit/${post.id}`,
+      ),
     report: (post: FeedPost) => report.open(post),
     onOpenComments,
     notifyError: feed.notifyError,
