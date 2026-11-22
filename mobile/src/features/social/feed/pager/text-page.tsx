@@ -132,6 +132,7 @@ export function TextPage({
   state,
   likeScale,
   onDoubleTapLike,
+  preview = false,
 }: {
   post: FeedPost;
   chrome: FeedPageChrome;
@@ -141,6 +142,12 @@ export function TextPage({
   likeScale?: Animated.Value;
   /** Double-tap sur la carte : like + cœur animé, comme sur les pages média. */
   onDoubleTapLike?: () => void;
+  /**
+   * Aperçu du compositeur : rendu identique au fil (en-tête, visuel, barre
+   * d'actions), mais rien n'est actionnable — pas de navigation, de like,
+   * de suivi ni de menu — et sans les réserves des barres du fil.
+   */
+  preview?: boolean;
 }) {
   // Fond choisi par l'auteur : clé de palette, `null`/inconnu = dark.
   // Chaque fond a un rendu sombre et un rendu clair (thème de l'app).
@@ -166,7 +173,7 @@ export function TextPage({
   // Entrée de carte : un fondu léger, seulement la première fois qu'un post
   // apparaît. Le pager démonte et remonte les pages : sans ce registre, chaque
   // retour en arrière refaisait le fondu et donnait un effet de clignotement.
-  const alreadySeen = seenTextPosts.has(post.id);
+  const alreadySeen = preview || seenTextPosts.has(post.id);
   const enter = useMemo(() => new Animated.Value(alreadySeen ? 1 : 0), [alreadySeen]);
   useEffect(() => {
     if (alreadySeen) {
@@ -222,6 +229,10 @@ export function TextPage({
   const closeReader = () => setReaderOpen(false);
 
   const interactive = Boolean(actions && state) && !chrome.hideOverlays;
+  // Liens, profil, suivi, menu et like : désactivés dans l'aperçu.
+  const linksEnabled = interactive && !preview;
+  const topReserved = preview ? Spacing.two : CARD_TOP_RESERVED;
+  const bottomReserved = preview ? Spacing.two : CARD_BOTTOM_RESERVED;
   const author = post.author;
 
   // Format Instagram : en-tête au-dessus, visuel pleine largeur au ratio du
@@ -245,8 +256,8 @@ export function TextPage({
     HEADER_AVATAR + (post.repostedBy ? 22 : 0) + (post.quoted ? 96 : 0);
   const available =
     chrome.height -
-    CARD_TOP_RESERVED -
-    CARD_BOTTOM_RESERVED -
+    topReserved -
+    bottomReserved -
     (topHeight ?? estimatedTop) -
     (interactive ? (footerHeight ?? FOOTER_ESTIMATE) : 0) -
     (isMultiPage ? PAGE_DOTS_BLOCK : 0) -
@@ -296,7 +307,7 @@ export function TextPage({
     const now = Date.now();
     if (now - lastTapAt.current < DOUBLE_TAP_MS) {
       lastTapAt.current = 0;
-      if (interactive) {
+      if (linksEnabled) {
         onDoubleTapLike?.();
       }
       return;
@@ -308,7 +319,16 @@ export function TextPage({
   };
 
   return (
-    <View style={[styles.page, { height: chrome.height, backgroundColor: tones.surface }]}>
+    <View
+      style={[
+        styles.page,
+        {
+          height: chrome.height,
+          backgroundColor: tones.surface,
+          paddingTop: topReserved,
+          paddingBottom: bottomReserved,
+        },
+      ]}>
       <Animated.View
         style={[
           styles.column,
@@ -343,7 +363,7 @@ export function TextPage({
           <View style={styles.header}>
             <Pressable
               onPress={actions?.onOpenProfile}
-              disabled={!actions}
+              disabled={!actions || preview}
               accessibilityRole="button"
               accessibilityLabel={`Voir le profil de ${author.displayName}${
                 author.verified ? `, ${fr.social.verifiedAccount}` : ''
@@ -385,7 +405,7 @@ export function TextPage({
             </Pressable>
 
             <View style={styles.headerActions}>
-              {actions?.onFollow ? (
+              {actions?.onFollow && !preview ? (
                 <Pressable
                   onPress={actions.onFollow}
                   hitSlop={8}
@@ -397,7 +417,7 @@ export function TextPage({
                   </ThemedText>
                 </Pressable>
               ) : null}
-              {actions ? (
+              {actions && !preview ? (
                 // Options (signaler, masquer…) : elles vivent dans la feuille
                 // Partager, ouverte ici comme le ⋯ d'Instagram.
                 <Pressable
@@ -417,6 +437,7 @@ export function TextPage({
           {post.quoted ? (
             <Pressable
               onPress={() => router.push(`/post/${post.quoted!.id}`)}
+              disabled={preview}
               accessibilityRole="button"
               accessibilityLabel={`Voir la publication de ${post.quoted.authorDisplayName}`}
               style={({ pressed }) => [
@@ -467,7 +488,7 @@ export function TextPage({
             baseColor={chosenColor ?? null}
             baseSize={manualSize}
             onPress={handleCardPress}
-            interactive={interactive}
+            interactive={linksEnabled}
           />
         ) : (
           <Pressable
@@ -487,7 +508,7 @@ export function TextPage({
                 ]}
                 numberOfLines={5}>
                 {renderTokens(title, [styles.token, { color: tones.accent }], {
-                  interactive,
+                  interactive: linksEnabled,
                   linkStyle: [styles.token, { color: tones.accent, textDecorationLine: 'underline' }],
                 })}
               </ThemedText>
@@ -507,7 +528,7 @@ export function TextPage({
                   ]}
                   numberOfLines={hasLongBody ? 8 : 16}>
                   {renderTokens(preview, [styles.token, { color: tones.accent }], {
-                    interactive,
+                    interactive: linksEnabled,
                     linkStyle: [styles.token, { color: tones.accent, textDecorationLine: 'underline' }],
                   })}
                 </ThemedText>
@@ -518,6 +539,7 @@ export function TextPage({
               {post.linkPreview ? (
                 <Pressable
                   onPress={() => void Linking.openURL(post.linkPreview!.url).catch(() => undefined)}
+                disabled={preview}
                   accessibilityRole="link"
                   accessibilityLabel={post.linkPreview.title}
                   style={({ pressed }) => [
@@ -573,6 +595,10 @@ export function TextPage({
         {interactive && actions && state ? (
           <View
             style={styles.footer}
+            // Aperçu : la barre est montrée telle quelle mais inerte.
+            pointerEvents={preview ? 'none' : 'auto'}
+            importantForAccessibility={preview ? 'no-hide-descendants' : 'auto'}
+            accessibilityElementsHidden={preview}
             onLayout={(event) => onFooterLayout(event.nativeEvent.layout.height)}>
             <PostActionBar
               post={post}
@@ -901,8 +927,6 @@ const styles = StyleSheet.create({
   page: {
     overflow: 'hidden',
     justifyContent: 'center',
-    paddingTop: CARD_TOP_RESERVED,
-    paddingBottom: CARD_BOTTOM_RESERVED,
   },
   column: {
     alignSelf: 'stretch',

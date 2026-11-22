@@ -24,6 +24,7 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
+  Animated,
   View,
   useWindowDimensions,
   type LayoutChangeEvent,
@@ -44,7 +45,7 @@ import {
   Spacing,
   Type,
 } from '@/constants/theme';
-import { TextPostBackdrop } from '@/features/social/feed/pager/text-backdrop';
+import { TextPage } from '@/features/social/feed/pager/text-page';
 import { TEXT_TITLE_INPUT_MAX_CHARS } from '@/features/social/feed/pager/text-post';
 import {
   CHAR_RATIO,
@@ -88,7 +89,7 @@ import {
   writeTextDraft,
   type TextDraft,
 } from '@/lib/text-draft';
-import type { SearchHashtag, SearchUser, SocialVisibility } from '@/lib/types';
+import type { FeedPost, SearchHashtag, SearchUser, SocialVisibility } from '@/lib/types';
 
 /** Bornes alignées sur le DTO (`MAX_TEXT_PAGES`, `MAX_TEXT_PAGE_LENGTH`). */
 const MAX_PAGES = 10;
@@ -181,7 +182,7 @@ const ALIGN_ICONS = {
  * du fil, et le brouillon survit à la sortie de l'écran.
  */
 export default function CreateTextScreen() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   /** `?id=` présent = mode édition : le contenu du post fait foi, pas le brouillon. */
@@ -430,7 +431,9 @@ export default function CreateTextScreen() {
       if (!isMultiPageUi) {
         return effectiveBackground;
       }
-      return pageStyleAt(pageIndex)?.background ?? 'dark';
+      // Sans fond propre, la page prend celui du post : c'est ce que le fil
+      // affiche (la publication n'envoie que les fonds choisis par page).
+      return pageStyleAt(pageIndex)?.background ?? effectiveBackground;
     },
     [effectiveBackground, isMultiPageUi, pageStyleAt],
   );
@@ -1047,68 +1050,76 @@ export default function CreateTextScreen() {
     [cardHeight, cardWidth, pageAlignAt, pageBackgroundAt, pageFontAt, pageSizeAt, pageTextColorAt, pages.length, removePage, updatePage, windowWidth],
   );
 
-  /** Aperçu : la carte telle qu'elle apparaîtra dans le fil (dégradé réel). */
-  const renderPreviewPage = useCallback(
-    ({ item, index: pageIndex }: { item: string; index: number }) => {
-      const itemSize = pageSizeAt(pageIndex);
-      const itemFontSpec = textFontByKey(pageFontAt(pageIndex));
-      const itemFontStyle = textFontStyle(itemFontSpec, Platform.OS);
-      const itemCharRatio = itemFontSpec?.charRatio ?? CHAR_RATIO;
-      const fit =
-        itemSize === null
-          ? autoFitTextSize(item, cardWidth, itemCharRatio)
-          : manualTypography(itemSize);
-      const itemAlign = pageAlignAt(pageIndex);
-      const previewTitle = pageIndex === 0 ? title.trim() : '';
-      // Multi-cartes : chaque page garde le fond choisi pour elle, quelle que
-      // soit la longueur de son texte — même règle que le fil.
-      const pageBg = isMultiPageUi
-        ? (pageStyleAt(pageIndex)?.background ?? 'dark')
-        : effectiveBackground;
-      const pageColor = pageTextColorAt(pageIndex);
-      return (
-        <View style={[styles.page, { width: windowWidth }]}>
-          <View
-            style={[
-              styles.card,
-              styles.previewCard,
-              { width: cardWidth, height: cardHeight },
-            ]}>
-            <TextPostBackdrop backgroundKey={pageBg} />
-            {previewTitle ? (
-              <ThemedText
-                style={[
-                  styles.previewTitle,
-                  itemFontStyle,
-                  {
-                    color: pageColor ?? FeedSurface.onMedia,
-                    textAlign: itemAlign,
-                  },
-                ]}>
-                {previewTitle}
-              </ThemedText>
-            ) : null}
-            <ThemedText
-              style={[
-                itemFontStyle,
-                {
-                  fontSize: fit.fontSize,
-                  lineHeight: fit.lineHeight,
-                  color: pageColor ?? FeedSurface.onMedia,
-                  textAlign: itemAlign,
-                },
-              ]}
-              accessibilityLabel={item}>
-              {item || ' '}
-            </ThemedText>
-          </View>
-        </View>
-      );
-    },
-    [cardHeight, cardWidth, effectiveBackground, isMultiPageUi, pageAlignAt, pageFontAt, pageSizeAt, pageStyleAt, pageTextColorAt, title, windowWidth],
+  /**
+   * Aperçu = le vrai rendu du fil. On construit la publication exactement
+   * comme `publish()` l'enverra (pages vides retirées, styles réappariés,
+   * fond, police, titre, lieu) et on la passe au composant du fil, en mode
+   * aperçu (rien n'est actionnable). L'aperçu ne peut donc plus diverger.
+   */
+  // useState paresseux : lire `useRef().current` au rendu enfreint react-hooks/refs.
+  const [previewLikeScale] = useState(() => new Animated.Value(1));
+  const previewPost = useMemo<FeedPost | null>(() => {
+    if (!preview) {
+      return null;
+    }
+    const filledPairs = pages
+      .map((text, pageIndex) => ({ text: text.trim(), style: pageStyles[pageIndex] ?? null }))
+      .filter((pair) => pair.text.length > 0);
+    if (filledPairs.length === 0) {
+      return null;
+    }
+    const multi = filledPairs.length > 1;
+    return {
+      id: 'composer-preview',
+      kind: 'post',
+      format: 'text',
+      caption: filledPairs[0].text,
+      textBackground: effectiveBackground,
+      pages: multi ? filledPairs.map((pair) => pair.text) : null,
+      pageStyles: multi ? filledPairs.map((pair) => pair.style) : null,
+      textFont: font,
+      textAlign: align,
+      textColor: color === 'auto' ? null : color,
+      textTitle: title.trim() ? title.trim() : null,
+      textSize,
+      location: location.trim() ? location.trim() : null,
+      linkPreview: null,
+      visibility,
+      createdAt: new Date().toISOString(),
+      author: {
+        id: user?.id ?? 'me',
+        username: user?.username ?? '',
+        displayName: user?.displayName ?? '',
+        avatarUrl: user?.avatarUrl ?? null,
+        verified: false,
+      },
+      media: [],
+      counters: { likes: 0, comments: 0, reposts: 0, saves: 0, shares: 0, views: 0 },
+      // `followingAuthor` : pas de bouton « Suivre » sur son propre post.
+      viewer: { reaction: null, followingAuthor: true, saved: false, reposted: false },
+      quoted: null,
+      repostedBy: null,
+    };
+  }, [align, color, effectiveBackground, font, location, pageStyles, pages, preview, textSize, title, user, visibility]);
+  const previewActions = useMemo(
+    () => ({
+      onToggleLike: () => undefined,
+      onPickReaction: null,
+      onOpenComments: () => undefined,
+      onToggleSave: () => undefined,
+      onToggleRepost: () => undefined,
+      onShare: () => undefined,
+      onOpenProfile: () => undefined,
+      onFollow: null,
+    }),
+    [],
+  );
+  const previewState = useMemo(
+    () => ({ reacted: false, saved: false, reposted: false, following: true, toast: null }),
+    [],
   );
 
-  const renderPage = preview ? renderPreviewPage : renderEditPage;
+  const renderPage = renderEditPage;
 
   // Valeurs affichées par les pastilles : en multi-cartes, celles de la
   // page en cours d'édition ; sinon les champs globaux du post.
@@ -1116,7 +1127,7 @@ export default function CreateTextScreen() {
     ? (pageStyleAt(index)?.color ?? 'auto')
     : color;
   const pickerBackground: string = isMultiPageUi
-    ? (pageStyleAt(index)?.background ?? 'dark')
+    ? (pageStyleAt(index)?.background ?? background)
     : background;
   const pickerFont = pageFontAt(index);
   const pickerAlign = pageAlignAt(index);
@@ -1195,26 +1206,8 @@ export default function CreateTextScreen() {
               : fr.social.createHeader}
         </ThemedText>
         {preview ? (
-          <Pressable
-            onPress={() => void publish()}
-            disabled={!canPublish}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={editingId ? fr.social.saveChanges : fr.social.createPublish}
-            accessibilityState={{ disabled: !canPublish }}>
-            {publishing ? (
-              <ActivityIndicator size="small" color={FeedSurface.accent} />
-            ) : (
-              <ThemedText
-                style={[
-                  Type.body,
-                  styles.publishLabel,
-                  { color: canPublish ? FeedSurface.accent : FeedSurface.onMediaFaint },
-                ]}>
-                {editingId ? fr.social.saveChanges : fr.social.createPublish}
-              </ThemedText>
-            )}
-          </Pressable>
+          // Aperçu : « Publier » est le bouton principal en bas de l'écran.
+          <View style={styles.topSpacer} />
         ) : (
           <Pressable
             onPress={openPreview}
@@ -1322,6 +1315,33 @@ export default function CreateTextScreen() {
             ) : null}
           </View>
         ) : null}
+        {preview ? (
+          // Aperçu : la publication telle qu'elle apparaîtra dans le fil, avec
+          // l'en-tête, le visuel 4:5 et la barre d'actions (inerte).
+          <View
+            style={styles.pagerArea}
+            onLayout={onAreaLayout}
+            accessibilityLabel={fr.social.createPreviewAction}>
+            {previewPost && area.height > 0 ? (
+              <TextPage
+                post={previewPost}
+                preview
+                actions={previewActions}
+                state={previewState}
+                likeScale={previewLikeScale}
+                chrome={{
+                  height: area.height,
+                  barInset: 0,
+                  isActive: true,
+                  burstKey: 0,
+                  burstPoint: null,
+                  likeScale: previewLikeScale,
+                  hideOverlays: false,
+                }}
+              />
+            ) : null}
+          </View>
+        ) : (
         <View style={styles.pagerArea} onLayout={onAreaLayout}>
           <FlatList
             ref={listRef}
@@ -1332,7 +1352,8 @@ export default function CreateTextScreen() {
             keyExtractor={(_, pageIndex) => `page-${pageIndex}`}
             renderItem={renderPage}
             onMomentumScrollEnd={onMomentumEnd}
-            scrollEnabled={!preview || pages.length > 1}
+            // Retour de l'aperçu : la liste est remontée sur la page en cours.
+            initialScrollIndex={Math.min(index, Math.max(0, pages.length - 1))}
             getItemLayout={(_, pageIndex) => ({
               length: windowWidth,
               offset: windowWidth * pageIndex,
@@ -1340,7 +1361,7 @@ export default function CreateTextScreen() {
             })}
           />
 
-          {!preview && pages.length < MAX_PAGES ? (
+          {pages.length < MAX_PAGES ? (
             <Pressable
               onPress={addPage}
               accessibilityRole="button"
@@ -1350,7 +1371,10 @@ export default function CreateTextScreen() {
             </Pressable>
           ) : null}
         </View>
+        )}
 
+        {/* Points et compteur : utiles à l'écriture seulement. */}
+        {!preview ? (
         <View style={styles.statusRow}>
           {/* Points de pagination purement visuels : l'annonce vocale porte sur
               le groupe, pas sur chaque point. */}
@@ -1388,6 +1412,7 @@ export default function CreateTextScreen() {
             {fr.social.createCharCount(current.length, MAX_PAGE_LENGTH)}
           </ThemedText>
         </View>
+        ) : null}
 
         {!preview && current.length > FEED_PREVIEW_CHARS ? (
           <ThemedText type="micro" style={styles.hint}>
@@ -1480,9 +1505,9 @@ export default function CreateTextScreen() {
                         key={option}
                         onPress={() => setVisibility(option)}
                         disabled={publishing}
-                        accessibilityRole="button"
+                        accessibilityRole="radio"
                         accessibilityLabel={VISIBILITY_LABELS[option]}
-                        accessibilityState={{ selected: active }}
+                        accessibilityState={{ checked: active }}
                         style={[
                           styles.visibilityChip,
                           active && styles.visibilityChipActive,
@@ -1504,15 +1529,26 @@ export default function CreateTextScreen() {
                 </View>
               </View>
             ) : null}
+            {/* Dernière étape, comme « Partager » sur Instagram : un bouton
+                principal pleine largeur. Le retour (flèche) revient à l'édition. */}
             <Pressable
-              onPress={closePreview}
-              disabled={publishing}
+              onPress={() => void publish()}
+              disabled={!canPublish}
               accessibilityRole="button"
-              accessibilityLabel={fr.social.createEditAction}
-              style={({ pressed }) => [styles.previewSecondary, pressed && styles.pressed]}>
-              <ThemedText style={[Type.body, styles.previewSecondaryText]}>
-                {fr.social.createEditAction}
-              </ThemedText>
+              accessibilityLabel={editingId ? fr.social.saveChanges : fr.social.createPublish}
+              accessibilityState={{ disabled: !canPublish, busy: publishing }}
+              style={({ pressed }) => [
+                styles.previewPrimary,
+                !canPublish && styles.previewPrimaryDisabled,
+                pressed && styles.pressed,
+              ]}>
+              {publishing ? (
+                <ActivityIndicator size="small" color={FeedSurface.background} />
+              ) : (
+                <ThemedText style={[Type.body, styles.previewPrimaryText]}>
+                  {editingId ? fr.social.saveChanges : fr.social.createPublish}
+                </ThemedText>
+              )}
             </Pressable>
           </View>
         ) : (
@@ -1830,16 +1866,6 @@ const styles = StyleSheet.create({
     padding: 20,
     overflow: 'hidden',
   },
-  previewCard: {
-    justifyContent: 'center',
-    gap: Spacing.two,
-  },
-  previewTitle: {
-    fontSize: 24,
-    lineHeight: 31,
-    fontWeight: '800',
-    textAlign: 'center',
-  },
   titleBar: {
     paddingHorizontal: Gutter,
     paddingVertical: Spacing.two,
@@ -2053,13 +2079,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: Gutter,
     paddingTop: Spacing.two,
   },
-  previewSecondary: {
+  topSpacer: { width: 48 },
+  previewPrimary: {
     alignItems: 'center',
-    paddingVertical: Spacing.two,
+    justifyContent: 'center',
+    minHeight: 48,
+    marginTop: Spacing.two,
     borderRadius: Radii.md,
-    backgroundColor: FeedSurface.glass,
+    backgroundColor: FeedSurface.accent,
   },
-  previewSecondaryText: { color: FeedSurface.onMedia, fontWeight: '700' },
+  previewPrimaryDisabled: { opacity: 0.5 },
+  previewPrimaryText: { color: FeedSurface.background, fontWeight: '700' },
   visibilityRow: {
     flexDirection: 'row',
     alignItems: 'center',
