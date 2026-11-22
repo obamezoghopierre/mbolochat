@@ -124,7 +124,7 @@ export function CommentGifPanel({
             <ThemedText type="micro" themeColor="textSecondary" style={styles.attribution}>
               {fr.social.gifAttribution}
             </ThemedText>
-          ) : null
+          ) : undefined
         }
         renderItem={({ item }) => (
           <Pressable
