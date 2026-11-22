@@ -63,7 +63,7 @@ npm run build                 # dist/ servi par l'API à /admin
 bash scripts/check.sh         # fmt + clippy + tests + licences
 ```
 
-Le seul workflow CI est `.github/workflows/crypto.yml`. **Aucun CI TypeScript** : les commandes ci-dessus sont le vrai garde-fou, à lancer avant de conclure.
+CI : `.github/workflows/crypto.yml` (Rust) et `.github/workflows/api-mobile.yml` (API : lint, `tsc`, Vitest, e2e sur PostgreSQL ; mobile : `tsc`, Vitest, `node --test`, `expo lint` informatif). Les commandes ci-dessus restent à lancer avant de conclure.
 
 ## Architecture
 
