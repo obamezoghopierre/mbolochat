@@ -100,11 +100,16 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
     setLocked(false);
     setElapsed(0);
     setArmedCancel(false);
+    // eslint-disable-next-line react-hooks/immutability
     dx.value = withSpring(0);
+    // eslint-disable-next-line react-hooks/immutability
     dy.value = withSpring(0);
+    // eslint-disable-next-line react-hooks/immutability
     press.value = withTiming(0, { duration: 160 });
     cancelAnimation(pulse);
+    // eslint-disable-next-line react-hooks/immutability
     pulse.value = 0;
+    // eslint-disable-next-line react-hooks/immutability
     level.value = 0;
     callbacks.current.onActiveChange(false);
     void setAudioModeAsync({ allowsRecording: false }).catch(() => undefined);
@@ -166,7 +171,9 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
     startedAt.current = Date.now();
     setActive(true);
     callbacks.current.onActiveChange(true);
+    // eslint-disable-next-line react-hooks/immutability
     press.value = withSpring(1, { damping: 14, stiffness: 220 });
+    // eslint-disable-next-line react-hooks/immutability
     pulse.value = withRepeat(
       withTiming(1, { duration: 900, easing: Easing.out(Easing.quad) }),
       -1,
@@ -207,7 +214,9 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
   const lockNow = useCallback(() => {
     void Haptics.selectionAsync().catch(() => undefined);
     setLocked(true);
+    // eslint-disable-next-line react-hooks/immutability
     dx.value = withSpring(0);
+    // eslint-disable-next-line react-hooks/immutability
     dy.value = withSpring(0);
   }, [dx, dy]);
 
@@ -215,17 +224,21 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
     .enabled(!disabled && !locked)
     .minDistance(0)
     .shouldCancelWhenOutside(false)
+    // eslint-disable-next-line react-hooks/refs
     .onBegin(() => {
       runOnJS(start)();
     })
     .onUpdate((event) => {
+      // eslint-disable-next-line react-hooks/immutability
       dx.value = Math.min(0, event.translationX);
+      // eslint-disable-next-line react-hooks/immutability
       dy.value = Math.min(0, event.translationY);
       runOnJS(setArmedCancel)(event.translationX < CANCEL_DX);
       if (event.translationY < LOCK_DY) {
         runOnJS(lockNow)();
       }
     })
+    // eslint-disable-next-line react-hooks/refs
     .onFinalize((event) => {
       if (event.translationY < LOCK_DY) {
         return; // Verrouillé : on continue sans le doigt.
