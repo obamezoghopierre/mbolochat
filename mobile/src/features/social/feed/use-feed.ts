@@ -6,6 +6,7 @@ import { connectSocket } from '@/lib/socket';
 import { fr } from '@/i18n/fr';
 import type { FeedPost, FeedTab, SocialReaction } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
+import { readFeedSnapshot, saveFeedSnapshot } from './feed-snapshot';
 
 export type FeedStatus = 'loading' | 'ready' | 'error';
 
@@ -58,14 +59,18 @@ function cacheKey(token: string, tab: FeedTab): string {
  * Chaque action renvoie l'état attendu pour que l'écran puisse afficher un
  * retour immédiat (toast, pastille) sans relire la liste.
  */
-export function useFeed(tab: FeedTab) {
-  const { token } = useAuth();
+export function useFeed(tab: FeedTab, options: { deferNetwork?: boolean } = {}) {
+  const { token, user } = useAuth();
+  const userId = user?.id ?? null;
   const key = token ? cacheKey(token, tab) : '';
   const cached = key ? feedCache.get(key) : undefined;
+  // Démarrage à froid : sans fil en mémoire, on montre celui de la dernière
+  // visite (gardé sur l'appareil) le temps que le réseau réponde.
+  const snapshot = cached ? null : readFeedSnapshot(userId, tab);
 
-  const [items, setItems] = useState<FeedPost[]>(cached?.items ?? []);
-  const [cursor, setCursor] = useState<string | null>(cached?.cursor ?? null);
-  const [status, setStatus] = useState<FeedStatus>(cached ? 'ready' : 'loading');
+  const [items, setItems] = useState<FeedPost[]>(cached?.items ?? snapshot?.items ?? []);
+  const [cursor, setCursor] = useState<string | null>(cached?.cursor ?? snapshot?.cursor ?? null);
+  const [status, setStatus] = useState<FeedStatus>(cached || snapshot ? 'ready' : 'loading');
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [notice, setNotice] = useState<FeedNotice | null>(null);
@@ -98,9 +103,23 @@ export function useFeed(tab: FeedTab) {
           tab,
           options.reset ? undefined : (cursor ?? undefined),
         );
-        setItems((current) =>
-          options.reset ? page.items : mergeFeedPage(current, page).items,
-        );
+        setItems((current) => {
+          if (!options.reset) {
+            return mergeFeedPage(current, page).items;
+          }
+          // Remplacement d'un fil affiché depuis l'appareil : le post à
+          // l'écran (le premier) reste en tête s'il est toujours dans la
+          // nouvelle page, pour ne jamais sauter sous les yeux de la personne.
+          const head = current[0];
+          if (head && page.items.some((post) => post.id === head.id)) {
+            const fresh = page.items.find((post) => post.id === head.id)!;
+            return [fresh, ...page.items.filter((post) => post.id !== head.id)];
+          }
+          return page.items;
+        });
+        if (options.reset) {
+          saveFeedSnapshot(userId, tab, page.items, page.nextCursor);
+        }
         setCursor(page.nextCursor);
         setNotice(null);
         setStatus('ready');
@@ -119,13 +138,16 @@ export function useFeed(tab: FeedTab) {
         setRefreshing(false);
       }
     },
-    [cursor, tab, token],
+    [cursor, tab, token, userId],
   );
 
   // Un onglet déjà visité garde sa liste : on ne requête que s'il n'y a rien
   // en cache, ou si le cache a périmé. Le pull-to-refresh force le rechargement.
+  // `deferNetwork` : les onglets voisins attendent que l'accueil soit affiché,
+  // pour que la première requête du démarrage soit celle de « Pour toi ».
+  const deferNetwork = options.deferNetwork === true;
   useEffect(() => {
-    if (!token) {
+    if (!token || deferNetwork) {
       return;
     }
     const entry = feedCache.get(cacheKey(token, tab));
@@ -135,7 +157,7 @@ export function useFeed(tab: FeedTab) {
       void load({ reset: true });
     }
     // `load` change avec le curseur : la relancer à chaque page bouclerait.
-  }, [tab, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, token, deferNetwork]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compteurs temps réel : le serveur diffuse `publication:stats` à chaque
   // mutation (commentaire, réaction, save, repost, partage, vue). On recale

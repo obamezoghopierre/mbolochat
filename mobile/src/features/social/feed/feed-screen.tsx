@@ -41,6 +41,9 @@ import { FeedPager } from './pager/feed-pager';
 import { OnMediaShadow } from './pager/feed-tokens';
 import { useFeed } from './use-feed';
 import { markLaunchReady } from '@/lib/launch-gate';
+import { resolveMediaUrl } from '@/lib/media-url';
+import { Image } from 'expo-image';
+import { primaryMedia } from './pager/feed-media';
 import { useReportPublication } from './use-report-publication';
 
 const TABS: { id: FeedTab; label: string }[] = [
@@ -69,6 +72,10 @@ export function FeedScreen() {
   const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
   const pager = useRef<ScrollViewInstance | null>(null);
   const navigation = useNavigation();
+  // Démarrage : « Pour toi » charge seul ; Local et Abonnements suivent une
+  // fois l'accueil affiché (première requête = celle qu'on regarde).
+  const [homeReady, setHomeReady] = useState(false);
+  const markHomeReady = useCallback(() => setHomeReady(true), []);
 
   // La barre d'onglets est masquée quand une feuille est ouverte.
   useEffect(() => {
@@ -200,6 +207,8 @@ export function FeedScreen() {
           <View key={entry.id} style={[styles.screen, { width }]}>
             <FeedSurfaceView
               tab={entry.id}
+              deferNetwork={entry.id !== DEFAULT_TAB && !homeReady}
+              onHomeReady={entry.id === DEFAULT_TAB ? markHomeReady : undefined}
               topInset={insets.top}
               onOpenComments={setCommentsPost}
               hideOverlays={commentsPost !== null}
@@ -297,12 +306,18 @@ function FeedTopBar({
 
 function FeedSurfaceView({
   tab,
+  deferNetwork,
+  onHomeReady,
   topInset,
   onOpenComments,
   hideOverlays,
   playbackActive,
 }: {
   tab: FeedTab;
+  /** Onglet voisin au démarrage : pas de requête avant l'accueil. */
+  deferNetwork: boolean;
+  /** Accueil seulement : son premier contenu est prêt. */
+  onHomeReady?: () => void;
   topInset: number;
   onOpenComments: (post: FeedPost) => void;
   hideOverlays: boolean;
@@ -310,15 +325,35 @@ function FeedSurfaceView({
 }) {
   const insets = useSafeAreaInsets();
   const [screenHeight, setScreenHeight] = useState(0);
-  const feed = useFeed(tab);
+  const feed = useFeed(tab, { deferNetwork });
 
   // Démarrage : l'écran de lancement natif disparaît quand le fil d'accueil
-  // a quelque chose à montrer (posts, état vide ou erreur), jamais avant.
+  // a quelque chose à montrer (posts, état vide ou erreur), jamais avant. Le
+  // premier média est préchargé pour s'afficher sans « pop » au fondu.
+  const firstPost = feed.items[0];
+  const [launchMediaReady, setLaunchMediaReady] = useState(false);
   useEffect(() => {
-    if (tab === DEFAULT_TAB && feed.status !== 'loading' && screenHeight > 0) {
-      markLaunchReady();
+    if (!onHomeReady || !firstPost || launchMediaReady) {
+      return;
     }
-  }, [feed.status, screenHeight, tab]);
+    let cancelled = false;
+    void prefetchFirstMedia(firstPost).finally(() => {
+      if (!cancelled) {
+        setLaunchMediaReady(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [firstPost, launchMediaReady, onHomeReady]);
+  const homeContentReady =
+    feed.status !== 'loading' && screenHeight > 0 && (!firstPost || launchMediaReady);
+  useEffect(() => {
+    if (onHomeReady && homeContentReady) {
+      markLaunchReady();
+      onHomeReady();
+    }
+  }, [homeContentReady, onHomeReady]);
   // État réseau : le fil reste lisible hors ligne (contenu déjà chargé), mais
   // l'utilisateur doit savoir pourquoi rien de nouveau n'arrive.
   const network = useNetworkState();
@@ -424,6 +459,26 @@ function FeedSurfaceView({
       {report.sheet}
     </View>
   );
+}
+
+/**
+ * Précharge le premier média du fil (image, ou poster d'une vidéo) dans le
+ * cache d'`expo-image`, plafonné pour ne jamais retenir l'écran de lancement.
+ */
+const FIRST_MEDIA_TIMEOUT_MS = 1500;
+function prefetchFirstMedia(post: FeedPost): Promise<void> {
+  const media = primaryMedia(post);
+  const url = resolveMediaUrl(media?.kind === 'video' ? media.posterUrl : media?.url ?? null);
+  if (!url) {
+    return Promise.resolve();
+  }
+  return Promise.race([
+    Image.prefetch(url).then(
+      () => undefined,
+      () => undefined,
+    ),
+    new Promise<void>((resolve) => setTimeout(resolve, FIRST_MEDIA_TIMEOUT_MS)),
+  ]);
 }
 
 function renderEmpty(

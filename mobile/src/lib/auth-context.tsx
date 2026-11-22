@@ -6,6 +6,10 @@ import { resetEmojiFavorites } from '@/features/emoji/useEmojiFavorites';
 import { resetRecentEmoji } from '@/features/emoji/useRecentEmoji';
 import { resetStickerLibrary } from '@/features/stickers/stickerLibrary';
 import { purgeTextDrafts, setTextDraftOwner } from '@/lib/text-draft';
+import {
+  clearFeedSnapshots,
+  hydrateFeedSnapshots,
+} from '@/features/social/feed/feed-snapshot';
 import { sweepSecureMedia } from '@/features/e2ee/mediaStore';
 import { resetE2eeInitState } from '@/features/e2ee/initState';
 import { getActiveE2eeUser, setActiveE2eeUser } from '@/features/e2ee/activeUser';
@@ -90,6 +94,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!cachedUser) return false;
         await bindE2eeUser(cachedUser.id);
         await cache.prepareForUser(cachedUser.id);
+        // Fil de la dernière visite : prêt avant le premier rendu de l'accueil.
+        await hydrateFeedSnapshots(cachedUser.id);
         await activateLocalStore(cachedUser.id).catch(() => undefined);
         if (!cancelled) {
           setToken(getCachedAccessToken() ?? accessToken);
@@ -163,6 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (!cancelled) {
               await bindE2eeUser(me.id);
               await cache.prepareForUser(me.id);
+              await hydrateFeedSnapshots(me.id);
               await activateLocalStore(me.id).catch(() => undefined);
               // `me` a pu rafraîchir le jeton : l'état doit garder le plus récent.
               setToken(getCachedAccessToken() ?? stored);
@@ -188,6 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               if (!cancelled) {
                 await bindE2eeUser(me.id);
                 await cache.prepareForUser(me.id);
+                await hydrateFeedSnapshots(me.id);
                 await activateLocalStore(me.id).catch(() => undefined);
                 setToken(refreshed.accessToken);
                 setUser(me);
@@ -216,6 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (!cancelled) {
               await bindE2eeUser(me.id);
               await cache.prepareForUser(me.id);
+              await hydrateFeedSnapshots(me.id);
               await activateLocalStore(me.id).catch(() => undefined);
               setToken(refreshed.accessToken);
               setUser(me);
@@ -249,6 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn: async (newToken, newRefresh, newUser) => {
         await bindE2eeUser(newUser.id);
         await cache.prepareForUser(newUser.id);
+        await hydrateFeedSnapshots(newUser.id);
         await activateLocalStore(newUser.id).catch(() => undefined);
         await storeTokens(newToken, newRefresh);
         await storeCachedUser(newUser);
@@ -297,9 +307,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         void resetRecentEmoji();
         void resetEmojiFavorites();
         void resetStickerLibrary();
-        // Brouillons de publication : propres au compte, ils ne doivent pas
-        // réapparaître pour une autre personne sur un appareil partagé.
-        if (user) void purgeTextDrafts(user.id);
+        // Brouillons de publication et fil enregistré : propres au compte, ils
+        // ne doivent pas réapparaître pour une autre personne sur un appareil
+        // partagé.
+        if (user) {
+          void purgeTextDrafts(user.id);
+          void clearFeedSnapshots(user.id);
+        }
       },
     }),
     [token, user, loading],
