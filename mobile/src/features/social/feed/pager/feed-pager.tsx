@@ -62,6 +62,7 @@ import { ImagePage } from './image-page';
 import { isPageActive, videoPageMode } from './preload';
 import { PostInfoBlock } from './post-info';
 import { PostQrSheet } from './post-qr-sheet';
+import { SuggestedAccountsCard } from '../suggested-accounts-card';
 import { AboutAccountSheet } from '../about-account-sheet';
 import { SaveCollectionSheet } from '../save-collection-sheet';
 import { ShareTargetsRow, type ShareSheetAction } from './share-targets';
@@ -91,6 +92,8 @@ export interface FeedPagerActions {
 }
 
 const TOAST_DURATION = 1600;
+/** Position de la carte « Suggestions pour toi » dans le fil libre. */
+const SUGGESTIONS_AFTER = 4;
 /** Barre d'onglets du haut sous la zone sûre, dans le fil libre. */
 export const FLOW_TOP_BAR = 52;
 
@@ -129,6 +132,8 @@ export function FeedPager({
   mode = 'pager',
   initialIndex = 0,
   onOpenReels,
+  freshCount = 0,
+  onShowFresh,
 }: {
   items: FeedPost[];
   /** Hauteur de l'écran entier : un item = un écran. */
@@ -164,7 +169,12 @@ export function FeedPager({
   initialIndex?: number;
   /** Fil libre : ouvre le plein écran Reels sur cette vidéo. */
   onOpenReels?: (post: FeedPost) => void;
+  /** Publications arrivées depuis le chargement (bouton « Nouvelles »). */
+  freshCount?: number;
+  /** Tap sur le bouton : remonter en haut et recharger. */
+  onShowFresh?: () => void;
 }) {
+  const listRef = useRef<FlatList<FeedPost> | null>(null);
   const flow = mode === 'flow';
   const insets = useSafeAreaInsets();
   // Sur réseau mobile, on ne précharge pas la vidéo voisine : le lecteur de la
@@ -401,6 +411,7 @@ export function FeedPager({
   return (
     <View style={[styles.flex, { height }]}>
       <AnimatedFlatList
+        ref={listRef as never}
         data={items}
         keyExtractor={(item) => item.id}
         style={styles.flex}
@@ -542,6 +553,7 @@ export function FeedPager({
           const paddingBottom = barInset - Spacing.two;
 
           return (
+            <>
             <View style={[flow ? styles.flowItem : styles.page, flow ? null : { height }, { width: '100%' }]}>
               {!flow && isVideoPost(item) ? (
                 videoMode === 'play' ? (
@@ -636,6 +648,11 @@ export function FeedPager({
                 </View>
               ) : null}
             </View>
+            {/* « Suggestions pour toi » après la 4e publication (fil libre). */}
+            {flow && token && index === SUGGESTIONS_AFTER - 1 ? (
+              <SuggestedAccountsCard token={token} />
+            ) : null}
+            </>
           );
         }}
       />
@@ -651,6 +668,23 @@ export function FeedPager({
           <ThemedText type="small" style={styles.endOfFeedText}>
             {fr.social.endOfFeed}
           </ThemedText>
+        </View>
+      ) : null}
+
+      {/* « Nouvelles publications » : pastille en haut du fil libre. */}
+      {flow && freshCount > 0 && onShowFresh ? (
+        <View style={[styles.freshWrap, { top: insets.top + FLOW_TOP_BAR + Spacing.two }]} pointerEvents="box-none">
+          <Pressable
+            onPress={() => {
+              listRef.current?.scrollToOffset({ offset: 0, animated: true });
+              onShowFresh();
+            }}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.freshPill, pressed && { opacity: 0.8 }]}>
+            <ThemedText type="small" style={styles.freshText}>
+              {fr.social.freshPosts(freshCount)}
+            </ThemedText>
+          </Pressable>
         </View>
       ) : null}
 
@@ -1161,6 +1195,14 @@ const styles = StyleSheet.create({
     color: FeedSurface.onMedia,
     fontWeight: '600',
   },
+  freshWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  freshPill: {
+    backgroundColor: FeedSurface.follow,
+    borderRadius: Radii.full,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  freshText: { color: '#000000', fontWeight: '700' },
   toastRow: {
     flexDirection: 'row',
     alignItems: 'center',

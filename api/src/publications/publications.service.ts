@@ -487,7 +487,7 @@ export class PublicationsService {
           textSize: format === 'text' ? (dto.textSize ?? null) : null,
           // Lieu : texte libre borné, blancs non stockés.
           location:
-            format === 'text' ? (dto.location?.trim() ? dto.location.trim() : null) : null,
+            dto.location?.trim() ? dto.location.trim() : null,
           // Aperçu du premier lien : les métadonnées sont lues côté serveur
           // pour que les lecteurs ne contactent jamais les sites liés.
           linkPreview:
@@ -841,14 +841,13 @@ export class PublicationsService {
                 ...(dto.textAlign !== undefined ? { textAlign: dto.textAlign } : {}),
                 ...(dto.textColor !== undefined ? { textColor: dto.textColor } : {}),
                 ...(dto.textSize !== undefined ? { textSize: dto.textSize } : {}),
-                ...(dto.location !== undefined
-                  ? {
-                      location:
-                        dto.location === null || !dto.location.trim()
-                          ? null
-                          : dto.location.trim(),
-                    }
-                  : {}),
+              }
+            : {}),
+          // Lieu : pour toutes les publications (texte, photo, vidéo).
+          ...(dto.location !== undefined
+            ? {
+                location:
+                  dto.location === null || !dto.location.trim() ? null : dto.location.trim(),
               }
             : {}),
           ...(flagged ? { moderationStatus: 'flagged' as const } : {}),

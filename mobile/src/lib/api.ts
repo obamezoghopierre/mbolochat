@@ -179,6 +179,18 @@ export interface GifResult {
   title: string;
 }
 
+/** Compte proposé dans « Suggestions pour toi ». */
+export interface SuggestedAccount {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  verified: boolean;
+  followerCount: number;
+  /** Nombre de tes abonnements qui suivent ce compte. */
+  mutualCount: number;
+}
+
 export const api = {
   register(body: {
     firstName: string;
@@ -501,6 +513,11 @@ export const api = {
       method: 'POST',
       token,
     });
+  },
+
+  /** « Suggestions pour toi » : comptes à suivre. */
+  suggestedAccounts(token: string, limit = 12) {
+    return request<SuggestedAccount[]>(`/feed/suggested-accounts?limit=${limit}`, { token });
   },
 
   /** Recherche unifiée : comptes, publications et hashtags. */

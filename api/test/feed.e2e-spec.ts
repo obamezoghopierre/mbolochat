@@ -706,4 +706,30 @@ describe('Feed (e2e)', () => {
       expect((await itemOf(viewer, post.id)).likedBy).toBeNull();
     });
   });
+
+  describe('suggestions de comptes', () => {
+    it('propose les amis d’amis en premier, jamais soi-même ni les comptes suivis', async () => {
+      const me = await register('Curieux');
+      const friend = await register('Copine');
+      const friendOfFriend = await register('Cousine');
+      const followAs = (actor: { token: string }, id: string) =>
+        request(app.getHttpServer())
+          .post(`/users/${id}/follow`)
+          .set('Authorization', `Bearer ${actor.token}`)
+          .expect(201);
+      await followAs(me, friend.id);
+      await followAs(friend, friendOfFriend.id);
+
+      const res = await request(app.getHttpServer())
+        .get('/feed/suggested-accounts')
+        .query({ limit: 30 })
+        .set('Authorization', `Bearer ${me.token}`)
+        .expect(200);
+      const ids = res.body.map((item: { id: string }) => item.id);
+      expect(ids).not.toContain(me.id);
+      expect(ids).not.toContain(friend.id);
+      expect(ids[0]).toBe(friendOfFriend.id);
+      expect(res.body[0].mutualCount).toBe(1);
+    });
+  });
 });

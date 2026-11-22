@@ -303,6 +303,62 @@ export class FeedService {
    * compte privé → abonnés acceptés, blocage → refus.
    */
   /**
+   * « Suggestions pour toi », comme Instagram : d'abord les comptes suivis
+   * par les comptes que le visiteur suit (amis d'amis), puis les comptes les
+   * plus suivis. Exclut soi-même, les comptes déjà suivis ou demandés, les
+   * blocages dans les deux sens et les comptes supprimés.
+   */
+  async suggestedAccounts(viewerId: string, limit = 12): Promise<
+    Array<{
+      id: string;
+      username: string;
+      displayName: string;
+      avatarUrl: string | null;
+      verified: boolean;
+      followerCount: number;
+      mutualCount: number;
+    }>
+  > {
+    const bounded = Math.min(Math.max(1, limit), 30);
+    const result = await this.db.execute(sql`
+      with mine as (
+        select following_id from follows where follower_id = ${viewerId}
+      ),
+      excluded as (
+        select ${viewerId}::text as id
+        union select following_id from mine
+        union select blocked_id from blocks where blocker_id = ${viewerId}
+        union select blocker_id from blocks where blocked_id = ${viewerId}
+      ),
+      mutual as (
+        select f.following_id as id, count(*)::int as n
+        from follows f
+        where f.follower_id in (select following_id from mine)
+          and f.status = 'accepted'
+        group by f.following_id
+      )
+      select u.id, u.username, u.display_name, u.avatar_url, u.verified,
+             u.follower_count, coalesce(m.n, 0) as mutual_count
+      from users u
+      left join mutual m on m.id = u.id
+      where u.deleted_at is null
+        and u.id not in (select id from excluded)
+      order by coalesce(m.n, 0) desc, u.verified desc, u.follower_count desc, u.created_at desc
+      limit ${bounded}
+    `);
+    const rows = (result as unknown as { rows: Array<Record<string, unknown>> }).rows ?? [];
+    return rows.map((row) => ({
+      id: String(row.id),
+      username: String(row.username),
+      displayName: String(row.display_name),
+      avatarUrl: (row.avatar_url as string | null) ?? null,
+      verified: Boolean(row.verified),
+      followerCount: Number(row.follower_count ?? 0),
+      mutualCount: Number(row.mutual_count ?? 0),
+    }));
+  }
+
+  /**
    * Enregistrements du visiteur, du plus récent au plus ancien, comme l'écran
    * « Enregistrés » d'Instagram. `collectionId` filtre une collection ;
    * absent = tous les enregistrements. Privé : seul le propriétaire y accède.

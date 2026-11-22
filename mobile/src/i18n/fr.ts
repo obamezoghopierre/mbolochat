@@ -769,6 +769,14 @@ export const fr = {
     shareShort: 'Partager',
     repostToast: 'Republié sur ton profil',
     undo: 'Annuler',
+    freshPosts: (count: number) =>
+      count > 1 ? `↑ ${count} nouvelles publications` : '↑ Nouvelle publication',
+    suggestedTitle: 'Suggestions pour toi',
+    suggestedDismiss: 'Ne plus suggérer',
+    suggestedMutual: (count: number) =>
+      count > 1 ? `Suivi par ${count} de tes abonnements` : 'Suivi par un de tes abonnements',
+    suggestedPopular: 'Populaire sur MboloChat',
+    suggestedFollowing: 'Abonné',
     postOptionsTitle: (name: string) => `Publication de ${name}`,
     aboutAccount: 'À propos de ce compte',
     aboutIntro: 'Pour t’aider à savoir à qui tu as affaire, voici quelques informations sur ce compte.',

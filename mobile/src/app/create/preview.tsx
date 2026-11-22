@@ -4,6 +4,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { ArrowLeft } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LocationField } from '@/features/social/create/location-field';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -61,6 +62,7 @@ export default function CreatePreviewScreen() {
   const assets = useMemo(() => creation?.assets ?? [], [creation]);
   const [filter, setFilter] = useState<string | null>(creation?.filter ?? null);
   const [caption, setCaption] = useState('');
+  const [location, setLocation] = useState('');
   const [visibility, setVisibility] = useState<SocialVisibility>('public');
   const [publishing, setPublishing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -142,6 +144,7 @@ export default function CreatePreviewScreen() {
         assetIds,
         visibility,
         mediaFilter: filter ?? undefined,
+        ...(location.trim() ? { location: location.trim() } : {}),
       });
       invalidateFeedCache(token);
       setProgress(null);
@@ -153,7 +156,7 @@ export default function CreatePreviewScreen() {
       setProgress(null);
       setError(fr.social.createPublishError);
     }
-  }, [assets, caption, filter, publishing, token, visibility, waitUntilReady]);
+  }, [assets, caption, filter, location, publishing, token, visibility, waitUntilReady]);
 
   if (!creation) {
     return <View style={styles.screen} />;
@@ -284,6 +287,15 @@ export default function CreatePreviewScreen() {
             editable={!publishing}
             style={[styles.captionInput, { color: FeedSurface.onMedia }]}
             accessibilityLabel={fr.social.createCaptionLabel}
+          />
+
+          {/* Lieu, comme Instagram : saisie, suggestions ou position. */}
+          <LocationField
+            token={token}
+            value={location}
+            onChange={setLocation}
+            disabled={publishing}
+            onError={setError}
           />
 
           <View style={styles.visibilityRow}>
