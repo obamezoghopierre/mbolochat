@@ -84,8 +84,9 @@ export function FeedScreen() {
   const markHomeReady = useCallback(() => setHomeReady(true), []);
 
   // La barre d'onglets est masquée quand une feuille est ouverte.
+  // Reels plein écran : barre du bas masquée aussi, comme Instagram.
   useEffect(() => {
-    const hidden = commentsPost !== null;
+    const hidden = commentsPost !== null || reelsOpen;
     navigation.setOptions({
       tabBarHidden: hidden,
       // Le conteneur du tab bar doit aussi se rétracter, sinon React
@@ -98,7 +99,7 @@ export function FeedScreen() {
         tabBarStyle: undefined,
       } as never);
     };
-  }, [commentsPost, navigation]);
+  }, [commentsPost, navigation, reelsOpen]);
 
   // Quand la feuille de commentaires s'ouvre, le post se réduit en carte
   // au-dessus d'elle, le feed entier tient dans
@@ -512,7 +513,9 @@ function FeedSurfaceView({
           homeActions={pagerActions}
           onOpenComments={onOpenComments}
           height={height}
-          barInset={barInset}
+          // Barre du bas masquée en Reels : les infos et le rail descendent
+          // au-dessus de la seule zone système.
+          barInset={insets.bottom + Spacing.four}
           topInset={topInset}
           playbackActive={playbackActive}
           hideOverlays={hideOverlays}
