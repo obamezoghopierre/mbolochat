@@ -2,6 +2,7 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 import type { ComponentType, Ref } from 'react';
 
 import type { CommentVoiceRecorderProps } from '../components/comment-voice-recorder';
+import type { HoldToRecordProps } from '../components/hold-to-record';
 import type { Gender } from './types';
 
 /**
@@ -52,6 +53,8 @@ export interface VoiceComponents {
   Bubble: ComponentType<VoiceBubbleProps>;
   /** Enregistreur magnétophone des commentaires : pause, aperçu, scrub. */
   CommentRecorder: ComponentType<CommentVoiceRecorderProps>;
+  /** Micro « maintenir pour parler » (Snapchat) des commentaires. */
+  HoldToRecord: ComponentType<HoldToRecordProps>;
   /** Demande l'autorisation du micro, et dit si elle a été accordée. */
   requestMicrophone: () => Promise<boolean>;
 }
@@ -72,11 +75,13 @@ export function loadVoice(): Promise<VoiceComponents | null> {
     import('../components/voice-recorder'),
     import('../components/voice-bubble'),
     import('../components/comment-voice-recorder'),
+    import('../components/hold-to-record'),
   ])
-    .then(([recorder, bubble, commentRecorder]) => ({
+    .then(([recorder, bubble, commentRecorder, holdToRecord]) => ({
       Recorder: recorder.VoiceRecorder,
       Bubble: bubble.VoiceBubble,
       CommentRecorder: commentRecorder.CommentVoiceRecorder,
+      HoldToRecord: holdToRecord.HoldToRecordButton,
       requestMicrophone: recorder.requestMicrophone,
     }))
     .catch(() => null);

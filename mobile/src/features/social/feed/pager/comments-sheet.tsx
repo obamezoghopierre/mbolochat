@@ -5,7 +5,7 @@ import BottomSheet, {
   useScrollEventsHandlersDefault,
   type ScrollEventsHandlersHookType,
 } from '@gorhom/bottom-sheet';
-import { ChevronDown, ImagePlus, MessageCircle, Mic, Sticker, X } from 'lucide-react-native';
+import { ChevronDown, ImagePlus, MessageCircle, Mic, Smile, X } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } from 'react';
@@ -132,6 +132,8 @@ export function CommentsSheet({
   const [uploading, setUploading] = useState(false);
   /** `null` = pas d'enregistrement ; sinon le composant vocal est monté. */
   const [voice, setVoice] = useState<VoiceComponents | null>(null);
+  /** Enregistrement vocal en cours (maintien du micro). */
+  const [recording, setRecording] = useState(false);
   // Partagée avec le handler de scroll worklet : `.value` est lisible sur le
   // thread JS comme sur le runtime UI.
   const scrollY = useSharedValue(0);
@@ -408,17 +410,19 @@ export function CommentsSheet({
     });
   }, [attachMedia, token, uploading]);
 
-  /** Micro → composants vocaux → permission → l'enregistreur prend la main. */
-  const startVoice = useCallback(async () => {
-    if (!token || uploading || voice) {
-      return;
-    }
-    const components = await loadVoice();
-    if (!components || !(await components.requestMicrophone())) {
-      return;
-    }
-    setVoice(components);
-  }, [token, uploading, voice]);
+  // Le micro doit répondre au premier appui (maintenir pour parler) : les
+  // composants vocaux sont chargés dès l'ouverture de la feuille.
+  useEffect(() => {
+    let alive = true;
+    void loadVoice().then((components) => {
+      if (alive) {
+        setVoice(components);
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   /**
    * Note vocale : le ✓ de l'aperçu enchaîne upload + publication en une
@@ -433,7 +437,6 @@ export function CommentsSheet({
         return;
       }
       const pendingAttachment = attachment;
-      setVoice(null);
       setUploading(true);
       setError(null);
       try {
@@ -1127,10 +1130,140 @@ export function CommentsSheet({
         </View>
       ) : null}
 
+
+      <View
+        style={[
+          styles.composerShell,
+          {
+            borderTopColor: theme.border,
+            backgroundColor: theme.backgroundElement,
+            paddingBottom: exprOpen ? Spacing.two : Math.max(insets.bottom, COMPOSER_SYSTEM_BAR_FALLBACK),
+          },
+        ]}>
+        {/* Emojis rapides (Instagram) : masqués pendant l'enregistrement et
+            quand le panneau d'expressions est ouvert. */}
+        {!exprOpen && !recording ? (
+          <View style={styles.quickEmojis}>
+            {QUICK_EMOJIS.map((emoji) => (
+              <Pressable
+                key={emoji}
+                onPress={() => insertEmoji(emoji)}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel={emoji}
+                style={({ pressed }) => pressed && styles.quickEmojiPressed}>
+                <ThemedText style={styles.quickEmoji}>{emoji}</ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        {/* Pièce jointe en attente : vignette au-dessus de la pilule. */}
+        {attachment ? (
+          <View style={styles.previewRow}>
+            <AttachmentPreview attachment={attachment} onRemove={() => setAttachment(null)} />
+            <ThemedText type="caption" themeColor="textSecondary" style={styles.previewHint}>
+              {fr.social.commentAttachmentHint}
+            </ThemedText>
+          </View>
+        ) : null}
+
+        {/* Une seule rangée, comme Instagram : avatar · pilule [texte … 📷 😊]
+            · micro à maintenir (Snapchat) ou « Publier ». */}
+        <View style={styles.composer}>
+          <Avatar
+            name={user?.displayName ?? ''}
+            uri={user?.avatarUrl}
+            gender={user?.gender}
+            size={32}
+          />
+          <View
+            style={[
+              styles.inputWrap,
+              { backgroundColor: theme.backgroundSelected, borderColor: theme.border },
+            ]}>
+            <TextInput
+              ref={inputRef}
+              value={draft}
+              onChangeText={handleDraftChange}
+              placeholder={
+                replyTo
+                  ? fr.social.replyPlaceholder(replyTo.author.displayName)
+                  : fr.social.commentPlaceholderFor(current.author.displayName)
+              }
+              placeholderTextColor={theme.textSecondary}
+              style={[styles.input, { color: theme.text }]}
+              maxLength={1000}
+              multiline
+              onFocus={() => setExprOpen(false)}
+              accessibilityLabel={fr.social.commentPlaceholder}
+            />
+            {/* Photo et expressions dans la pilule, à droite. */}
+            {draft.trim().length === 0 ? (
+              <Pressable
+                onPress={() => void pickPhoto()}
+                disabled={uploading || sending}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={fr.social.commentPhoto}
+                style={styles.pillAction}>
+                <ImagePlus size={20} color={theme.textSecondary} />
+              </Pressable>
+            ) : null}
+            <Pressable
+              onPress={() => {
+                Keyboard.dismiss();
+                setExprOpen((value) => !value);
+              }}
+              disabled={uploading || sending}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={fr.social.commentSticker}
+              accessibilityState={{ selected: exprOpen }}
+              style={styles.pillAction}>
+              <Smile size={20} color={exprOpen ? theme.accent : theme.textSecondary} />
+            </Pressable>
+          </View>
+
+          {/* À droite : « Publier » dès qu'il y a quelque chose à envoyer,
+              sinon le micro à maintenir. */}
+          {sending || uploading ? (
+            <View style={styles.trailing}>
+              <ActivityIndicator color={theme.accent} size="small" />
+            </View>
+          ) : draft.trim().length > 0 || attachment ? (
+            <Pressable
+              onPress={() => void send()}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={fr.social.commentSend}
+              style={styles.trailing}>
+              <ThemedText style={[styles.publish, { color: theme.accent }]}>
+                {fr.social.commentSend}
+              </ThemedText>
+            </Pressable>
+          ) : voice ? (
+            <voice.HoldToRecord
+              onSend={finishVoice}
+              onActiveChange={setRecording}
+              onHint={() => setNotice(fr.social.voiceHoldHint)}
+            />
+          ) : canRecord ? (
+            <View style={styles.trailing}>
+              <ActivityIndicator color={theme.textSecondary} size="small" />
+            </View>
+          ) : null}
+        </View>
+        {draft.length > 900 ? (
+          <ThemedText type="caption" themeColor="textSecondary" style={styles.charCount}>
+            {draft.length}/1000
+          </ThemedText>
+        ) : null}
+      </View>
       {exprOpen ? (
         /* Panneau d'expressions : rangée d'emojis puis stickers — la pilule
            de saisie reste épurée, sans icône 😊. */
-        <View style={{ backgroundColor: panelTheme.panelBg }}>
+        <View style={{ backgroundColor: panelTheme.panelBg, paddingBottom: insets.bottom }}>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -1155,167 +1288,6 @@ export function CommentsSheet({
           />
         </View>
       ) : null}
-
-      {draft.length > 0 ? (
-        <ThemedText type="caption" themeColor="textSecondary" style={styles.charCount}>
-          {draft.length}/1000
-        </ThemedText>
-      ) : null}
-
-      {voice ? (
-        /* Enregistrement vocal : l'enregistreur gère chrono, waveform et
-           Validation/annulation — il remplace toute la rangée du composeur. */
-        <View
-          style={[
-            styles.composer,
-            {
-              borderTopColor: theme.border,
-              backgroundColor: theme.backgroundElement,
-              paddingBottom: Math.max(insets.bottom, COMPOSER_SYSTEM_BAR_FALLBACK),
-            },
-          ]}>
-          <Avatar
-            name={user?.displayName ?? ''}
-            uri={user?.avatarUrl}
-            gender={user?.gender}
-            size={34}
-          />
-          <View style={styles.voiceSlot}>
-            {attachment ? (
-              /* La pièce jointe remplace le libellé : c'est elle qui recevra
-                 la note vocale comme légende à la publication. */
-              <View style={styles.voicePreviewRow}>
-                <AttachmentPreview
-                  attachment={attachment}
-                  onRemove={() => setAttachment(null)}
-                />
-              </View>
-            ) : (
-              <ThemedText type="caption" themeColor="textSecondary">
-                {fr.social.recordingVoice}
-              </ThemedText>
-            )}
-            <voice.CommentRecorder
-              onFinished={finishVoice}
-              onCancel={() => setVoice(null)}
-            />
-          </View>
-        </View>
-      ) : (
-      <View
-        style={[
-          styles.composerShell,
-          {
-            borderTopColor: theme.border,
-            backgroundColor: theme.backgroundElement,
-            paddingBottom: Math.max(insets.bottom, COMPOSER_SYSTEM_BAR_FALLBACK),
-          },
-        ]}>
-        {/* Aperçu des pièces jointes : vignette discrète au-dessus de la
-            rangée d'icônes, alignée sur la pilule de saisie. */}
-        {attachment ? (
-          <View style={styles.previewRow}>
-            <AttachmentPreview
-              attachment={attachment}
-              onRemove={() => setAttachment(null)}
-            />
-          </View>
-        ) : null}
-        {/* Emojis rapides (Instagram) : visibles tant que le panneau
-            d'expressions est fermé. */}
-        {!exprOpen ? (
-          <View style={styles.quickEmojis}>
-            {QUICK_EMOJIS.map((emoji) => (
-              <Pressable
-                key={emoji}
-                onPress={() => insertEmoji(emoji)}
-                hitSlop={4}
-                accessibilityRole="button"
-                accessibilityLabel={emoji}
-                style={({ pressed }) => pressed && styles.quickEmojiPressed}>
-                <ThemedText style={styles.quickEmoji}>{emoji}</ThemedText>
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-        {/* Rangée d'actions média au-dessus de la saisie, alignée sur la
-            pilule (avatar + espacements à gauche). */}
-        <View style={styles.iconRow}>
-          <Pressable
-            onPress={() => void pickPhoto()}
-            disabled={uploading || sending}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={fr.social.commentPhoto}
-            style={styles.composerAction}>
-            <ImagePlus size={20} color={theme.textSecondary} />
-          </Pressable>
-          {canRecord ? (
-            <Pressable
-              onPress={() => void startVoice()}
-              disabled={uploading || sending}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={fr.social.commentVoice}
-              style={styles.composerAction}>
-              <Mic size={20} color={theme.textSecondary} />
-            </Pressable>
-          ) : null}
-          <Pressable
-            onPress={() => setExprOpen((value) => !value)}
-            disabled={uploading || sending}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={fr.social.commentSticker}
-            accessibilityState={{ selected: exprOpen }}
-            style={styles.composerAction}>
-            <Sticker size={20} color={exprOpen ? theme.accent : theme.textSecondary} />
-          </Pressable>
-        </View>
-        <View style={styles.composer}>
-        <Avatar
-          name={user?.displayName ?? ''}
-          uri={user?.avatarUrl}
-          gender={user?.gender}
-          size={34}
-        />
-        {/* Pilule de saisie : les pièces jointes sont prévisualisées dans la
-            rangée du haut, le 😊 est à l'intérieur, au bord droit. */}
-        <View
-          style={[
-            styles.inputWrap,
-            { backgroundColor: theme.backgroundSelected },
-          ]}>
-          <TextInput
-            ref={inputRef}
-            value={draft}
-            onChangeText={handleDraftChange}
-            placeholder={fr.social.commentPlaceholder}
-            placeholderTextColor={theme.textSecondary}
-            style={[styles.input, { color: theme.text }]}
-            maxLength={1000}
-            multiline
-            accessibilityLabel={fr.social.commentPlaceholder}
-          />
-        </View>
-        {/* « Publier » en texte accentué, visible seulement
-            quand il y a quelque chose à envoyer. */}
-        {sending || uploading ? (
-          <ActivityIndicator color={theme.accent} size="small" />
-        ) : draft.trim().length > 0 || attachment ? (
-          <Pressable
-            onPress={() => void send()}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={fr.social.commentSend}>
-            <ThemedText type="small" style={{ color: theme.accent, fontWeight: '700' }}>
-              {fr.social.commentSend}
-            </ThemedText>
-          </Pressable>
-        ) : null}
-        </View>
-      </View>
-      )}
     </BottomSheet>
     {report.sheet}
     <ActionSheet
@@ -1465,10 +1437,11 @@ const styles = StyleSheet.create({
   previewRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    // Même alignement que `iconRow` : au-dessus des icônes, sur la pilule.
-    paddingLeft: Spacing.three * 2 + 34 + Spacing.two,
-    paddingTop: Spacing.one,
-    paddingBottom: Spacing.half,
+    gap: Spacing.two,
+    // Aligné sur la pilule : marge + avatar (32) + écart.
+    paddingLeft: Spacing.three + 32 + Spacing.two,
+    paddingRight: Spacing.three,
+    paddingTop: Spacing.two,
   },
   previewWrap: {
     width: 44,
@@ -1509,24 +1482,29 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
-    paddingTop: Spacing.one,
-    paddingBottom: Spacing.two,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.one,
+    // Ancre de la bande d'enregistrement (position absolue).
+    position: 'relative',
   },
   inputWrap: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    borderRadius: Radii.full,
-    paddingRight: Spacing.two,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingRight: Spacing.one,
+    minHeight: 40,
   },
   input: {
     flex: 1,
     minHeight: 40,
-    maxHeight: 96,
-    borderRadius: Radii.full,
+    maxHeight: 110,
     paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingTop: Platform.OS === 'ios' ? 11 : 8,
+    paddingBottom: Platform.OS === 'ios' ? 11 : 8,
     fontSize: 15,
+    lineHeight: 20,
   },
   inputEmoji: {
     justifyContent: 'center',
@@ -1534,5 +1512,8 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.two,
   },
   composerAction: { justifyContent: 'center', padding: Spacing.one },
-  voiceSlot: { flex: 1 },
+  pillAction: { height: 40, paddingHorizontal: Spacing.one + 2, justifyContent: 'center' },
+  trailing: { minWidth: 36, height: 40, alignItems: 'center', justifyContent: 'center' },
+  publish: { fontWeight: '700', fontSize: 15 },
+  previewHint: { flex: 1 },
 });
