@@ -133,7 +133,6 @@ export function ImagePage({
   const dragOrigin = useSharedValue(0);
   // La largeur peut changer (rotation) : la rangée est recalée sur la photo.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/immutability
     translateX.value = -index * mediaWidth;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaWidth]);
@@ -154,6 +153,7 @@ export function ImagePage({
     .onUpdate((event) => {
       const next = dragStart.value + (event.translationX - dragOrigin.value);
       const min = -lastIndex * mediaWidth;
+      // eslint-disable-next-line react-hooks/immutability
       translateX.value =
         next > 0 ? next * 0.35 : next < min ? min + (next - min) * 0.35 : next;
     })
@@ -163,6 +163,7 @@ export function ImagePage({
         lastIndex,
         Math.max(0, Math.round(-(translateX.value + fling) / mediaWidth)),
       );
+      // eslint-disable-next-line react-hooks/immutability
       translateX.value = withSpring(-target * mediaWidth, {
         ...PAGE_SPRING,
         velocity: event.velocityX,
