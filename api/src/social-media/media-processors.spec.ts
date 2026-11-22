@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { computePosterSeekSeconds } from './media-processors.js';
+import {
+  computePosterSeekSeconds,
+  displayedImageSize,
+  videoRotation,
+} from './media-processors.js';
 
 /**
  * Le poster ne doit pas être la frame 0 : beaucoup de vidéos s'ouvrent sur un
@@ -41,5 +45,36 @@ describe('computePosterSeekSeconds', () => {
     const seek = computePosterSeekSeconds(0, null);
     expect(seek).toBeGreaterThanOrEqual(0);
     expect(seek).toBeLessThanOrEqual(5);
+  });
+});
+
+/**
+ * Dimensions annoncées au fil : celles **affichées**, après rotation. Une
+ * photo ou une vidéo portrait prise au téléphone est souvent stockée en
+ * paysage avec une rotation ; sans correction, le fil la cadre en paysage.
+ */
+describe('displayedImageSize', () => {
+  it('échange largeur et hauteur pour les orientations EXIF 5 à 8', () => {
+    expect(displayedImageSize(4032, 3024, 6)).toEqual([3024, 4032]);
+    expect(displayedImageSize(4032, 3024, 8)).toEqual([3024, 4032]);
+  });
+
+  it('garde les dimensions sans rotation d’un quart de tour', () => {
+    expect(displayedImageSize(4032, 3024, 1)).toEqual([4032, 3024]);
+    expect(displayedImageSize(4032, 3024, 3)).toEqual([4032, 3024]);
+    expect(displayedImageSize(4032, 3024, undefined)).toEqual([4032, 3024]);
+  });
+});
+
+describe('videoRotation', () => {
+  it('lit la matrice d’affichage des téléphones récents', () => {
+    expect(videoRotation({ side_data_list: [{ rotation: -90 }] })).toBe(270);
+    expect(videoRotation({ side_data_list: [{ rotation: 90 }] })).toBe(90);
+  });
+
+  it('lit l’ancien tag rotate, et 0 sans information', () => {
+    expect(videoRotation({ tags: { rotate: '90' } })).toBe(90);
+    expect(videoRotation({ tags: { rotate: '180' } })).toBe(180);
+    expect(videoRotation({})).toBe(0);
   });
 });

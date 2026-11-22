@@ -105,8 +105,15 @@ export async function processImageVariants(
     throw new Error('Objet source introuvable dans le stockage.');
   }
   const metadata = await sharp(original).metadata();
-  const sourceWidth = metadata.width ?? null;
-  const sourceHeight = metadata.height ?? null;
+  // Dimensions **affichées** : une photo prise en portrait au téléphone est
+  // souvent stockée en paysage avec une orientation EXIF de 5 à 8 (rotation
+  // de 90°). Les variantes sont tournées (`.rotate()`), les dimensions
+  // annoncées au fil doivent l'être aussi, sinon le cadre est faux.
+  const [sourceWidth, sourceHeight] = displayedImageSize(
+    metadata.width ?? null,
+    metadata.height ?? null,
+    metadata.orientation,
+  );
 
   const produced: MediaVariant[] = [];
   for (const target of IMAGE_VARIANTS) {
@@ -329,6 +336,34 @@ export async function processVideo(
   }
 }
 
+/**
+ * Largeur et hauteur telles qu'affichées, après l'orientation EXIF : les
+ * orientations 5 à 8 font pivoter l'image d'un quart de tour.
+ */
+export function displayedImageSize(
+  width: number | null,
+  height: number | null,
+  orientation: number | undefined,
+): [number | null, number | null] {
+  return orientation !== undefined && orientation >= 5 && orientation <= 8
+    ? [height, width]
+    : [width, height];
+}
+
+/**
+ * Rotation d'un flux vidéo en degrés : tag `rotate` (anciens fichiers) ou
+ * matrice d'affichage (`side_data_list`, iPhone et Android récents).
+ */
+export function videoRotation(stream: {
+  tags?: { rotate?: string };
+  side_data_list?: Array<{ rotation?: number | string }>;
+}): number {
+  const fromSideData = stream.side_data_list?.find((entry) => entry.rotation !== undefined);
+  const raw = fromSideData?.rotation ?? stream.tags?.rotate ?? 0;
+  const degrees = Number(raw);
+  return Number.isFinite(degrees) ? ((Math.round(degrees) % 360) + 360) % 360 : 0;
+}
+
 async function probeVideo(
   path: string,
   ffprobePath: string,
@@ -347,14 +382,26 @@ async function probeVideo(
     FFMPEG_MIN_TIMEOUT_MS,
   );
   const parsed = JSON.parse(output) as {
-    streams?: Array<{ codec_type?: string; width?: number; height?: number }>;
+    streams?: Array<{
+      codec_type?: string;
+      width?: number;
+      height?: number;
+      tags?: { rotate?: string };
+      side_data_list?: Array<{ rotation?: number | string }>;
+    }>;
     format?: { duration?: string };
   };
   const video = parsed.streams?.find((stream) => stream.codec_type === 'video');
   const seconds = Number(parsed.format?.duration ?? Number.NaN);
+  // Une vidéo verticale filmée au téléphone est souvent codée en 1920×1080
+  // avec une rotation de 90° : ffmpeg la redresse à l'encodage (autorotate),
+  // les dimensions annoncées doivent donc être celles affichées.
+  const quarterTurn = video ? videoRotation(video) % 180 === 90 : false;
+  const width = video?.width ?? null;
+  const height = video?.height ?? null;
   return {
-    width: video?.width ?? null,
-    height: video?.height ?? null,
+    width: quarterTurn ? height : width,
+    height: quarterTurn ? width : height,
     durationMs: Number.isFinite(seconds) ? Math.round(seconds * 1000) : null,
   };
 }
