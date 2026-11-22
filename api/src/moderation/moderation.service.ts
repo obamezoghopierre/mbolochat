@@ -20,6 +20,27 @@ import {
 import { enqueuePublicationCleanup } from '../social-media/media-cleanup.js';
 
 export const QUEUE_DEFAULT_LIMIT = 20;
+
+/** Décisions possibles sur une publication en revue, sans signalement. */
+export const FLAGGED_DECISIONS = ['approve', 'remove'] as const;
+export type FlaggedDecision = (typeof FLAGGED_DECISIONS)[number];
+
+export interface FlaggedItem {
+  id: string;
+  format: 'text' | 'image' | 'carousel' | 'video';
+  visibility: 'public' | 'followers' | 'private';
+  createdAt: Date;
+  author: { id: string; username: string; displayName: string };
+  /** Texte de la légende ou des pages, pour juger sans ouvrir l'app. */
+  preview: string | null;
+  /** Signalements encore ouverts sur la publication. */
+  openReports: number;
+}
+
+export interface FlaggedPage {
+  items: FlaggedItem[];
+  nextCursor: string | null;
+}
 const MAX_LIMIT = 50;
 
 export const MODERATION_ACTIONS = [
@@ -188,6 +209,132 @@ export class ModerationService {
           ? encodeKeysetCursor(last.createdAtText, last.id)
           : null,
     };
+  }
+
+  /**
+   * Publications en revue (`flagged` par un mot bloqué ou masquées), signalées
+   * ou non, de la plus ancienne à la plus récente : c'est la file « À valider »
+   * du back-office. Sans elle, un post auto-signalé que personne ne signale
+   * restait invisible pour toujours.
+   */
+  async flaggedQueue(limit: number, cursor?: string): Promise<FlaggedPage> {
+    const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
+    const conditions = [
+      eq(publications.moderationStatus, 'flagged'),
+      isNull(publications.deletedAt),
+    ];
+    if (cursor) {
+      const decoded = decodeKeysetCursor(cursor);
+      conditions.push(
+        sql`(${publications.createdAt}, ${publications.id}) > (${decoded.raw}::timestamptz, ${decoded.id})`,
+      );
+    }
+    const rows = await this.db
+      .select({
+        id: publications.id,
+        format: publications.format,
+        caption: publications.caption,
+        textPages: publications.textPages,
+        visibility: publications.visibility,
+        createdAt: publications.createdAt,
+        createdAtText: sql<string>`${publications.createdAt}::text`,
+        author: {
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+        },
+        openReports: sql<number>`(
+          select count(*)::int from ${reports}
+          where ${reports.targetType} = 'publication'
+            and ${reports.targetId} = ${publications.id}
+            and ${reports.status} in ('open', 'reviewing')
+        )`,
+      })
+      .from(publications)
+      .innerJoin(users, eq(users.id, publications.authorId))
+      .where(and(...conditions))
+      .orderBy(sql`${publications.createdAt} asc`, sql`${publications.id} asc`)
+      .limit(bounded + 1);
+
+    const page = rows.slice(0, bounded);
+    const last = page.at(-1);
+    return {
+      items: page.map(({ createdAtText: _text, caption, textPages, ...row }) => ({
+        ...row,
+        preview:
+          (textPages && textPages.length > 0 ? textPages.join('\n\n') : caption)?.trim() ||
+          null,
+      })),
+      nextCursor:
+        rows.length > bounded && last ? encodeKeysetCursor(last.createdAtText, last.id) : null,
+    };
+  }
+
+  /**
+   * Décision directe sur une publication en revue, sans signalement :
+   * `approve` la publie (et déclenche ses mentions), `remove` la retire et
+   * efface ses médias. Les signalements encore ouverts sur elle sont clos
+   * avec la même décision, et l'action est journalisée.
+   */
+  async decideFlagged(
+    moderatorId: string,
+    publicationId: string,
+    decision: FlaggedDecision,
+    notes?: string,
+  ): Promise<{ moderationStatus: 'approved' | 'removed' }> {
+    const moderationStatus = decision === 'approve' ? 'approved' : 'removed';
+    await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ status: publications.moderationStatus, deletedAt: publications.deletedAt })
+        .from(publications)
+        .where(eq(publications.id, publicationId));
+      if (!row || row.deletedAt) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+      if (row.status !== 'flagged') {
+        throw new BadRequestException('Cette publication n’est plus en revue.');
+      }
+      // Mise à jour conditionnelle : deux modérateurs simultanés ne
+      // décident pas deux fois.
+      const updated = await tx
+        .update(publications)
+        .set({ moderationStatus })
+        .where(
+          and(eq(publications.id, publicationId), eq(publications.moderationStatus, 'flagged')),
+        )
+        .returning({ id: publications.id });
+      if (updated.length === 0) {
+        throw new BadRequestException('Cette publication n’est plus en revue.');
+      }
+      if (decision === 'remove') {
+        await enqueuePublicationCleanup(tx, publicationId);
+      }
+      await tx
+        .update(reports)
+        .set({ status: 'resolved', resolvedById: moderatorId, resolvedAt: new Date() })
+        .where(
+          and(
+            eq(reports.targetType, 'publication'),
+            eq(reports.targetId, publicationId),
+            inArray(reports.status, ['open', 'reviewing']),
+          ),
+        );
+      await tx.insert(moderationActions).values({
+        reportId: null,
+        moderatorId,
+        targetType: 'publication',
+        targetId: publicationId,
+        action: decision === 'approve' ? 'restore' : 'remove',
+        notes: notes?.trim() || null,
+      });
+    });
+
+    if (decision === 'approve') {
+      for (const listener of this.approvalListeners) {
+        await listener(publicationId).catch(() => undefined);
+      }
+    }
+    return { moderationStatus };
   }
 
   /**

@@ -81,6 +81,16 @@ export interface AuditItem {
   moderatorId: string | null;
 }
 
+export interface FlaggedItem {
+  id: string;
+  format: 'text' | 'image' | 'carousel' | 'video';
+  visibility: 'public' | 'followers' | 'private';
+  createdAt: string;
+  author: { id: string; username: string; displayName: string };
+  preview: string | null;
+  openReports: number;
+}
+
 export const api = {
   login(emailOrUsername: string, password: string) {
     return request<{ accessToken: string }>('/auth/login', {
@@ -103,6 +113,22 @@ export const api = {
     return request<{ status: string }>(`/admin/reports/${reportId}/decision`, {
       method: 'POST',
       body: JSON.stringify({ action, notes }),
+    });
+  },
+
+  /** Publications en revue (mot bloqué ou masquées), signalées ou non. */
+  flagged(cursor?: string) {
+    const query = new URLSearchParams({ limit: '20' });
+    if (cursor) query.set('cursor', cursor);
+    return request<{ items: FlaggedItem[]; nextCursor: string | null }>(
+      `/admin/flagged?${query.toString()}`,
+    );
+  },
+
+  decideFlagged(publicationId: string, decision: 'approve' | 'remove') {
+    return request<{ moderationStatus: string }>(`/admin/flagged/${publicationId}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ decision }),
     });
   },
 

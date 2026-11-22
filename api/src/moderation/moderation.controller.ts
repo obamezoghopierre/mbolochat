@@ -23,12 +23,14 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
 import type { JwtPayload } from '../auth/jwt-payload.js';
 import { AdminGuard } from './admin.guard.js';
 import {
+  FLAGGED_DECISIONS,
   MODERATION_ACTIONS,
   QUEUE_DEFAULT_LIMIT,
   REPORT_REASONS,
   REPORT_STATUSES,
   REPORT_TARGET_TYPES,
   ModerationService,
+  type FlaggedDecision,
   type ModerationActionKind,
   type ReportReason,
   type ReportStatus,
@@ -55,6 +57,16 @@ class CreateReportDto {
 class DecisionDto {
   @IsIn(MODERATION_ACTIONS)
   action!: ModerationActionKind;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  notes?: string;
+}
+
+class FlaggedDecisionDto {
+  @IsIn(FLAGGED_DECISIONS)
+  decision!: FlaggedDecision;
 
   @IsOptional()
   @IsString()
@@ -106,6 +118,24 @@ export class AdminController {
     @Body() body: DecisionDto,
   ) {
     return this.moderation.decide(current.sub, id, body.action, body.notes);
+  }
+
+  /** Publications en revue, signalées ou non (file « À valider »). */
+  @Get('flagged')
+  async flagged(
+    @Query('limit', new DefaultValuePipe(QUEUE_DEFAULT_LIMIT), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.moderation.flaggedQueue(limit, cursor);
+  }
+
+  @Post('flagged/:id/decision')
+  async decideFlagged(
+    @CurrentUser() current: JwtPayload,
+    @Param('id') id: string,
+    @Body() body: FlaggedDecisionDto,
+  ) {
+    return this.moderation.decideFlagged(current.sub, id, body.decision, body.notes);
   }
 
   @Get('users')

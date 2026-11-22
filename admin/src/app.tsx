@@ -2,15 +2,17 @@ import React from 'react';
 
 import { ApiError, api, clearToken, getToken, type AdminUser } from './api';
 import { AuditLog } from './components/audit';
+import { FlaggedQueue } from './components/flagged-queue';
 import { Login } from './components/login';
 import { ReportQueue } from './components/report-queue';
 import { UserSearch } from './components/users';
 import { BlockedWords } from './components/words';
 
-type Section = 'reports' | 'users' | 'words' | 'audit';
+type Section = 'reports' | 'flagged' | 'users' | 'words' | 'audit';
 
 const SECTIONS: Array<{ id: Section; label: string }> = [
   { id: 'reports', label: 'Signalements' },
+  { id: 'flagged', label: 'À valider' },
   { id: 'users', label: 'Comptes' },
   { id: 'words', label: 'Mots bloqués' },
   { id: 'audit', label: 'Journal' },
@@ -112,6 +114,7 @@ export function App() {
 
       <main className="content">
         {section === 'reports' ? <ReportQueue /> : null}
+        {section === 'flagged' ? <FlaggedQueue /> : null}
         {section === 'users' ? <UserSearch /> : null}
         {section === 'words' ? <BlockedWords /> : null}
         {section === 'audit' ? <AuditLog /> : null}
