@@ -352,11 +352,13 @@ export function FeedPager({
           flow ? { paddingTop: insets.top + FLOW_TOP_BAR, paddingBottom: barInset } : undefined
         }
         ListFooterComponent={
-          flow && !hasMore && items.length > 0 ? (
-            <ThemedText type="small" style={[styles.flowEnd, { color: tones.textFaint }]}>
-              {fr.social.endOfFeed}
-            </ThemedText>
-          ) : null
+          flow && !hasMore && items.length > 0
+            ? () => (
+                <ThemedText type="small" style={[styles.flowEnd, { color: tones.textFaint }]}>
+                  {fr.social.endOfFeed}
+                </ThemedText>
+              )
+            : undefined
         }
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
