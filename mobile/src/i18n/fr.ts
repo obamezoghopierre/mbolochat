@@ -764,6 +764,7 @@ export const fr = {
     shareSentTo: (count: number) =>
       count > 1 ? `Envoyé à ${count} discussions` : 'Envoyé',
     whatsappMissing: 'WhatsApp n’est pas installé sur cet appareil.',
+    networkMissing: 'Cette app n’est pas installée. Essaie « Partager… ».',
     savedToast: 'Enregistré',
     saveToCollectionShort: 'Collection',
     saveToCollectionTitle: 'Enregistrer dans…',

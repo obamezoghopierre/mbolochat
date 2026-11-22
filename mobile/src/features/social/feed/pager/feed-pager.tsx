@@ -44,6 +44,7 @@ import { trackFeedScroll } from '@/lib/feed-chrome';
 import { setFeedPageIsLight } from '@/lib/feed-page-tone';
 import { setPendingPostShare } from '@/lib/pending-post-share';
 import { sendPostToMany } from '@/lib/send-post-to-many';
+import { shareToNetwork } from '@/lib/share-to-network';
 import { useThemePreference } from '@/lib/theme-preference';
 import type { ConversationSummary, FeedPost, SocialReaction } from '@/lib/types';
 import { FeedActionRail, type FeedActions, type FeedActionState } from './action-rail';
@@ -691,16 +692,19 @@ export function FeedPager({
                   actions.notifyError(fr.social.shareError);
                 }
               }}
-              onWhatsApp={() => {
+              onSocial={(network) => {
                 const target = shareTarget;
                 setShareTarget(null);
                 if (!target) {
                   return;
                 }
-                const text = encodeURIComponent(postDeepLink(target.id));
-                void Linking.openURL(`whatsapp://send?text=${text}`)
-                  .then(() => trackShare(target))
-                  .catch(() => actions.notifyError(fr.social.whatsappMissing));
+                void shareToNetwork(network, postDeepLink(target.id)).then((opened) => {
+                  if (opened) {
+                    trackShare(target);
+                  } else {
+                    actions.notifyError(fr.social.networkMissing);
+                  }
+                });
               }}
               onShowQr={() => {
                 const target = shareTarget;

@@ -1,4 +1,4 @@
-import { Check, Link2, Lock, MessageCircle as WhatsAppIcon, QrCode, Send, UserPlus } from 'lucide-react-native';
+import { AtSign, Check, Link2, Lock, Mail, MessageCircle as WhatsAppIcon, MessageSquare, QrCode, Send, Twitter, UserPlus } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -12,6 +12,23 @@ import { api } from '@/lib/api';
 import { conversationTitle } from '@/lib/format';
 import { fr } from '@/i18n/fr';
 import type { ConversationSummary } from '@/lib/types';
+
+export type SocialNetwork = 'whatsapp' | 'telegram' | 'messenger' | 'x' | 'threads' | 'sms' | 'email';
+
+/**
+ * Réseaux proposés dans la rangée de partage. Instagram, TikTok, Snapchat et
+ * Facebook n'acceptent pas de lien pré-rempli depuis une autre app : ils
+ * restent accessibles via « Partager… » (feuille système).
+ */
+const SOCIAL_NETWORKS: { key: SocialNetwork; label: string; icon: typeof Link2 }[] = [
+  { key: 'whatsapp', label: 'WhatsApp', icon: WhatsAppIcon },
+  { key: 'telegram', label: 'Telegram', icon: Send },
+  { key: 'messenger', label: 'Messenger', icon: WhatsAppIcon },
+  { key: 'x', label: 'X', icon: Twitter },
+  { key: 'threads', label: 'Threads', icon: AtSign },
+  { key: 'sms', label: 'SMS', icon: MessageSquare },
+  { key: 'email', label: 'E-mail', icon: Mail },
+];
 
 /** Discussions proposées dans la feuille de partage, les plus récentes d'abord. */
 const MAX_TARGETS = 12;
@@ -42,7 +59,7 @@ export function ShareTargetsRow({
   extraActions,
   moreActions,
   onSendMany,
-  onWhatsApp,
+  onSocial,
 }: {
   token: string;
   currentUserId: string | null;
@@ -68,8 +85,8 @@ export function ShareTargetsRow({
    * une discussion chiffrée s'ouvre (le chiffrement se fait dans le chat).
    */
   onSendMany?: (conversations: ConversationSummary[], message: string) => Promise<void>;
-  /** « WhatsApp » : envoie le lien de la publication via WhatsApp. */
-  onWhatsApp?: () => void;
+  /** Réseaux externes (WhatsApp, Telegram, X…) : ouvre l'app avec le lien. */
+  onSocial?: (network: SocialNetwork) => void;
 }) {
   const theme = useTheme();
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
@@ -210,9 +227,16 @@ export function ShareTargetsRow({
               onPress={onCopyLink}
             />
           ) : null}
-          {onWhatsApp ? (
-            <ShareActionTarget icon={WhatsAppIcon} label="WhatsApp" onPress={onWhatsApp} />
-          ) : null}
+          {onSocial
+            ? SOCIAL_NETWORKS.map((network) => (
+                <ShareActionTarget
+                  key={network.key}
+                  icon={network.icon}
+                  label={network.label}
+                  onPress={() => onSocial(network.key)}
+                />
+              ))
+            : null}
           {onShowQr ? (
             <ShareActionTarget
               icon={QrCode}
