@@ -21,7 +21,7 @@ import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { fr } from '@/i18n/fr';
 import type { FeedPost } from '@/lib/types';
 import { FeedGestureLayer } from './feed-gestures';
-import { primaryMedia } from './feed-media';
+import { primaryMedia, REELS_MAX_ASPECT } from './feed-media';
 import { isLoadStalled, loadKeyFor, showsInitialSpinner, VIDEO_STALL_TIMEOUT_MS } from './load-guard';
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { HeartBurstOverlay } from './heart-burst';
@@ -47,11 +47,6 @@ export interface FeedPageChrome {
   hideOverlays: boolean;
 }
 
-/**
- * Au-delà de ce ratio (largeur / hauteur), la vidéo n'est plus « verticale »
- * et s'affiche entière : 3:4 couvre les formats portrait des téléphones.
- */
-const REELS_COVER_MAX_ASPECT = 3 / 4;
 
 /** Cadence des `timeUpdate` en lecture normale : la barre n'a pas besoin de plus. */
 const TIME_UPDATE_INTERVAL_S = 0.25;
@@ -133,7 +128,7 @@ export function VideoPage({
   const media = primaryMedia(post);
   const videoAspect =
     media?.width && media?.height ? media.width / media.height : null;
-  const letterboxed = videoAspect !== null && videoAspect > REELS_COVER_MAX_ASPECT;
+  const letterboxed = videoAspect !== null && videoAspect > REELS_MAX_ASPECT;
   const viewRef = useRef<VideoView>(null);
   const [userPaused, setUserPaused] = useState(false);
   // Source dont la première image a été décodée : le poster reste affiché page

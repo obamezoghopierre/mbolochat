@@ -388,7 +388,7 @@ export function FeedPager({
             videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
           // Publication texte ou photo : carte au format Instagram avec son
           // propre pied (barre d'actions horizontale), sans rail vertical ni
-          // bloc infos. Seules les vidéos restent en plein écran (Reels).
+          // bloc infos. Seules les vidéos verticales seules restent en plein écran (Reels).
           const isCardPost = !isVideoPost(item);
           const railState: FeedActionState = {
             reacted: item.viewer.reaction !== null,
@@ -447,6 +447,12 @@ export function FeedPager({
                   <VideoPoster post={item} height={height} />
                 )
               ) : primaryMedia(item) ? (
+                <>
+                {/* Vidéo seule affichée en carte (carrée ou paysage) : même
+                    préchargement détaché que les Reels voisins. */}
+                {sourceUrl && primaryMedia(item)?.kind === 'video' ? (
+                  <VideoPrefetch url={sourceUrl} />
+                ) : null}
                 <ImagePage
                   post={item}
                   chrome={chrome}
@@ -457,6 +463,7 @@ export function FeedPager({
                   muted={muted}
                   onToggleMuted={() => setMuted((value) => !value)}
                 />
+                </>
               ) : (
                 <TextPage
                   post={item}

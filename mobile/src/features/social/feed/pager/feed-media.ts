@@ -11,13 +11,26 @@ export function primaryMedia(post: FeedPost): PublicationMedia | null {
 }
 
 /**
+ * Au-delà de ce ratio (largeur / hauteur), une vidéo n'est plus « verticale » :
+ * même seuil que le cadrage des Reels (`video-page.tsx`).
+ */
+export const REELS_MAX_ASPECT = 3 / 4;
+
+/**
  * La publication se lit-elle en plein écran vidéo (Reels) ? Seulement une
- * vidéo seule : un carrousel, même s'il commence par une vidéo, s'affiche en
- * carte avec les autres médias.
+ * vidéo seule et **verticale**, comme Instagram :
+ * - un carrousel, même s'il commence par une vidéo, s'affiche en carte ;
+ * - une vidéo carrée ou paysage s'affiche en carte au fil, à son format,
+ *   au lieu d'un plein écran avec de larges bandes noires.
+ * Sans dimensions connues, on garde le plein écran (cas le plus courant).
  */
 export function isVideoPost(post: FeedPost): boolean {
   const playable = (post.media ?? []).filter((media) => Boolean(media.url));
-  return playable.length === 1 && playable[0].kind === 'video';
+  if (playable.length !== 1 || playable[0].kind !== 'video') {
+    return false;
+  }
+  const { width, height } = playable[0];
+  return !(width && height) || width / height <= REELS_MAX_ASPECT;
 }
 
 /** Nombre de médias supplémentaires, affiché en pastille si > 0. */

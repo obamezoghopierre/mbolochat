@@ -61,9 +61,30 @@ describe('primaryMedia', () => {
 
 describe('isVideoPost', () => {
   it('détecte une vidéo principale', () => {
-    expect(isVideoPost(post({ media: [media({ kind: 'video' })] }))).toBe(true);
+    expect(
+      isVideoPost(post({ media: [media({ kind: 'video', width: 1080, height: 1920 })] })),
+    ).toBe(true);
     expect(isVideoPost(post({ media: [media({ kind: 'image' })] }))).toBe(false);
     expect(isVideoPost(post())).toBe(false);
+  });
+
+  it('affiche en carte une vidéo seule carrée ou paysage, en Reel une verticale', () => {
+    expect(isVideoPost(post({ media: [media({ kind: 'video', width: 1080, height: 1920 })] }))).toBe(
+      true,
+    );
+    expect(isVideoPost(post({ media: [media({ kind: 'video', width: 1080, height: 1350 })] }))).toBe(
+      true,
+    );
+    expect(isVideoPost(post({ media: [media({ kind: 'video', width: 1920, height: 1080 })] }))).toBe(
+      false,
+    );
+    expect(isVideoPost(post({ media: [media({ kind: 'video', width: 1080, height: 1080 })] }))).toBe(
+      false,
+    );
+    // Sans dimensions : plein écran, comme avant.
+    expect(
+      isVideoPost(post({ media: [media({ kind: 'video', width: null, height: null })] })),
+    ).toBe(true);
   });
 
   it('affiche un carrousel mixte en carte, même s’il commence par une vidéo', () => {
