@@ -771,6 +771,7 @@ export const fr = {
     undo: 'Annuler',
     postOptionsTitle: (name: string) => `Publication de ${name}`,
     aboutAccount: 'À propos de ce compte',
+    viewProfile: 'Voir le profil',
     unfollowedToast: (name: string) => `Tu ne suis plus ${name}`,
     reelsEmpty: 'Aucune vidéo pour le moment.',
     exprStickers: 'Stickers',
