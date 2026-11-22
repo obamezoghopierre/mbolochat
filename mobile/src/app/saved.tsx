@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -90,7 +91,7 @@ export default function SavedScreen() {
     if (!token) {
       return;
     }
-    Alert.prompt?.(
+    Alert.prompt(
       fr.social.collectionRename,
       undefined,
       (value) => {
@@ -266,7 +267,8 @@ export default function SavedScreen() {
         actions={
           menuFor
             ? [
-                ...(Alert.prompt
+                // `Alert.prompt` n'existe que sur iOS.
+                ...(Platform.OS === 'ios'
                   ? [
                       {
                         key: 'rename',
