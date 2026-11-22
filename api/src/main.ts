@@ -106,7 +106,8 @@ async function bootstrap() {
   if (existsSync(webDist)) {
     app.useStaticAssets(webDist);
     const indexHtml = join(webDist, 'index.html');
-    const apiPrefixes = ['/auth', '/users', '/conversations', '/uploads', '/media', '/socket.io'];
+    // `/p` et `/.well-known` : liens web partageables (aperçu public, App Links).
+    const apiPrefixes = ['/auth', '/users', '/conversations', '/uploads', '/media', '/socket.io', '/p/', '/.well-known'];
     app.use((req: Request, res: Response, next: NextFunction) => {
       const isHtmlNavigation =
         req.method === 'GET' &&

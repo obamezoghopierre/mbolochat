@@ -5,7 +5,7 @@ import { BottomSheet } from '@/components/bottom-sheet';
 import { ThemedText } from '@/components/themed-text';
 import { Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
-import { postDeepLink } from '@/lib/deep-link';
+import { postShareLink } from '@/lib/deep-link';
 import type { FeedPost } from '@/lib/types';
 
 /**
@@ -32,7 +32,7 @@ export function PostQrSheet({
             accessible
             accessibilityLabel={fr.social.qrCodeLabel}>
             <QRCode
-              value={postDeepLink(post.id)}
+              value={postShareLink(post.id)}
               size={200}
               backgroundColor="#ffffff"
               color="#0B1428"

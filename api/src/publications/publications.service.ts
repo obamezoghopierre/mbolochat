@@ -573,6 +573,72 @@ export class PublicationsService {
     return this.view(existing, authorId);
   }
 
+  /**
+   * Aperçu public d'une publication pour la page web de partage (`/p/:id`) :
+   * rien n'est renvoyé si la publication n'est pas réellement publique
+   * (visibilité, compte privé, modération, suppression) — même règle que le
+   * CDN public. Aucune donnée du visiteur, aucune interaction.
+   */
+  async publicPreview(publicationId: string): Promise<{
+    id: string;
+    caption: string | null;
+    title: string | null;
+    author: { username: string; displayName: string; avatarUrl: string | null };
+    imageUrl: string | null;
+    isVideo: boolean;
+  } | null> {
+    const [row] = await this.db
+      .select()
+      .from(publications)
+      .where(eq(publications.id, publicationId));
+    if (!row) {
+      return null;
+    }
+    const [authorRow] = await this.db
+      .select({
+        username: users.username,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        privateAccount: users.privateAccount,
+        deletedAt: users.deletedAt,
+      })
+      .from(users)
+      .where(eq(users.id, row.authorId));
+    if (
+      !authorRow ||
+      authorRow.deletedAt ||
+      !isPubliclyCacheable({
+        visibility: row.visibility,
+        moderationStatus: row.moderationStatus,
+        deleted: row.deletedAt !== null,
+        authorPrivateAccount: authorRow.privateAccount,
+      })
+    ) {
+      return null;
+    }
+    const media = (
+      await loadPublicationMedia(
+        this.db,
+        [row.id],
+        this.storage.isConfigured() ? this.storage : null,
+        () => 'public',
+      )
+    ).get(row.id);
+    const first = media?.[0] ?? null;
+    return {
+      id: row.id,
+      caption: row.caption,
+      title: row.textTitle,
+      author: {
+        username: authorRow.username,
+        displayName: authorRow.displayName,
+        avatarUrl: authorRow.avatarUrl,
+      },
+      imageUrl: first ? (first.kind === 'video' ? first.posterUrl : first.url) : null,
+      isVideo: first?.kind === 'video',
+    };
+  }
+
   async get(publicationId: string, viewerId: string): Promise<PublicationView> {
     const { row } = await this.assertVisible(publicationId, viewerId);
     return this.view(row, viewerId);

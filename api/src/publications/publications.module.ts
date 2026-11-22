@@ -6,11 +6,12 @@ import { SocialNotificationsModule } from '../social-notifications/social-notifi
 import { CommentsController, PublicationsController } from './publications.controller.js';
 import { CommentsGateway } from './comments.gateway.js';
 import { PublicationEvents } from './publication-events.js';
+import { PublicLinksController } from './public-links.controller.js';
 import { PublicationsService } from './publications.service.js';
 
 @Module({
   imports: [FollowsModule, ModerationModule, SocialMediaModule, SocialNotificationsModule],
-  controllers: [PublicationsController, CommentsController],
+  controllers: [PublicationsController, CommentsController, PublicLinksController],
   providers: [PublicationsService, PublicationEvents, CommentsGateway],
   exports: [PublicationsService],
 })

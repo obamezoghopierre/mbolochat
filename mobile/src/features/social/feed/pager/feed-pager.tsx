@@ -39,7 +39,7 @@ import { fr } from '@/i18n/fr';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { copyToClipboard } from '@/lib/clipboard';
-import { postDeepLink } from '@/lib/deep-link';
+import { postDeepLink, postShareLink } from '@/lib/deep-link';
 import { trackFeedScroll } from '@/lib/feed-chrome';
 import { setFeedPageIsLight } from '@/lib/feed-page-tone';
 import { setPendingPostShare } from '@/lib/pending-post-share';
@@ -313,7 +313,7 @@ export function FeedPager({
       trackShare(post);
       try {
         await Share.share({
-          message: `${title}\n\n${postDeepLink(post.id)}`,
+          message: `${title}\n\n${postShareLink(post.id)}`,
           title,
         });
       } catch {
@@ -327,7 +327,7 @@ export function FeedPager({
     async (post: FeedPost) => {
       // Vrai presse-papiers, pas la feuille de partage : le libellé promet
       // une copie, pas un envoi.
-      if (await copyToClipboard(postDeepLink(post.id))) {
+      if (await copyToClipboard(postShareLink(post.id))) {
         trackShare(post);
         showToast(fr.social.linkCopied);
       } else {
@@ -698,7 +698,7 @@ export function FeedPager({
                 if (!target) {
                   return;
                 }
-                void shareToNetwork(network, postDeepLink(target.id)).then((opened) => {
+                void shareToNetwork(network, postShareLink(target.id)).then((opened) => {
                   if (opened) {
                     trackShare(target);
                   } else {
