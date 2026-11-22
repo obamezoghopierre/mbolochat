@@ -991,6 +991,15 @@ export const fr = {
     likedByA11y: (name: string, others: number) =>
       others > 0 ? `Aimé par ${name} et ${others} autres personnes` : `Aimé par ${name}`,
     verifiedAccount: 'compte vérifié',
+    /** Photo du fil (accessibilité). */
+    photo: 'Photo',
+    photoOf: (index: number, total: number) => `Photo ${index} sur ${total}`,
+    photoHint: 'Deux taps pour aimer, pincer pour zoomer, glisser pour changer de photo',
+    /** Vidéo façon Reels (accessibilité). */
+    reelGestureA11y:
+      'Vidéo : un tap coupe ou remet le son, deux taps pour aimer, appui long pour mettre en pause',
+    soundOn: 'Activer le son',
+    soundOff: 'Couper le son',
     textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
     notificationsTitle: 'Aucune notification',
     notificationsBody:

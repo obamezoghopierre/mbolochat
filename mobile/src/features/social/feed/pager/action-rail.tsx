@@ -1,5 +1,6 @@
 import {
   Bookmark,
+  Ellipsis,
   Forward,
   Heart,
   MessageCircle,
@@ -9,14 +10,12 @@ import type { LucideIcon } from 'lucide-react-native';
 import { memo, useCallback } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
 
-import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedMetrics, FeedSurface, PressScale, Radii, Spacing } from '@/constants/theme';
+import { FeedMetrics, FeedSurface, PressScale, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { compactCount } from './feed-media';
 import { OnMediaShadow, feedText } from './feed-tokens';
-import { resolveMediaUrl } from '@/lib/media-url';
 import type { FeedPost } from '@/lib/types';
 
 export interface FeedActions {
@@ -63,18 +62,6 @@ export const FeedActionRail = memo(function FeedActionRail({
 }) {
   return (
     <View style={styles.rail} pointerEvents="box-none">
-      <Pressable
-        onPress={actions.onOpenProfile}
-        accessibilityRole="button"
-        accessibilityLabel={`Profil de ${post.author.displayName}`}
-        style={({ pressed }) => [styles.avatarWrap, pressed && styles.pressed]}>
-        <Avatar
-          name={post.author.displayName}
-          uri={resolveMediaUrl(post.author.avatarUrl)}
-          size={FeedMetrics.avatar}
-          shape="rounded"
-        />
-      </Pressable>
       <RailAction
         icon={Heart}
         label={compactCount(post.counters.likes)}
@@ -121,8 +108,16 @@ export const FeedActionRail = memo(function FeedActionRail({
 
       <RailAction
         icon={Forward}
-        label=""
+        label={post.counters.shares ? compactCount(post.counters.shares) : ''}
         accessibilityLabel={fr.social.shareLabel}
+        onPress={actions.onShare}
+      />
+
+      {/* ⋯ comme sur les Reels : signaler, masquer… vivent dans la feuille. */}
+      <RailAction
+        icon={Ellipsis}
+        label=""
+        accessibilityLabel={fr.social.shareMoreOptions}
         onPress={actions.onShare}
       />
     </View>
@@ -186,14 +181,6 @@ const styles = StyleSheet.create({
     width: FeedMetrics.railWidth,
     alignItems: 'center',
     gap: FeedMetrics.actionGap,
-  },
-  // Cadre carré à coins arrondis : même rayon que l'avatar qu'il entoure.
-  avatarWrap: {
-    borderRadius: Radii.md,
-    borderWidth: 1.5,
-    // Liseré à la couleur d'accent de la marque, pas en blanc.
-    borderColor: FeedSurface.accent,
-    padding: 1,
   },
   pressed: {
     opacity: 0.7,

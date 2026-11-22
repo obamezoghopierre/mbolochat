@@ -180,11 +180,9 @@ export function FeedPager({
   // texte a un fond pastel qui rend ses icônes blanches illisibles. On publie
   // l'état « page claire » pour qu'elle passe aux teintes foncées.
   const activeItem = items[activeIndex];
-  const feedPageIsLight =
-    scheme === 'light' &&
-    !!activeItem &&
-    !isVideoPost(activeItem) &&
-    !primaryMedia(activeItem);
+  // Cartes texte et photo : fond clair en thème clair ; seules les vidéos
+  // restent sur fond sombre.
+  const feedPageIsLight = scheme === 'light' && !!activeItem && !isVideoPost(activeItem);
   useEffect(() => {
     setFeedPageIsLight(feedPageIsLight);
     return () => setFeedPageIsLight(false);
@@ -388,9 +386,10 @@ export function FeedPager({
           const videoMode = videoPageMode(distance, preloadNeighbors);
           const sourceUrl =
             videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
-          // Publication texte : la carte porte son propre pied de post
-          // (barre d'actions horizontale), sans rail vertical ni bloc infos.
-          const isTextPost = !isVideoPost(item) && !primaryMedia(item);
+          // Publication texte ou photo : carte au format Instagram avec son
+          // propre pied (barre d'actions horizontale), sans rail vertical ni
+          // bloc infos. Seules les vidéos restent en plein écran (Reels).
+          const isCardPost = !isVideoPost(item);
           const railState: FeedActionState = {
             reacted: item.viewer.reaction !== null,
             saved: Boolean(item.viewer.saved),
@@ -448,7 +447,14 @@ export function FeedPager({
                   <VideoPoster post={item} height={height} />
                 )
               ) : primaryMedia(item) ? (
-                <ImagePage post={item} chrome={chrome} onDoubleTapLike={doubleTap} />
+                <ImagePage
+                  post={item}
+                  chrome={chrome}
+                  actions={railActions}
+                  state={railState}
+                  likeScale={likeScale}
+                  onDoubleTapLike={doubleTap}
+                />
               ) : (
                 <TextPage
                   post={item}
@@ -468,12 +474,12 @@ export function FeedPager({
                 durationMs={primaryMedia(item)?.durationMs ?? null}
               />
 
-              {!isTextPost ? <OverlayScrim /> : null}
+              {!isCardPost ? <OverlayScrim /> : null}
 
               {/* Le média réduit s'affiche seul quand la feuille
                   est ouverte : ni rail d'actions, ni infos auteur/son.
-                  Les posts texte portent leurs actions dans la carte. */}
-              {!hideOverlays && !isTextPost ? (
+                  Les cartes texte et photo portent leurs actions. */}
+              {!hideOverlays && !isCardPost ? (
                 <View
                   style={[styles.bottom, { paddingBottom }]}
                   pointerEvents="box-none">

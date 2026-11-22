@@ -184,12 +184,15 @@ export const FeedSurface = {
   glassStrong: 'rgba(255,255,255,0.26)',
   glassPressed: 'rgba(255,255,255,0.32)',
   /** Réaction et abonnement : jaune clair, cohérent sur le média sombre. */
-  like: '#FFFC00',
+  /** Cœur rempli des Reels : rouge Instagram. */
+  like: '#FF3040',
   follow: '#FFFC00',
   /** Enregistrement : même jaune que la réaction et le bouton « Suivre ». */
-  save: '#FFFC00',
+  /** Enregistrement : icône remplie en blanc, comme Instagram. */
+  save: '#FFFFFF',
   /** Republication : même jaune que la réaction, le suivi et l'enregistrement. */
-  reposted: '#FFFC00',
+  /** Republication active : vert de la republication Instagram. */
+  reposted: '#3BD16F',
   /** Dégradé bas du média : transparent → noir, pour la lisibilité du texte. */
   gradientBottom: ['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.82)'] as const,
   /** Dégradé haut du média, sous les onglets. */

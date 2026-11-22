@@ -138,6 +138,20 @@ export function VideoPage({
   // par page tant que ce n'est pas le cas, pour éviter le flash noir.
   const [firstFrameSource, setFirstFrameSource] = useState<string | null>(null);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Flash d'icône à chaque changement de son (tap sur la vidéo ou pastille).
+  const [soundFlash, setSoundFlash] = useState(0);
+  const [knownMuted, setKnownMuted] = useState(muted);
+  if (knownMuted !== muted) {
+    setKnownMuted(muted);
+    setSoundFlash((value) => value + 1);
+  }
+  useEffect(() => {
+    if (soundFlash === 0) {
+      return;
+    }
+    const timer = setTimeout(() => setSoundFlash(0), 650);
+    return () => clearTimeout(timer);
+  }, [soundFlash]);
   // Flash « +10 s / −10 s » du double-tap latéral.
   const [skipFlash, setSkipFlash] = useState<{ dir: 1 | -1; key: number } | null>(null);
   const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -276,8 +290,6 @@ export function VideoPage({
     // ignore `play()` appelé trop tôt, il faut relancer quand il est prêt.
     player.play();
   }, [chrome.isActive, userPaused, failed, player, status]);
-
-  const togglePlayback = useCallback(() => setUserPaused((value) => !value), []);
 
   /** Source unique pour les deux icônes : pause volontaire sur la page active. */
   const isPaused = userPaused && chrome.isActive;
@@ -490,10 +502,12 @@ export function VideoPage({
           </View>
         </View>
       ) : (
+        // Reels : un tap coupe ou remet le son, l'appui long met en pause
+        // tant que le doigt reste posé, le double-tap aime.
         <FeedGestureLayer
-          accessibilityLabel="Vidéo : deux taps pour réagir, un tap pour suspendre"
+          accessibilityLabel={fr.social.reelGestureA11y}
           onDoubleTap={handleDoubleTap}
-          onTap={togglePlayback}
+          onTap={onToggleSound}
           onLongPressStart={pauseForLongPress}
           onLongPressEnd={resumeAfterLongPress}
         />
@@ -543,15 +557,28 @@ export function VideoPage({
                 style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
                 <Icon icon={Expand} size={18} color={FeedSurface.onMedia} />
               </Pressable>
-              <Pressable
-                onPress={onToggleSound}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityState={{ selected: muted }}
-                accessibilityLabel={muted ? 'Activer le son' : 'Couper le son'}
-                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-                <Icon icon={muted ? VolumeX : Volume2} size={18} color={FeedSurface.onMedia} />
-              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Son : pastille toujours visible, comme sur les Reels. Un tap sur la
+              vidéo fait la même chose ; un flash confirme le changement. */}
+          <Pressable
+            onPress={onToggleSound}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityState={{ selected: muted }}
+            accessibilityLabel={muted ? fr.social.soundOn : fr.social.soundOff}
+            style={({ pressed }) => [
+              styles.roundButton,
+              styles.soundButton,
+              { top: insets.top + Spacing.six },
+              pressed && styles.pressed,
+            ]}>
+            <Icon icon={muted ? VolumeX : Volume2} size={16} color={FeedSurface.onMedia} />
+          </Pressable>
+          {soundFlash ? (
+            <View key={soundFlash} pointerEvents="none" style={styles.playBadge}>
+              <Icon icon={muted ? VolumeX : Volume2} size={30} color={FeedSurface.onMedia} />
             </View>
           ) : null}
 
@@ -677,9 +704,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // À gauche de la pastille son, qui occupe toujours le coin droit.
   topRight: {
     position: 'absolute',
-    right: Spacing.three,
+    right: Spacing.three + 36 + Spacing.two,
     flexDirection: 'row',
     gap: Spacing.two,
   },
@@ -701,6 +729,10 @@ const styles = StyleSheet.create({
     color: FeedSurface.onMedia,
     fontSize: 20,
     fontWeight: '800',
+  },
+  soundButton: {
+    position: 'absolute',
+    right: Spacing.three,
   },
   roundButton: {
     width: 36,

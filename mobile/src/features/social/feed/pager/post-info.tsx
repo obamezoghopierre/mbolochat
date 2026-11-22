@@ -1,13 +1,15 @@
 import { router } from 'expo-router';
-import { Check, Music2, Plus } from 'lucide-react-native';
+import { BadgeCheck, Music2 } from 'lucide-react-native';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
 
+import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedMetrics, FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
+import { FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { formatCompactCount } from '@/lib/format';
+import { resolveMediaUrl } from '@/lib/media-url';
 import { OnMediaShadow, feedText } from './feed-tokens';
 import { renderTokens } from './rich-text';
 import { LikedByLine } from '../liked-by-line';
@@ -15,6 +17,11 @@ import type { FeedPost } from '@/lib/types';
 
 /** Longueur de légende affichée avant « voir plus ». */
 const CAPTION_PREVIEW = 80;
+
+/** Avatar de l'auteur, posé sur la vidéo. */
+const AUTHOR_AVATAR = 32;
+/** Bleu du badge vérifié, lisible sur la vidéo. */
+const VERIFIED = '#5AA9FF';
 
 /** Rotation d'un tour du disque « son original ». */
 const DISC_PERIOD_MS = 3200;
@@ -53,26 +60,32 @@ export const PostInfoBlock = memo(function PostInfoBlock({
 
   return (
     <View style={styles.root}>
-      <Pressable
-        onPress={onOpenProfile}
-        accessibilityRole="button"
-        accessibilityLabel={`Voir le profil de ${post.author.displayName}`}
-        style={styles.authorRow}>
-        <ThemedText numberOfLines={1} style={[styles.authorName, OnMediaShadow]}>
-          {post.author.displayName}
+      {/* Auteur façon Reels : avatar rond, nom, badge vérifié, puis
+          « Suivre » encadré (rien quand on suit déjà). */}
+      <View style={styles.authorRow}>
+        <Pressable
+          onPress={onOpenProfile}
+          accessibilityRole="button"
+          accessibilityLabel={`Voir le profil de ${post.author.displayName}${
+            post.author.verified ? `, ${fr.social.verifiedAccount}` : ''
+          }`}
+          style={({ pressed }) => [styles.authorIdentity, pressed && styles.pressed]}>
+          <Avatar
+            name={post.author.displayName}
+            uri={resolveMediaUrl(post.author.avatarUrl)}
+            size={AUTHOR_AVATAR}
+            shape="circle"
+          />
+          <ThemedText numberOfLines={1} style={[styles.authorName, OnMediaShadow]}>
+            {post.author.displayName}
+          </ThemedText>
           {post.author.verified ? (
-            <ThemedText style={[styles.authorName, styles.verified]}> ✓</ThemedText>
+            <Icon icon={BadgeCheck} size={15} color={VERIFIED} strokeWidth={2.4} />
           ) : null}
-        </ThemedText>
-        {following ? (
-          <View style={[styles.chip, styles.chipMuted]}>
-            <Icon icon={Check} size={12} color={FeedSurface.onMedia} strokeWidth={3} />
-          </View>
-        ) : followState === 'pending' ? (
-          <View style={[styles.chip, styles.chipMuted]}>
-            <ThemedText style={[feedText.pill, styles.chipMutedText]}>
-              {fr.social.requested}
-            </ThemedText>
+        </Pressable>
+        {following ? null : followState === 'pending' ? (
+          <View style={styles.followOutline}>
+            <ThemedText style={[feedText.pill, styles.followText]}>{fr.social.requested}</ThemedText>
           </View>
         ) : (
           <Pressable
@@ -80,14 +93,11 @@ export const PostInfoBlock = memo(function PostInfoBlock({
             hitSlop={8}
             accessibilityRole="button"
             accessibilityLabel={`Suivre ${post.author.displayName}`}
-            style={({ pressed }) => [styles.chip, styles.chipAccent, pressed && styles.pressed]}>
-            <Icon icon={Plus} size={12} color="#000000" strokeWidth={3} />
-            <ThemedText style={[feedText.pill, styles.chipAccentText]}>
-              {fr.social.follow}
-            </ThemedText>
+            style={({ pressed }) => [styles.followOutline, pressed && styles.pressed]}>
+            <ThemedText style={[feedText.pill, styles.followText]}>{fr.social.follow}</ThemedText>
           </Pressable>
         )}
-      </Pressable>
+      </View>
 
       {/* « Aimé par X » : seulement si un compte suivi a aimé (le nombre de
           J'aime est déjà sur le rail d'actions). */}
@@ -191,34 +201,27 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     flexShrink: 1,
   },
+  authorIdentity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+    flexShrink: 1,
+  },
   authorName: {
     ...Type.body,
     fontWeight: '700',
     color: FeedSurface.onMedia,
+    flexShrink: 1,
   },
-  verified: {
-    color: '#5AA9FF',
-    fontSize: FeedMetrics.avatar / 4,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.half,
+  // « Suivre » des Reels : texte blanc dans un cadre fin, sans fond.
+  followOutline: {
     paddingHorizontal: Spacing.two,
     paddingVertical: Spacing.half,
-    borderRadius: Radii.full,
+    borderRadius: Radii.md,
+    borderWidth: 1,
+    borderColor: FeedSurface.onMediaSoft,
   },
-  chipAccent: {
-    backgroundColor: FeedSurface.follow,
-  },
-  chipAccentText: {
-    // Texte sombre pour contraster avec le fond jaune du bouton.
-    color: '#000000',
-  },
-  chipMuted: {
-    backgroundColor: FeedSurface.glass,
-  },
-  chipMutedText: {
+  followText: {
     color: FeedSurface.onMedia,
   },
   token: {
