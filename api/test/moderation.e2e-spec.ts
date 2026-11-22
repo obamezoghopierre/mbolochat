@@ -218,6 +218,52 @@ describe('Modération (e2e)', () => {
     expect((await publicationRow(clean.id)).moderationStatus).toBe('pending');
   });
 
+  it('notifie les mentions d’un post signalé seulement une fois validé', async () => {
+    const moderator = await register('Valideur');
+    await promote(moderator.id, 'admin');
+    const author = await register('Mentionne');
+    const target = await register('Citee');
+    const reporter = await register('Vigie');
+    const word = `grossier${letters}`;
+    const added = await request(app.getHttpServer())
+      .post('/admin/blocked-words')
+      .set('Authorization', `Bearer ${moderator.token}`)
+      .send({ word })
+      .expect(201);
+
+    const mentionsOf = async (publicationId: string) =>
+      (
+        await request(app.getHttpServer())
+          .get('/social/notifications')
+          .set('Authorization', `Bearer ${target.token}`)
+          .expect(200)
+      ).body.items.filter(
+        (item: { type: string; publicationId: string }) =>
+          item.type === 'mention' && item.publicationId === publicationId,
+      );
+
+    const post = await publish(author, `Coucou @${target.username}, ${word}`);
+    expect((await publicationRow(post.id)).moderationStatus).toBe('flagged');
+    // En revue : personne n'est notifié d'un contenu invisible.
+    expect(await mentionsOf(post.id)).toEqual([]);
+
+    const created = await report(reporter, 'publication', post.id).expect(201);
+    await decide(moderator, created.body.id, 'restore').expect(201);
+    expect((await publicationRow(post.id)).moderationStatus).toBe('approved');
+    const received = await mentionsOf(post.id);
+    expect(received).toHaveLength(1);
+    expect(received[0].actor.id).toBe(author.id);
+
+    // Rejouer la validation ne notifie pas une seconde fois.
+    await decide(moderator, created.body.id, 'restore').expect(201);
+    expect(await mentionsOf(post.id)).toHaveLength(1);
+
+    await request(app.getHttpServer())
+      .delete(`/admin/blocked-words/${added.body.id}`)
+      .set('Authorization', `Bearer ${moderator.token}`)
+      .expect(200);
+  });
+
   it('refuse une suspension non supportée et une action inapplicable', async () => {
     const author = await register('Suspension');
     const reporter = await register('Plaintif2');

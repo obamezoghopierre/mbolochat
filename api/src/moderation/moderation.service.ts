@@ -79,6 +79,20 @@ export interface ReportPage {
 export class ModerationService {
   constructor(@Inject(DRIZZLE) private readonly db: Database) {}
 
+  /**
+   * Abonnés à la validation d'une publication qui était en revue (`flagged`).
+   * Les publications s'y inscrivent pour notifier les mentions retenues à la
+   * création — sans dépendance circulaire entre les deux modules.
+   */
+  private readonly approvalListeners = new Set<(publicationId: string) => Promise<void>>();
+
+  onPublicationApproved(listener: (publicationId: string) => Promise<void>): () => void {
+    this.approvalListeners.add(listener);
+    return () => {
+      this.approvalListeners.delete(listener);
+    };
+  }
+
   /** Dépose un signalement. Rejouer la même requête ne crée pas de doublon. */
   async report(
     reporterId: string,
@@ -197,8 +211,8 @@ export class ModerationService {
       return { status: report.status, applied: action };
     }
 
-    await this.db.transaction(async (tx) => {
-      await this.applyAction(tx, report.targetType, report.targetId, action);
+    const approved = await this.db.transaction(async (tx) => {
+      const wasApproved = await this.applyAction(tx, report.targetType, report.targetId, action);
 
       // Une restauration ne rouvre pas le signalement : elle corrige la
       // décision précédente et laisse le dossier clos.
@@ -221,7 +235,17 @@ export class ModerationService {
         action,
         notes: notes?.trim() || null,
       });
+      return wasApproved;
     });
+
+    // Après validation de la transaction seulement : une notification ne doit
+    // jamais pointer vers un contenu dont la décision a été annulée. Un échec
+    // d'envoi ne remet pas la décision en cause.
+    if (approved) {
+      for (const listener of this.approvalListeners) {
+        await listener(report.targetId).catch(() => undefined);
+      }
+    }
 
     return {
       status: action === 'dismiss' ? 'dismissed' : 'resolved',
@@ -348,9 +372,10 @@ export class ModerationService {
     targetType: ReportTargetType,
     targetId: string,
     action: ModerationActionKind,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    // Renvoie vrai quand une publication en revue (`flagged`) devient visible.
     if (action === 'warn' || action === 'dismiss') {
-      return;
+      return false;
     }
     if (action === 'suspend') {
       throw new BadRequestException('La suspension de compte arrive avec la phase 5.');
@@ -360,10 +385,17 @@ export class ModerationService {
       const status =
         action === 'remove' ? 'removed' : action === 'hide' ? 'flagged' : 'approved';
       if (targetType === 'publication') {
+        const [previous] = await tx
+          .select({ status: publications.moderationStatus })
+          .from(publications)
+          .where(eq(publications.id, targetId));
         await tx
           .update(publications)
           .set({ moderationStatus: status })
           .where(eq(publications.id, targetId));
+        if (action === 'restore') {
+          return previous?.status === 'flagged';
+        }
         if (action === 'remove') {
           // Un retrait définitif doit aussi retirer les octets du stockage :
           // sinon l'URL du média reste valable après la décision.
@@ -375,7 +407,7 @@ export class ModerationService {
           .set({ moderationStatus: status })
           .where(eq(comments.id, targetId));
       }
-      return;
+      return false;
     }
 
     if (targetType === 'story') {
@@ -383,7 +415,7 @@ export class ModerationService {
         throw new BadRequestException('Une story ne peut qu’être retirée ou rétablie.');
       }
       await tx.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, targetId));
-      return;
+      return false;
     }
 
     // Comptes : les actions de contenu n'ont pas de sens ici.

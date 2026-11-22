@@ -291,7 +291,47 @@ export class PublicationsService {
     private readonly moderation: ModerationService,
     private readonly storage: ObjectStorageService,
     private readonly events: PublicationEvents,
-  ) {}
+  ) {
+    // Un post signalé n'a notifié personne à sa création : ses mentions
+    // partent quand la modération le valide.
+    this.moderation.onPublicationApproved((publicationId) =>
+      this.notifyMentionsAfterApproval(publicationId),
+    );
+  }
+
+  /**
+   * Mentions d'une publication validée après revue : mêmes garde-fous qu'à
+   * la création (visibilité, réglage « qui peut me mentionner », blocage).
+   * La clé de déduplication évite tout doublon si le post avait déjà notifié
+   * (masqué puis rétabli).
+   */
+  async notifyMentionsAfterApproval(publicationId: string): Promise<void> {
+    const [row] = await this.db
+      .select({
+        authorId: publications.authorId,
+        caption: publications.caption,
+        textPages: publications.textPages,
+        visibility: publications.visibility,
+        moderationStatus: publications.moderationStatus,
+        deletedAt: publications.deletedAt,
+      })
+      .from(publications)
+      .where(eq(publications.id, publicationId));
+    if (!row || row.deletedAt || row.moderationStatus !== 'approved') {
+      return;
+    }
+    const pages = row.textPages ?? [];
+    const text = pages.length > 0 ? pages.join('\n') : (row.caption ?? '');
+    if (text.trim().length === 0) {
+      return;
+    }
+    const created = await this.db.transaction((tx) =>
+      this.applyPublicationMentions(tx, text, row.authorId, publicationId, row.visibility),
+    );
+    for (const notification of created) {
+      await this.notifications.deliver(notification);
+    }
+  }
 
   async create(authorId: string, dto: CreatePublicationDto): Promise<PublicationView> {
     const assetIds = dto.assetIds ?? [];
