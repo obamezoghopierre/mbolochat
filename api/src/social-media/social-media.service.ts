@@ -12,6 +12,7 @@ import {
   ALLOWED_AUDIO_MIMES,
   ALLOWED_IMAGE_MIMES,
   ALLOWED_VIDEO_MIMES,
+  acceptDetected,
   canonicalAudioMime,
   detectAudioMedia,
   detectSocialMedia,
@@ -55,8 +56,17 @@ const EXTENSIONS: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+  'image/avif': 'avif',
+  'image/gif': 'gif',
   'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/x-m4v': 'm4v',
+  'video/3gpp': '3gp',
+  'video/3gpp2': '3g2',
   'video/webm': 'webm',
+  'video/x-matroska': 'mkv',
   'audio/mp4': 'm4a',
   'audio/x-m4a': 'm4a',
   'audio/mpeg': 'mp3',
@@ -160,17 +170,25 @@ export class SocialMediaService {
     }
 
     const probe = await this.storage.readHead(asset.storageKey, SIGNATURE_PROBE_BYTES);
-    // L'audio n'a pas de signature `kind` : on compare le MIME canonique.
-    const detected = probe
-      ? asset.kind === 'audio'
-        ? detectAudioMedia(probe)
-        : (detectSocialMedia(probe)?.mime ?? null)
-      : null;
-    const expected =
-      asset.kind === 'audio' ? canonicalAudioMime(asset.mime) : asset.mime;
-    if (!detected || detected !== expected) {
+    // Les octets font foi. Image / vidéo : tout format accepté de la bonne
+    // famille passe, même mal étiqueté par la galerie, et le type réel est
+    // enregistré. Audio : on garde la comparaison au MIME canonique.
+    let realMime: string | null = null;
+    if (probe) {
+      if (asset.kind === 'audio') {
+        const detected = detectAudioMedia(probe);
+        realMime = detected && detected === canonicalAudioMime(asset.mime) ? detected : null;
+      } else {
+        realMime = acceptDetected(asset.kind, detectSocialMedia(probe))?.mime ?? null;
+      }
+    }
+    if (!realMime) {
       await this.storage.delete(asset.storageKey);
-      throw new BadRequestException('Le contenu ne correspond pas au type déclaré.');
+      throw new BadRequestException(
+        asset.kind === 'audio'
+          ? 'Le contenu ne correspond pas au type déclaré.'
+          : 'Format non pris en charge : envoie une photo ou une vidéo.',
+      );
     }
 
     const updated = await this.db.transaction(async (tx) => {
@@ -180,6 +198,8 @@ export class SocialMediaService {
         .update(mediaAssets)
         .set({
           status: asset.kind === 'audio' ? 'ready' : 'uploaded',
+          // Type réel détecté (un « .PNG » qui est un JPEG devient image/jpeg).
+          mime: realMime,
           updatedAt: new Date(),
         })
         // Le filtre `pending` rend la confirmation idempotente sous course.

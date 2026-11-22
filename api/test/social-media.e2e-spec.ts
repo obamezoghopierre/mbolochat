@@ -165,15 +165,47 @@ describe('Médias sociaux — upload présigné (e2e)', () => {
     expect(completed.body.kind).toBe('video');
   });
 
-  it('refuse un contenu qui ne correspond pas au type déclaré et le supprime', async () => {
-    const alice = await register('Tricheuse');
+  it('accepte une photo mal étiquetée (JPEG annoncé PNG) et enregistre le vrai type', async () => {
+    const alice = await register('Galerie');
     const ticket = await createUpload(alice, {
       kind: 'image',
       mime: 'image/png',
       sizeBytes: FAKE_JPEG.length,
     }).expect(201);
-
     await put(ticket.body.uploadUrl, FAKE_JPEG, 'image/png');
+    const completed = await complete(alice, ticket.body.id).expect(201);
+    expect(completed.body.status).toBe('uploaded');
+    expect(completed.body.mime).toBe('image/jpeg');
+  });
+
+  it('accepte une vidéo iPhone .mov (QuickTime)', async () => {
+    const alice = await register('Iphoneuse');
+    const MOV = Buffer.concat([
+      Buffer.from([0x00, 0x00, 0x00, 0x14]),
+      Buffer.from('ftypqt  '),
+      Buffer.alloc(64),
+    ]);
+    const ticket = await createUpload(alice, {
+      kind: 'video',
+      mime: 'video/quicktime',
+      sizeBytes: MOV.length,
+    }).expect(201);
+    await put(ticket.body.uploadUrl, MOV, 'video/quicktime');
+    const completed = await complete(alice, ticket.body.id).expect(201);
+    expect(completed.body.kind).toBe('video');
+    expect(completed.body.mime).toBe('video/quicktime');
+  });
+
+  it('refuse un contenu qui ne correspond pas au type déclaré et le supprime', async () => {
+    const alice = await register('Tricheuse');
+    const HTML = Buffer.from('<!doctype html><script>alert(1)</script>' + ' '.repeat(40));
+    const ticket = await createUpload(alice, {
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: HTML.length,
+    }).expect(201);
+
+    await put(ticket.body.uploadUrl, HTML, 'image/png');
     await complete(alice, ticket.body.id).expect(400);
 
     // L'asset reste en attente et l'objet a été retiré du stockage.

@@ -142,6 +142,33 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 }
 
+/** MIME probable d'un fichier local d'après son extension. */
+function guessMime(uri: string, kind: 'image' | 'video' | 'audio'): string {
+  const ext = (uri.split('?')[0].split('.').pop() ?? '').toLowerCase();
+  const table: Record<string, string> = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    heic: 'image/heic',
+    heif: 'image/heif',
+    avif: 'image/avif',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    m4v: 'video/x-m4v',
+    '3gp': 'video/3gpp',
+    webm: 'video/webm',
+    mkv: 'video/x-matroska',
+    m4a: 'audio/mp4',
+    mp3: 'audio/mpeg',
+    aac: 'audio/aac',
+    ogg: 'audio/ogg',
+    wav: 'audio/wav',
+  };
+  return table[ext] ?? (kind === 'image' ? 'image/jpeg' : kind === 'video' ? 'video/mp4' : 'audio/mp4');
+}
+
 export const api = {
   register(body: {
     firstName: string;
@@ -401,7 +428,7 @@ export const api = {
    */
   async uploadSocialMedia(
     token: string,
-    asset: {
+    input: {
       uri: string;
       kind: 'image' | 'video' | 'audio';
       mime: string;
@@ -409,6 +436,22 @@ export const api = {
       sizeBytes?: number;
     },
   ): Promise<SocialMediaAsset> {
+    let asset = input;
+    // Photo HEIC/HEIF/AVIF (iPhone, Android récents) : convertie en JPEG sur
+    // l'appareil, comme Instagram, pour être lue partout.
+    if (asset.kind === 'image' && /hei[cf]|avif/i.test(`${asset.mime} ${asset.uri}`)) {
+      const { manipulateAsync, SaveFormat } = await import('expo-image-manipulator');
+      const converted = await manipulateAsync(asset.uri, [], {
+        compress: 0.9,
+        format: SaveFormat.JPEG,
+      });
+      asset = { ...asset, uri: converted.uri, mime: 'image/jpeg', sizeBytes: undefined };
+    }
+    // MIME manquant ou générique : déduit de l'extension. Le serveur lit de
+    // toute façon les octets réels et corrige l'étiquette.
+    if (!asset.mime || asset.mime === 'application/octet-stream' || !asset.mime.includes('/')) {
+      asset = { ...asset, mime: guessMime(asset.uri, asset.kind) };
+    }
     const sizeBytes = asset.sizeBytes ?? new File(asset.uri).size ?? 0;
     const ticket = await api.createSocialUpload(token, {
       kind: asset.kind,
