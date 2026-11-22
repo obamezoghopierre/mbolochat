@@ -169,6 +169,16 @@ function guessMime(uri: string, kind: 'image' | 'video' | 'audio'): string {
   return table[ext] ?? (kind === 'image' ? 'image/jpeg' : kind === 'video' ? 'video/mp4' : 'audio/mp4');
 }
 
+/** Résultat de recherche GIF (aperçu léger + version envoyée). */
+export interface GifResult {
+  id: string;
+  url: string;
+  previewUrl: string;
+  width: number;
+  height: number;
+  title: string;
+}
+
 export const api = {
   register(body: {
     firstName: string;
@@ -474,6 +484,23 @@ export const api = {
       throw new ApiError(result.status, 'Envoi du média impossible.');
     }
     return api.completeSocialUpload(token, ticket.id);
+  },
+
+  /** GIF (GIPHY via l'API) : tendances sans `query`. */
+  searchGifs(token: string, query: string, offset = 0) {
+    const params = new URLSearchParams({ q: query, offset: String(offset) });
+    return request<{ items: GifResult[]; nextOffset: number | null }>(
+      `/media/uploads/gifs/search?${params.toString()}`,
+      { token },
+    );
+  },
+
+  /** Importe un GIF choisi comme média du compte (commentaire). */
+  importGif(token: string, giphyId: string) {
+    return request<SocialMediaAsset>(`/media/uploads/gifs/${encodeURIComponent(giphyId)}`, {
+      method: 'POST',
+      token,
+    });
   },
 
   /** Recherche unifiée : comptes, publications et hashtags. */

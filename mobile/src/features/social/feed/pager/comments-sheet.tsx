@@ -49,7 +49,8 @@ import { StickerMessage } from '@/features/stickers/StickerView';
 import { useTheme } from '@/hooks/use-theme';
 import { useThemePreference } from '@/lib/theme-preference';
 import { audioAvailable, loadVoice, type VoiceComponents, type VoiceTake } from '@/lib/voice';
-import { ApiError, api } from '@/lib/api';
+import { ApiError, api, type GifResult } from '@/lib/api';
+import { CommentGifPanel } from './comment-gif-panel';
 import { useAuth } from '@/lib/auth-context';
 import { newClientId } from '@/lib/client-id';
 import type {
@@ -121,6 +122,8 @@ export function CommentsSheet({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exprOpen, setExprOpen] = useState(false);
+  /** Onglet du panneau d'expressions : stickers & emojis, ou GIF. */
+  const [exprTab, setExprTab] = useState<'stickers' | 'gif'>('stickers');
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [sort, setSort] = useState<CommentSort>('top');
@@ -477,6 +480,29 @@ export function CommentsSheet({
       void sendVoice(take);
     },
     [sendVoice],
+  );
+
+  /**
+   * GIF choisi : le serveur l'importe (WebP animée) comme une photo, la
+   * vignette du brouillon montre l'aperçu animé.
+   */
+  const pickGif = useCallback(
+    async (gif: GifResult) => {
+      if (!token || uploading) {
+        return;
+      }
+      setExprOpen(false);
+      setUploading(true);
+      try {
+        const asset = await api.importGif(token, gif.id);
+        setAttachment({ kind: 'image', assetId: asset.id, previewUri: gif.previewUrl, durationMs: null });
+      } catch {
+        setNotice(fr.social.gifUnavailable);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [token, uploading],
   );
 
   /** Sticker catalogue : référence directe, aucun upload nécessaire. */
@@ -1268,6 +1294,28 @@ export function CommentsSheet({
         /* Panneau d'expressions : rangée d'emojis puis stickers — la pilule
            de saisie reste épurée, sans icône 😊. */
         <View style={{ backgroundColor: panelTheme.panelBg, paddingBottom: insets.bottom }}>
+          {/* Onglets : Stickers & emojis | GIF (Instagram). */}
+          <View style={styles.exprTabs}>
+            {(['stickers', 'gif'] as const).map((tab) => (
+              <Pressable
+                key={tab}
+                onPress={() => setExprTab(tab)}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: exprTab === tab }}
+                style={[
+                  styles.exprTab,
+                  exprTab === tab && { backgroundColor: theme.backgroundSelected },
+                ]}>
+                <ThemedText type="small" style={styles.exprTabText}>
+                  {tab === 'gif' ? 'GIF' : fr.social.exprStickers}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
+          {exprTab === 'gif' && token ? (
+            <CommentGifPanel token={token} height={300} onPick={(gif) => void pickGif(gif)} />
+          ) : (
+          <>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -1290,6 +1338,8 @@ export function CommentsSheet({
             onSendRef={sendStickerRef}
             onSendPersonal={sendPersonalSticker}
           />
+          </>
+          )}
         </View>
       ) : null}
     </BottomSheet>
@@ -1351,6 +1401,14 @@ function AttachmentPreview({
 }
 
 const styles = StyleSheet.create({
+  exprTabs: {
+    flexDirection: 'row',
+    gap: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
+  },
+  exprTab: { borderRadius: Radii.full, paddingHorizontal: Spacing.three, paddingVertical: Spacing.one },
+  exprTabText: { fontWeight: '700' },
   quickEmojis: {
     flexDirection: 'row',
     justifyContent: 'space-between',

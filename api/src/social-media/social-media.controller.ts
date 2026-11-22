@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard.js';
@@ -31,6 +32,20 @@ class CreateUploadDto {
 @UseGuards(JwtAuthGuard)
 export class SocialMediaController {
   constructor(private readonly media: SocialMediaService) {}
+
+  /** Recherche GIPHY (tendances sans `q`). Doit précéder `:id`. */
+  @Get('gifs/search')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async gifs(@Query('q') q?: string, @Query('offset') offset?: string) {
+    return this.media.searchGifs(q ?? '', Number(offset) || 0);
+  }
+
+  /** Importe un GIF choisi comme média du compte (commentaire). */
+  @Post('gifs/:giphyId')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  async importGif(@CurrentUser() current: JwtPayload, @Param('giphyId') giphyId: string) {
+    return this.media.importGif(current.sub, giphyId);
+  }
 
   @Post()
   async create(@CurrentUser() current: JwtPayload, @Body() body: CreateUploadDto) {

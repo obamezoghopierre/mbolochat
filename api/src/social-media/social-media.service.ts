@@ -90,6 +90,131 @@ export class SocialMediaService {
     private readonly storage: ObjectStorageService,
   ) {}
 
+  /**
+   * Recherche de GIF (GIPHY), relayée par l'API : la clé reste côté serveur
+   * et l'appareil ne contacte jamais GIPHY directement. Sans requête : les
+   * tendances. Contenu filtré « pg-13 », comme Instagram.
+   */
+  async searchGifs(query: string, offset = 0): Promise<{
+    items: Array<{ id: string; url: string; previewUrl: string; width: number; height: number; title: string }>;
+    nextOffset: number | null;
+  }> {
+    const key = process.env.GIPHY_API_KEY;
+    if (!key) {
+      throw new ServiceUnavailableException('Recherche de GIF non configurée.');
+    }
+    const q = query.trim().slice(0, 50);
+    const params = new URLSearchParams({
+      api_key: key,
+      limit: '24',
+      offset: String(Math.max(0, Math.min(offset, 4975))),
+      rating: 'pg-13',
+      lang: 'fr',
+      bundle: 'messaging_non_clips',
+    });
+    if (q) params.set('q', q);
+    const response = await fetch(
+      `https://api.giphy.com/v1/gifs/${q ? 'search' : 'trending'}?${params.toString()}`,
+      { signal: AbortSignal.timeout(6000) },
+    ).catch(() => null);
+    if (!response?.ok) {
+      throw new ServiceUnavailableException('Recherche de GIF indisponible.');
+    }
+    const body = (await response.json()) as {
+      data?: Array<{
+        id: string;
+        title?: string;
+        images?: Record<string, { url?: string; width?: string; height?: string } | undefined>;
+      }>;
+      pagination?: { total_count?: number; count?: number; offset?: number };
+    };
+    const items = (body.data ?? [])
+      .map((gif) => {
+        const full = gif.images?.downsized_medium ?? gif.images?.original;
+        const preview = gif.images?.fixed_width ?? gif.images?.fixed_width_downsampled ?? full;
+        if (!full?.url || !preview?.url) return null;
+        return {
+          id: gif.id,
+          url: full.url,
+          previewUrl: preview.url,
+          width: Number(preview.width) || 200,
+          height: Number(preview.height) || 200,
+          title: gif.title ?? '',
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+    const page = body.pagination;
+    const next = (page?.offset ?? 0) + (page?.count ?? items.length);
+    return { items, nextOffset: page?.total_count && next < page.total_count ? next : null };
+  }
+
+  /**
+   * Importe un GIF GIPHY choisi comme média du compte : téléchargé par le
+   * serveur (domaine GIPHY seulement), vérifié (vraie signature GIF, taille
+   * bornée), puis traité comme une image animée (WebP animée). Le
+   * commentaire le référence ensuite par `mediaAssetId`, comme une photo.
+   */
+  async importGif(ownerId: string, giphyId: string): Promise<MediaAssetView> {
+    const key = process.env.GIPHY_API_KEY;
+    if (!key) {
+      throw new ServiceUnavailableException('Recherche de GIF non configurée.');
+    }
+    if (!this.storage.isConfigured()) {
+      throw new ServiceUnavailableException('Stockage média non configuré.');
+    }
+    if (!/^[A-Za-z0-9]{1,64}$/.test(giphyId)) {
+      throw new BadRequestException('GIF invalide.');
+    }
+    // L'URL est relue chez GIPHY à partir de l'identifiant : le client ne
+    // peut pas faire télécharger une adresse arbitraire au serveur.
+    const meta = await fetch(
+      `https://api.giphy.com/v1/gifs/${giphyId}?api_key=${encodeURIComponent(key)}`,
+      { signal: AbortSignal.timeout(6000) },
+    ).catch(() => null);
+    const info = meta?.ok
+      ? ((await meta.json()) as {
+          data?: { images?: Record<string, { url?: string } | undefined> };
+        })
+      : null;
+    const source = info?.data?.images?.downsized_medium?.url ?? info?.data?.images?.original?.url;
+    if (!source || !/^https:\/\/media\d*\.giphy\.com\//.test(source)) {
+      throw new BadRequestException('GIF introuvable.');
+    }
+    const download = await fetch(source, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+    if (!download?.ok) {
+      throw new ServiceUnavailableException('Téléchargement du GIF impossible.');
+    }
+    const bytes = Buffer.from(await download.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > MAX_IMAGE_BYTES) {
+      throw new BadRequestException('GIF trop volumineux.');
+    }
+    if (detectSocialMedia(bytes.subarray(0, SIGNATURE_PROBE_BYTES))?.mime !== 'image/gif') {
+      throw new BadRequestException('Le fichier reçu n’est pas un GIF.');
+    }
+    const storageKey = `social/image/${ownerId}/${crypto.randomUUID()}.gif`;
+    await this.storage.put(storageKey, bytes, 'image/gif');
+    const row = await this.db.transaction(async (tx) => {
+      const [asset] = await tx
+        .insert(mediaAssets)
+        .values({
+          ownerId,
+          bucket: 'social',
+          storageKey,
+          kind: 'image',
+          mime: 'image/gif',
+          sizeBytes: bytes.length,
+          status: 'uploaded',
+        })
+        .returning();
+      if (!asset) {
+        throw new Error('Création du média impossible.');
+      }
+      await tx.insert(mediaJobs).values({ assetId: asset.id, kind: 'image_variants' });
+      return asset;
+    });
+    return this.view(row);
+  }
+
   /** Crée un asset `pending` et rend l'URL présignée d'écriture. */
   async createUpload(
     ownerId: string,
