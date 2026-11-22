@@ -427,7 +427,7 @@ export function TextPage({
                 // Options (signaler, masquer…) : elles vivent dans la feuille
                 // Partager, ouverte ici comme le ⋯ d'Instagram.
                 <Pressable
-                  onPress={actions.onShare}
+                  onPress={actions.onMore ?? actions.onShare}
                   hitSlop={10}
                   accessibilityRole="button"
                   accessibilityLabel={fr.social.shareMoreOptions}

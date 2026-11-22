@@ -1,8 +1,15 @@
 import * as Haptics from 'expo-haptics';
 import { NetworkStateType, useNetworkState } from 'expo-network';
 import {
+  Bookmark,
+  CircleUser,
   EyeOff,
   Flame,
+  Info,
+  Link2,
+  QrCode,
+  Share2,
+  UserMinus,
   Heart,
   Pencil,
   Quote,
@@ -186,6 +193,8 @@ export function FeedPager({
   const [qrTarget, setQrTarget] = useState<FeedPost | null>(null);
   const [reactionTarget, setReactionTarget] = useState<FeedPost | null>(null);
   const [repostTarget, setRepostTarget] = useState<FeedPost | null>(null);
+  /** Menu ⋯ de l'en-tête de publication (options façon Instagram). */
+  const [menuTarget, setMenuTarget] = useState<FeedPost | null>(null);
   /** Publication à ranger dans une collection (« Enregistrer dans… »). */
   const [collectionTarget, setCollectionTarget] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -289,6 +298,22 @@ export function FeedPager({
       }
     },
     [actions, likeScale],
+  );
+
+  /** « Ne plus suivre » depuis le menu ⋯ (l'état du fil se met à jour au retour). */
+  const unfollowAuthor = useCallback(
+    async (post: FeedPost) => {
+      if (!token) {
+        return;
+      }
+      try {
+        await api.unfollowUser(token, post.author.id);
+        showToast(fr.social.unfollowedToast(post.author.displayName));
+      } catch {
+        actions.notifyError(fr.social.shareError);
+      }
+    },
+    [actions, showToast, token],
   );
 
   const openProfile = useCallback((post: FeedPost) => {
@@ -500,6 +525,7 @@ export function FeedPager({
             },
             onToggleRepost: () => setRepostTarget(item),
             onShare: () => setShareTarget(item),
+            onMore: () => setMenuTarget(item),
             onOpenProfile: () => openProfile(item),
             onFollow: item.viewer.followingAuthor
               ? null
@@ -755,6 +781,25 @@ export function FeedPager({
         onClose={() => setShareTarget(null)}
       />
 
+      {/* ⋯ de l'en-tête, comme Instagram : actions rapides en tête, puis
+          options de la publication. */}
+      <ActionSheet
+        visible={menuTarget !== null}
+        title={menuTarget ? fr.social.postOptionsTitle(menuTarget.author.displayName) : undefined}
+        actions={menuTarget ? postMenuActions(menuTarget, {
+          own: menuTarget.author.id === user?.id,
+          save: () => void actions.toggleSave(menuTarget),
+          copyLink: () => void copyLink(menuTarget),
+          share: () => setShareTarget(menuTarget),
+          qr: () => setQrTarget(menuTarget),
+          profile: () => openProfile(menuTarget),
+          unfollow: () => void unfollowAuthor(menuTarget),
+          about: () => router.push(`/user/${menuTarget.author.id}`),
+          rest: moderationActions(menuTarget, actions, user?.id ?? null, () => setMenuTarget(null)),
+        }) : []}
+        onClose={() => setMenuTarget(null)}
+      />
+
       <PostQrSheet post={qrTarget} onClose={() => setQrTarget(null)} />
 
       {token ? (
@@ -897,6 +942,53 @@ function moderationActions(
     danger: true,
     onPress: run(() => actions.report(target)),
   });
+  return list;
+}
+
+/**
+ * Menu ⋯ d'une publication, comme Instagram : Enregistrer, Partager, lien et
+ * QR en tête ; puis profil / ne plus suivre / à propos du compte ; puis les
+ * options de modération (pas intéressé, masquer, modifier, supprimer,
+ * signaler).
+ */
+function postMenuActions(
+  target: FeedPost,
+  handlers: {
+    own: boolean;
+    save: () => void;
+    copyLink: () => void;
+    share: () => void;
+    qr: () => void;
+    profile: () => void;
+    unfollow: () => void;
+    about: () => void;
+    rest: ShareSheetAction[];
+  },
+): SheetAction[] {
+  const saved = target.viewer.saved === true;
+  const list: SheetAction[] = [
+    {
+      key: 'save',
+      label: saved ? fr.social.savedLabel : fr.social.saveLabel,
+      icon: Bookmark,
+      selected: saved,
+      onPress: handlers.save,
+    },
+    { key: 'share', label: fr.social.shareLabel, icon: Share2, onPress: handlers.share },
+    { key: 'link', label: fr.social.copyLink, icon: Link2, onPress: handlers.copyLink },
+    { key: 'qr', label: fr.social.qrCodeLabel, icon: QrCode, onPress: handlers.qr },
+  ];
+  if (!handlers.own) {
+    list.push({ key: 'profile', label: fr.social.viewProfile, icon: CircleUser, onPress: handlers.profile });
+    if (target.viewer.followingAuthor) {
+      list.push({ key: 'unfollow', label: fr.social.unfollow, icon: UserMinus, destructive: true, onPress: handlers.unfollow });
+    }
+    list.push({ key: 'about', label: fr.social.aboutAccount, icon: Info, onPress: handlers.about });
+  }
+  // Les options existantes (déjà fermantes) : ActionSheet ferme aussi.
+  for (const action of handlers.rest) {
+    list.push({ key: action.key, label: action.label, icon: action.icon, destructive: action.danger, onPress: action.onPress });
+  }
   return list;
 }
 

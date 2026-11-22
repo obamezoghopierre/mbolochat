@@ -30,6 +30,8 @@ export interface FeedActions {
   onPickCollection?: (() => void) | null;
   onToggleRepost: () => void;
   onShare: () => void;
+  /** ⋯ de l'en-tête : menu d'options de la publication. */
+  onMore?: () => void;
   onOpenProfile: () => void;
   /** Abonnement : `null` quand c'est son propre contenu ou déjà abonné. */
   onFollow: (() => void) | null;

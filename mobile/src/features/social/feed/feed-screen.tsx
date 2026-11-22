@@ -49,9 +49,13 @@ import { Image } from 'expo-image';
 import { isVideoPost, primaryMedia } from './pager/feed-media';
 import { useReportPublication } from './use-report-publication';
 
-const TABS: { id: FeedTab; label: string }[] = [
+/** Onglets du haut : les trois fils, puis « Reels » (vidéos plein écran). */
+type TopTab = FeedTab | 'reels';
+
+const TABS: { id: TopTab; label: string }[] = [
   { id: 'local', label: fr.social.feedTabs.local },
   { id: 'for-you', label: fr.social.feedTabs.forYou },
+  { id: 'reels', label: fr.social.feedTabs.reels },
   { id: 'following', label: fr.social.feedTabs.following },
 ];
 
@@ -71,7 +75,7 @@ const NOTICE_DURATION = 2600;
 export function FeedScreen() {
   const insets = useSafeAreaInsets();
   const { width, height: screenHeight } = useWindowDimensions();
-  const [tab, setTab] = useState<FeedTab>(DEFAULT_TAB);
+  const [tab, setTab] = useState<TopTab>(DEFAULT_TAB);
   const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
   // Plein écran Reels ouvert depuis une carte : la barre d'onglets du haut
   // s'efface, comme sur Instagram.
@@ -185,7 +189,7 @@ export function FeedScreen() {
   useEffect(() => () => showFeedChrome(), []);
 
   const changeTab = useCallback(
-    (next: FeedTab) => {
+    (next: TopTab) => {
       const index = TABS.findIndex((entry) => entry.id === next);
       if (index >= 0) {
         pager.current?.scrollTo({ x: index * width, animated: true });
@@ -221,6 +225,14 @@ export function FeedScreen() {
         style={styles.screen}>
         {TABS.map((entry) => (
           <View key={entry.id} style={[styles.screen, { width }]}>
+            {entry.id === 'reels' ? (
+              <ReelsTabView
+                deferNetwork={!homeReady}
+                onOpenComments={setCommentsPost}
+                hideOverlays={commentsPost !== null}
+                playbackActive={tab === 'reels' && screenFocused && appActive}
+              />
+            ) : (
             <FeedSurfaceView
               tab={entry.id}
               deferNetwork={entry.id !== DEFAULT_TAB && !homeReady}
@@ -231,6 +243,7 @@ export function FeedScreen() {
               playbackActive={entry.id === tab && screenFocused && appActive}
               onReelsOpenChange={entry.id === tab ? setReelsOpen : undefined}
             />
+            )}
           </View>
         ))}
       </ScrollView>
@@ -259,8 +272,8 @@ function FeedTopBar({
   onTabChange,
   topInset,
 }: {
-  tab: FeedTab;
-  onTabChange: (tab: FeedTab) => void;
+  tab: TopTab;
+  onTabChange: (tab: TopTab) => void;
   topInset: number;
 }) {
   // Fil libre façon Instagram : bandeau opaque à la teinte des cartes, les
@@ -281,8 +294,8 @@ function FeedTopBar({
       pointerEvents="box-none"
       style={[
         styles.fixedTop,
-        { height: barHeight, backgroundColor: tones.surface },
-        slideStyle,
+        { height: barHeight, backgroundColor: tab === 'reels' ? 'transparent' : tones.surface },
+        tab === 'reels' ? null : slideStyle,
       ]}>
       <View
         style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
@@ -301,7 +314,12 @@ function FeedTopBar({
                 style={styles.tab}>
                 <ThemedText
                   numberOfLines={1}
-                  style={[styles.tabLabel, { color: tones.textFaint }, active && styles.tabLabelActive]}>
+                  style={[
+                    styles.tabLabel,
+                    { color: tab === 'reels' ? FeedSurface.onMediaFaint : tones.textFaint },
+                    active && styles.tabLabelActive,
+                    tab === 'reels' && OnMediaShadow,
+                  ]}>
                   {entry.label}
                 </ThemedText>
                 <View style={[styles.tabUnderline, active && styles.tabUnderlineActive]} />
@@ -338,7 +356,10 @@ function FeedTopBar({
         Instagram — le fil ne passe jamais sous l'heure et la batterie. */}
     <View
       pointerEvents="none"
-      style={[styles.fixedTop, { height: topInset, backgroundColor: tones.surface }]}
+      style={[
+        styles.fixedTop,
+        { height: topInset, backgroundColor: tab === 'reels' ? 'transparent' : tones.surface },
+      ]}
     />
     </>
   );
@@ -564,6 +585,72 @@ function FeedSurfaceView({
  * l'onglet (`?format=video`), chargé au fur et à mesure. Seules les vidéos
  * verticales y figurent ; les doublons avec le fil d'accueil sont écartés.
  */
+/**
+ * Onglet « Reels » : le fil vidéo dédié (vidéos verticales seules) en plein
+ * écran, page par page, comme l'onglet Reels d'Instagram ou le fil TikTok.
+ */
+function ReelsTabView({
+  deferNetwork,
+  onOpenComments,
+  hideOverlays,
+  playbackActive,
+}: {
+  deferNetwork: boolean;
+  onOpenComments: (post: FeedPost) => void;
+  hideOverlays: boolean;
+  playbackActive: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const [height, setHeight] = useState(0);
+  const videos = useFeed('for-you', { format: 'video', deferNetwork });
+  const report = useReportPublication(videos.notifyError);
+  const items = useMemo(() => videos.items.filter(isVideoPost), [videos.items]);
+  const actions: FeedPagerActions = {
+    toggleLike: videos.toggleLike,
+    setReaction: videos.setReaction,
+    dismiss: videos.dismiss,
+    muteAuthor: videos.muteAuthor,
+    toggleSave: videos.toggleSave,
+    toggleRepost: videos.toggleRepost,
+    follow: videos.follow,
+    remove: videos.remove,
+    edit: (post) => router.push(`/post/edit/${post.id}`),
+    report: (post) => report.open(post),
+    onOpenComments,
+    notifyError: videos.notifyError,
+  };
+  return (
+    <View style={styles.container} onLayout={(event) => setHeight(event.nativeEvent.layout.height)}>
+      {height > 0 && items.length > 0 ? (
+        <FeedPager
+          mode="pager"
+          items={items}
+          height={height}
+          barInset={TabBarHeight + insets.bottom}
+          playbackActive={playbackActive}
+          refreshing={videos.refreshing}
+          hasMore={videos.hasMore}
+          hideOverlays={hideOverlays}
+          onLoadMore={videos.loadMore}
+          onRefresh={videos.refresh}
+          actions={actions}
+        />
+      ) : (
+        <View style={styles.emptyFill}>
+          {videos.status === 'loading' ? (
+            <ActivityIndicator color={FeedSurface.onMedia} />
+          ) : (
+            <ThemedText style={[styles.centeredText, OnMediaShadow]}>
+              {fr.social.reelsEmpty}
+            </ThemedText>
+          )}
+        </View>
+      )}
+      {report.sheet}
+    </View>
+  );
+}
+
 function ReelsLayer({
   tab,
   seed,
@@ -752,6 +839,8 @@ const styles = StyleSheet.create({
   },
   emptyFill: {
     flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   // Calque unique posé au-dessus du pager horizontal : la barre reste fixe
   // pendant le swipe, contrairement aux anciennes copies par onglet.

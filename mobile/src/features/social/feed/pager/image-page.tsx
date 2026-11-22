@@ -392,7 +392,7 @@ export function ImagePage({
                 </Pressable>
               ) : null}
               <Pressable
-                onPress={actions.onShare}
+                onPress={actions.onMore ?? actions.onShare}
                 hitSlop={10}
                 accessibilityRole="button"
                 accessibilityLabel={fr.social.shareMoreOptions}
