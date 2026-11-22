@@ -1,7 +1,7 @@
-import { Link2, QrCode, Send, UserPlus } from 'lucide-react-native';
+import { Check, Link2, Lock, MessageCircle as WhatsAppIcon, QrCode, Send, UserPlus } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
@@ -41,6 +41,8 @@ export function ShareTargetsRow({
   onShowQr,
   extraActions,
   moreActions,
+  onSendMany,
+  onWhatsApp,
 }: {
   token: string;
   currentUserId: string | null;
@@ -60,9 +62,50 @@ export function ShareTargetsRow({
    * signaler), en liste sous les partages — séparées comme sur Instagram.
    */
   moreActions?: ShareSheetAction[];
+  /**
+   * Envoi groupé, comme Instagram : plusieurs discussions cochées et un
+   * message facultatif. Seules les discussions non chiffrées y participent ;
+   * une discussion chiffrée s'ouvre (le chiffrement se fait dans le chat).
+   */
+  onSendMany?: (conversations: ConversationSummary[], message: string) => Promise<void>;
+  /** « WhatsApp » : envoie le lien de la publication via WhatsApp. */
+  onWhatsApp?: () => void;
 }) {
   const theme = useTheme();
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const toggle = (conversation: ConversationSummary) => {
+    // Discussion chiffrée ou envoi groupé indisponible : ouverture directe.
+    if (!onSendMany || conversation.e2eeSince) {
+      onPick(conversation);
+      return;
+    }
+    setSelected((current) =>
+      current.includes(conversation.id)
+        ? current.filter((id) => id !== conversation.id)
+        : [...current, conversation.id],
+    );
+  };
+
+  const sendSelected = async () => {
+    if (!onSendMany || selected.length === 0 || sending || !conversations) {
+      return;
+    }
+    setSending(true);
+    try {
+      await onSendMany(
+        conversations.filter((conversation) => selected.includes(conversation.id)),
+        message.trim(),
+      );
+      setSelected([]);
+      setMessage('');
+    } finally {
+      setSending(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -109,10 +152,40 @@ export function ShareTargetsRow({
                 key={conversation.id}
                 conversation={conversation}
                 currentUserId={currentUserId}
-                onPress={() => onPick(conversation)}
+                selected={selected.includes(conversation.id)}
+                encrypted={Boolean(conversation.e2eeSince)}
+                onPress={() => toggle(conversation)}
               />
             ))}
           </ScrollView>
+          {selected.length > 0 ? (
+            <View style={styles.sendRow}>
+              <TextInput
+                value={message}
+                onChangeText={setMessage}
+                placeholder={fr.social.shareMessagePlaceholder}
+                placeholderTextColor={theme.textSecondary}
+                maxLength={500}
+                style={[
+                  styles.messageInput,
+                  { color: theme.text, backgroundColor: theme.backgroundSelected },
+                ]}
+              />
+              <Pressable
+                onPress={() => void sendSelected()}
+                disabled={sending}
+                accessibilityRole="button"
+                style={[styles.sendButton, { backgroundColor: theme.accent }]}>
+                {sending ? (
+                  <ActivityIndicator color={theme.onAccent} size="small" />
+                ) : (
+                  <ThemedText type="small" style={{ color: theme.onAccent, fontWeight: '700' }}>
+                    {fr.social.shareSendCount(selected.length)}
+                  </ThemedText>
+                )}
+              </Pressable>
+            </View>
+          ) : null}
         </>
       ) : null}
       {hasActions ? (
@@ -136,6 +209,9 @@ export function ShareTargetsRow({
               label={fr.social.copyLink}
               onPress={onCopyLink}
             />
+          ) : null}
+          {onWhatsApp ? (
+            <ShareActionTarget icon={WhatsAppIcon} label="WhatsApp" onPress={onWhatsApp} />
           ) : null}
           {onShowQr ? (
             <ShareActionTarget
@@ -184,10 +260,16 @@ export function ShareTargetsRow({
 function ShareTarget({
   conversation,
   currentUserId,
+  selected = false,
+  encrypted = false,
   onPress,
 }: {
   conversation: ConversationSummary;
   currentUserId: string | null;
+  /** Cochée pour l'envoi groupé. */
+  selected?: boolean;
+  /** Discussion chiffrée : ouverte directement, jamais cochée. */
+  encrypted?: boolean;
   onPress: () => void;
 }) {
   const isGroup = conversation.type === 'GROUP';
@@ -195,22 +277,35 @@ function ShareTarget({
   const title = conversationTitle(conversation, currentUserId ?? '');
   const avatarUri = isGroup ? conversation.avatarUrl : (other?.avatarUrl ?? null);
 
+  const theme = useTheme();
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
+      accessibilityState={{ selected }}
       accessibilityLabel={`${fr.social.sendToLabel} ${title}`}
       style={({ pressed }) => [styles.target, pressed && { opacity: 0.7 }]}>
-      <Avatar
-        name={title}
-        uri={avatarUri}
-        size={52}
-        gender={isGroup ? null : (other?.gender ?? null)}
-        variant={isGroup ? 'group' : 'user'}
-        shape="rounded"
-        emoji={isGroup ? conversation.emoji : null}
-        color={isGroup ? conversation.color : null}
-      />
+      <View>
+        <Avatar
+          name={title}
+          uri={avatarUri}
+          size={52}
+          gender={isGroup ? null : (other?.gender ?? null)}
+          variant={isGroup ? 'group' : 'user'}
+          shape="rounded"
+          emoji={isGroup ? conversation.emoji : null}
+          color={isGroup ? conversation.color : null}
+        />
+        {selected ? (
+          <View style={[styles.checkBadge, { backgroundColor: theme.accent, borderColor: theme.backgroundElement }]}>
+            <Icon icon={Check} size={12} color={theme.onAccent} strokeWidth={3} />
+          </View>
+        ) : encrypted ? (
+          <View style={[styles.checkBadge, { backgroundColor: theme.backgroundSelected, borderColor: theme.backgroundElement }]}>
+            <Icon icon={Lock} size={10} color={theme.text} />
+          </View>
+        ) : null}
+      </View>
       <ThemedText type="micro" numberOfLines={1} style={styles.name}>
         {title}
       </ThemedText>
@@ -282,6 +377,36 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     marginTop: Spacing.two,
+  },
+  checkBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  messageInput: {
+    flex: 1,
+    borderRadius: 999,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    fontSize: 15,
+  },
+  sendButton: {
+    borderRadius: 999,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    minWidth: 96,
+    alignItems: 'center',
   },
   more: {
     borderTopWidth: StyleSheet.hairlineWidth,

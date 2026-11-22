@@ -22,6 +22,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Image,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -42,6 +43,7 @@ import { postDeepLink } from '@/lib/deep-link';
 import { trackFeedScroll } from '@/lib/feed-chrome';
 import { setFeedPageIsLight } from '@/lib/feed-page-tone';
 import { setPendingPostShare } from '@/lib/pending-post-share';
+import { sendPostToMany } from '@/lib/send-post-to-many';
 import { useThemePreference } from '@/lib/theme-preference';
 import type { ConversationSummary, FeedPost, SocialReaction } from '@/lib/types';
 import { FeedActionRail, type FeedActions, type FeedActionState } from './action-rail';
@@ -673,6 +675,32 @@ export function FeedPager({
                 if (target) {
                   router.push(`/share-post/${target.id}`);
                 }
+              }}
+              onSendMany={async (conversations, message) => {
+                const target = shareTarget;
+                if (!target || !token) {
+                  return;
+                }
+                const link = postDeepLink(target.id);
+                const sent = await sendPostToMany(token, conversations, link, message);
+                setShareTarget(null);
+                if (sent > 0) {
+                  trackShare(target);
+                  showToast(fr.social.shareSentTo(sent));
+                } else {
+                  actions.notifyError(fr.social.shareError);
+                }
+              }}
+              onWhatsApp={() => {
+                const target = shareTarget;
+                setShareTarget(null);
+                if (!target) {
+                  return;
+                }
+                const text = encodeURIComponent(postDeepLink(target.id));
+                void Linking.openURL(`whatsapp://send?text=${text}`)
+                  .then(() => trackShare(target))
+                  .catch(() => actions.notifyError(fr.social.whatsappMissing));
               }}
               onShowQr={() => {
                 const target = shareTarget;

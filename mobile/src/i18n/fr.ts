@@ -759,6 +759,11 @@ export const fr = {
     shareShort: 'Partager',
     repostToast: 'Republié sur ton profil',
     undo: 'Annuler',
+    shareMessagePlaceholder: 'Écris un message…',
+    shareSendCount: (count: number) => (count > 1 ? `Envoyer (${count})` : 'Envoyer'),
+    shareSentTo: (count: number) =>
+      count > 1 ? `Envoyé à ${count} discussions` : 'Envoyé',
+    whatsappMissing: 'WhatsApp n’est pas installé sur cet appareil.',
     savedToast: 'Enregistré',
     saveToCollectionShort: 'Collection',
     saveToCollectionTitle: 'Enregistrer dans…',
