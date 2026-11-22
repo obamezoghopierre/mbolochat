@@ -375,8 +375,8 @@ export function CommentRow({
       <Avatar
         name={comment.author.displayName}
         uri={comment.author.avatarUrl}
-        size={indented ? 28 : 34}
-        shape="rounded"
+        size={indented ? 26 : 34}
+        shape="circle"
       />
       <View style={styles.body}>
         {comment.pinned ? (
@@ -389,6 +389,9 @@ export function CommentRow({
         ) : null}
         <View style={styles.nameRow}>
           <ThemedText style={styles.author}>{comment.author.displayName}</ThemedText>
+          <ThemedText type="caption" themeColor="textSecondary">
+            {formatCommentTimestamp(comment.createdAt)}
+          </ThemedText>
           {publicationAuthorId && comment.author.id === publicationAuthorId ? (
             <View style={[styles.creatorBadge, { backgroundColor: theme.backgroundSelected }]}>
               <ThemedText type="caption" style={[styles.creatorText, { color: theme.text }]}>
@@ -432,7 +435,16 @@ export function CommentRow({
               accessibilityLabel={fr.social.commentImageView}>
               <Image
                 source={{ uri: comment.attachment.url }}
-                style={styles.commentImage}
+                style={[
+                  styles.commentImage,
+                  {
+                    // Ratio d'origine, borné comme une miniature Instagram.
+                    aspectRatio:
+                      comment.attachment.width && comment.attachment.height
+                        ? Math.min(1.6, Math.max(0.6, comment.attachment.width / comment.attachment.height))
+                        : 1,
+                  },
+                ]}
                 contentFit="cover"
                 transition={120}
                 accessibilityLabel={fr.social.commentImage}
@@ -483,11 +495,13 @@ export function CommentRow({
           </View>
         ) : null}
         {comment.attachment?.kind === 'audio' && comment.attachment.url ? (
+          <View style={[styles.audioWrap, { backgroundColor: theme.backgroundSelected }]}>
           <CommentAudio
             uri={comment.attachment.url}
             durationMs={comment.attachment.durationMs ?? 0}
             mine={isOwnComment}
           />
+          </View>
         ) : null}
         {/* Légende vocale d'une photo ou d'un sticker : bulle audio sous le média. */}
         {comment.attachment?.voice?.url ? (
@@ -498,20 +512,12 @@ export function CommentRow({
           />
         ) : null}
         <View style={styles.meta}>
-          <ThemedText type="caption" themeColor="textSecondary">
-            {formatCommentTimestamp(comment.createdAt)}
-          </ThemedText>
           {onReply ? (
             <Pressable onPress={() => onReply(comment)} hitSlop={6} accessibilityRole="button">
-              <ThemedText type="caption" themeColor="textSecondary">
+              <ThemedText type="caption" themeColor="textSecondary" style={styles.replyLabel}>
                 {fr.social.reply}
               </ThemedText>
             </Pressable>
-          ) : null}
-          {score > 0 ? (
-            <ThemedText type="caption" themeColor="textSecondary">
-              {fr.social.likesCount(score)}
-            </ThemedText>
           ) : null}
           {COMMENT_REACTION_KINDS.flatMap((kind) => {
             const reaction = comment.reactions.find((item) => item.kind === kind);
@@ -637,10 +643,12 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: Spacing.two,
-    paddingVertical: Spacing.two,
+    gap: Spacing.threeHalf,
+    paddingVertical: Spacing.threeHalf,
   },
-  indented: { paddingLeft: Spacing.four },
+  // Réponse : décalée sous l'avatar du parent, comme Instagram.
+  indented: { paddingLeft: 34 + Spacing.threeHalf, paddingVertical: Spacing.two },
+  replyLabel: { fontWeight: '700' },
   creatorBadge: {
     borderRadius: Radii.xs,
     paddingHorizontal: Spacing.one,
@@ -649,10 +657,9 @@ const styles = StyleSheet.create({
   creatorText: { fontSize: 10, fontWeight: '700' },
   likeCount: { fontSize: 11, marginTop: 1, textAlign: 'center' },
   commentImage: {
-    width: 180,
-    height: 180,
+    width: 200,
+    maxHeight: 280,
     borderRadius: Radii.md,
-    marginTop: Spacing.one,
   },
   // Bulle média d'un commentaire photo : image + légende dans le même
   // conteneur arrondi, comme une carte média.
@@ -669,18 +676,19 @@ const styles = StyleSheet.create({
   },
   captionText: { fontSize: Type.body.fontSize },
   stickerWrap: { marginTop: Spacing.one, alignSelf: 'flex-start' },
-  body: { flex: 1, gap: Spacing.one },
-  nameRow: { flexDirection: 'row', alignItems: 'baseline', gap: Spacing.one, flexWrap: 'wrap' },
+  audioWrap: { marginTop: Spacing.one, alignSelf: 'flex-start', borderRadius: Radii.full, paddingHorizontal: Spacing.two, maxWidth: 260 },
+  body: { flex: 1, gap: 2 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one + 2, flexWrap: 'wrap' },
   // Nom sur sa propre ligne, commentaire en dessous : le gras et l'écart de
   // taille rendent la hiérarchie visible même avec la police Android.
-  text: { ...Type.body, fontSize: 14, fontWeight: '400', flexWrap: 'wrap' },
-  author: { ...Type.body, fontSize: 15.5, fontWeight: '700' },
+  text: { ...Type.body, fontSize: 14.5, lineHeight: 20, fontWeight: '400', flexWrap: 'wrap' },
+  author: { ...Type.body, fontSize: 13.5, fontWeight: '700' },
   meta: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: Spacing.two,
-    marginTop: Spacing.one,
+    gap: Spacing.three,
+    marginTop: Spacing.one + 2,
   },
   pinnedBadge: {
     flexDirection: 'row',
@@ -705,6 +713,6 @@ const styles = StyleSheet.create({
   },
   reactionBarItem: { padding: Spacing.two },
   reactionBarEmoji: { fontSize: 26 },
-  actions: { flexDirection: 'row', alignItems: 'center' },
-  action: { paddingVertical: Spacing.half, paddingLeft: Spacing.one, alignItems: 'center' },
+  actions: { alignItems: 'center', gap: Spacing.two, paddingTop: Spacing.one, minWidth: 28 },
+  action: { alignItems: 'center' },
 });
