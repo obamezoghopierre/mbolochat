@@ -1156,4 +1156,40 @@ describe('Publications et interactions (e2e)', () => {
       .set('Authorization', `Bearer ${bob.token}`)
       .expect(404);
   });
+
+  describe('« Aimé par » sur le détail d’une publication', () => {
+    it('cite le compte suivi qui a aimé, rien pour un visiteur qui ne le suit pas', async () => {
+      const author = await register('Detaillee');
+      const friend = await register('Amicale');
+      const viewer = await register('Curieuse');
+      const stranger = await register('Distante');
+      const post = await publish(author).expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/users/${friend.id}/follow`)
+        .set('Authorization', `Bearer ${viewer.token}`)
+        .expect(201);
+
+      // Personne n'a aimé : pas d'attribution.
+      expect((await see(viewer, post.body.id).expect(200)).body.likedBy).toBeNull();
+
+      await request(app.getHttpServer())
+        .post(`/publications/${post.body.id}/like`)
+        .set('Authorization', `Bearer ${friend.token}`)
+        .send({ kind: 'like' })
+        .expect(201);
+
+      const seen = (await see(viewer, post.body.id).expect(200)).body;
+      expect(seen.counters.likes).toBe(1);
+      expect(seen.likedBy).toEqual({
+        id: friend.id,
+        username: friend.username,
+        displayName: friend.displayName,
+        avatarUrl: null,
+        verified: false,
+      });
+      // Un visiteur qui ne suit pas l'amie ne voit que le nombre.
+      expect((await see(stranger, post.body.id).expect(200)).body.likedBy).toBeNull();
+    });
+  });
 });

@@ -9,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { Radii, Spacing, Type } from '@/constants/theme';
 import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { primaryMedia } from './pager/feed-media';
+import { LikedByLine } from './liked-by-line';
 import { formatListTimestamp } from '@/lib/format';
 import { fr } from '@/i18n/fr';
 import type { FeedPost } from '@/lib/types';
@@ -146,6 +147,10 @@ export function PostCard({
           </ThemedText>
         </View>
       </View>
+
+      {/* « Aimé par X et N autres » : seulement avec un compte suivi, le
+          nombre de J'aime est déjà dans le pied de carte. */}
+      <LikedByLine post={post} color={theme.text} requireLikedBy />
     </Pressable>
   );
 }

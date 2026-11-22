@@ -10,6 +10,7 @@ import { fr } from '@/i18n/fr';
 import { formatCompactCount } from '@/lib/format';
 import { OnMediaShadow, feedText } from './feed-tokens';
 import { renderTokens } from './rich-text';
+import { LikedByLine } from '../liked-by-line';
 import type { FeedPost } from '@/lib/types';
 
 /** Longueur de légende affichée avant « voir plus ». */
@@ -87,6 +88,10 @@ export const PostInfoBlock = memo(function PostInfoBlock({
           </Pressable>
         )}
       </Pressable>
+
+      {/* « Aimé par X » : seulement si un compte suivi a aimé (le nombre de
+          J'aime est déjà sur le rail d'actions). */}
+      <LikedByLine post={post} color={FeedSurface.onMedia} onMedia requireLikedBy />
 
       {/* Republication dans le fil Abonnements : « X a republié »,
           comme Instagram — le tap mène au profil du reposter. */}

@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -22,6 +22,7 @@ import {
 } from '../db/schema.js';
 import { loadPublicationMedia, type MediaAccess } from '../publications/publication-media.js';
 import { ObjectStorageService } from '../social-media/object-storage.service.js';
+import { loadLikedByFollowed } from '../social/liked-by.js';
 import { visiblePublicationConditions } from '../social/publication-visibility.js';
 import { isPubliclyCacheable } from '../users/visibility.js';
 import type { AuthorCard, PublicationView } from '../publications/publications.service.js';
@@ -718,56 +719,6 @@ export class FeedService {
     return sql`${publications.hotScore} * ${affinity}`;
   }
 
-  /**
-   * Pour chaque publication, le compte suivi par le visiteur qui y a réagi le
-   * plus récemment (« Aimé par X »). Une seule requête par page : abonnement
-   * accepté, jamais le visiteur lui-même, ni un compte supprimé, ni un compte
-   * bloqué dans un sens ou dans l'autre.
-   */
-  private async likedByFollowed(
-    publicationIds: string[],
-    viewerId: string,
-  ): Promise<Map<string, AuthorCard>> {
-    if (publicationIds.length === 0) {
-      return new Map();
-    }
-    const rows = await this.db
-      .selectDistinctOn([publicationReactions.publicationId], {
-        publicationId: publicationReactions.publicationId,
-        id: users.id,
-        username: users.username,
-        displayName: users.displayName,
-        avatarUrl: users.avatarUrl,
-        verified: users.verified,
-      })
-      .from(publicationReactions)
-      .innerJoin(
-        follows,
-        and(
-          eq(follows.followingId, publicationReactions.userId),
-          eq(follows.followerId, viewerId),
-          eq(follows.status, 'accepted'),
-        ),
-      )
-      .innerJoin(users, eq(users.id, publicationReactions.userId))
-      .where(
-        and(
-          inArray(publicationReactions.publicationId, publicationIds),
-          ne(publicationReactions.userId, viewerId),
-          isNull(users.deletedAt),
-          sql`not exists (
-            select 1 from ${blocks}
-            where (${blocks.blockerId} = ${viewerId} and ${blocks.blockedId} = ${publicationReactions.userId})
-               or (${blocks.blockerId} = ${publicationReactions.userId} and ${blocks.blockedId} = ${viewerId})
-          )`,
-        ),
-      )
-      .orderBy(publicationReactions.publicationId, desc(publicationReactions.createdAt));
-    return new Map(
-      rows.map(({ publicationId, ...author }) => [publicationId, author as AuthorCard]),
-    );
-  }
-
   /** Hydrate les URLs de médias et rend les éléments de fil. */
   private async toItems(rows: PublicationRow[], viewerId: string): Promise<FeedItem[]> {
     if (rows.length === 0) {
@@ -797,7 +748,8 @@ export class FeedService {
         this.storage.isConfigured() ? this.storage : null,
         (publicationId) => access.get(publicationId) ?? 'signed',
       ),
-      this.likedByFollowed(
+      loadLikedByFollowed(
+        this.db,
         rows.filter((row) => row.likeCount > 0).map((row) => row.id),
         viewerId,
       ),

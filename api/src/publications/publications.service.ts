@@ -59,6 +59,7 @@ import type {
 import { COMMENT_REACTION_KINDS, MAX_WATCH_MS } from './dto/interactions.dto.js';
 import { loadPublicationMedia, type PublicationMediaView } from './publication-media.js';
 import { PublicationEvents } from './publication-events.js';
+import { loadLikedByFollowed } from '../social/liked-by.js';
 import {
   MAX_TEXT_SIZE,
   MIN_TEXT_SIZE,
@@ -142,6 +143,11 @@ export interface PublicationView {
     authorDisplayName: string;
     caption: string | null;
   } | null;
+  /**
+   * « Aimé par X et N autres » : compte suivi par le visiteur qui a réagi le
+   * plus récemment, `null` si aucun (cf. `loadLikedByFollowed`).
+   */
+  likedBy?: AuthorCard | null;
 }
 
 export interface CommentView {
@@ -1780,6 +1786,12 @@ export class PublicationsService {
         and(eq(publicationReposts.publicationId, row.id), eq(publicationReposts.userId, viewerId)),
       );
 
+    // « Aimé par » : inutile de chercher quand personne n'a réagi.
+    const likedBy =
+      row.likeCount > 0
+        ? await loadLikedByFollowed(this.db, [row.id], viewerId)
+        : new Map<string, AuthorCard>();
+
     let quoted: PublicationView['quoted'] = null;
     if (row.quotedPublicationId) {
       const [original] = await this.db
@@ -1839,6 +1851,7 @@ export class PublicationsService {
         reposted: Boolean(reposted),
       },
       quoted,
+      likedBy: likedBy.get(row.id) ?? null,
     };
   }
 
