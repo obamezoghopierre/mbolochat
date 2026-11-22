@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { Heart, MessageCircle } from 'lucide-react-native';
 import { Pressable, StyleSheet, View } from 'react-native';
@@ -7,8 +6,8 @@ import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { Radii, Spacing, Type } from '@/constants/theme';
-import { MediaFilterOverlay } from '@/features/media/media-filter';
 import { primaryMedia } from './pager/feed-media';
+import { PostMediaCarousel } from './post-media-carousel';
 import { LikedByLine } from './liked-by-line';
 import { formatListTimestamp } from '@/lib/format';
 import { fr } from '@/i18n/fr';
@@ -38,9 +37,6 @@ export function PostCard({
   const theme = useTheme();
   const reacted = post.viewer.reaction !== null;
   const media = primaryMedia(post);
-  // Une vidéo n'a pas d'image dans `url` : on affiche son poster, jamais un
-  // lecteur dans une carte de liste.
-  const preview = media ? (media.kind === 'video' ? media.posterUrl : media.url) : null;
 
   return (
     <Pressable
@@ -79,18 +75,8 @@ export function PostCard({
         </View>
       </Pressable>
 
-      {preview ? (
-        <View>
-          <Image
-            source={{ uri: preview }}
-            style={[styles.media, { backgroundColor: theme.backgroundSelected }]}
-            contentFit="cover"
-            transition={120}
-            accessibilityLabel={media?.altText ?? 'Média de la publication'}
-          />
-          <MediaFilterOverlay filterKey={post.mediaFilter} style={styles.filterOverlay} />
-        </View>
-      ) : null}
+      {/* Carrousel complet (photos et vidéos, dans l'ordre), comme le fil. */}
+      {media ? <PostMediaCarousel post={post} /> : null}
 
       {post.quoted ? (
         <Pressable
@@ -186,21 +172,6 @@ const styles = StyleSheet.create({
   },
   caption: {
     ...Type.body,
-  },
-  media: {
-    width: '100%',
-    aspectRatio: 4 / 5,
-    borderRadius: Radii.md,
-  },
-  /** Même boîte que le média, pour que le filtre suive ses coins arrondis. */
-  filterOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: Radii.md,
-    overflow: 'hidden',
   },
   footer: {
     flexDirection: 'row',
