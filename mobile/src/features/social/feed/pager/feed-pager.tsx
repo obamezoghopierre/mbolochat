@@ -62,6 +62,7 @@ import { ImagePage } from './image-page';
 import { isPageActive, videoPageMode } from './preload';
 import { PostInfoBlock } from './post-info';
 import { PostQrSheet } from './post-qr-sheet';
+import { AboutAccountSheet } from '../about-account-sheet';
 import { SaveCollectionSheet } from '../save-collection-sheet';
 import { ShareTargetsRow, type ShareSheetAction } from './share-targets';
 import { TextPage } from './text-page';
@@ -195,6 +196,8 @@ export function FeedPager({
   const [repostTarget, setRepostTarget] = useState<FeedPost | null>(null);
   /** Menu ⋯ de l'en-tête de publication (options façon Instagram). */
   const [menuTarget, setMenuTarget] = useState<FeedPost | null>(null);
+  /** « À propos de ce compte » : identifiant du compte affiché. */
+  const [aboutTarget, setAboutTarget] = useState<string | null>(null);
   /** Publication à ranger dans une collection (« Enregistrer dans… »). */
   const [collectionTarget, setCollectionTarget] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -794,13 +797,17 @@ export function FeedPager({
           qr: () => setQrTarget(menuTarget),
           profile: () => openProfile(menuTarget),
           unfollow: () => void unfollowAuthor(menuTarget),
-          about: () => router.push(`/user/${menuTarget.author.id}`),
+          about: () => setAboutTarget(menuTarget.author.id),
           rest: moderationActions(menuTarget, actions, user?.id ?? null, () => setMenuTarget(null)),
         }) : []}
         onClose={() => setMenuTarget(null)}
       />
 
       <PostQrSheet post={qrTarget} onClose={() => setQrTarget(null)} />
+
+      {token ? (
+        <AboutAccountSheet token={token} userId={aboutTarget} onClose={() => setAboutTarget(null)} />
+      ) : null}
 
       {token ? (
         <SaveCollectionSheet
