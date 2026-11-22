@@ -350,6 +350,16 @@ export function FeedPager({
     [shareTarget, trackShare],
   );
 
+  // `repostWithUndo` n'est lu que dans les `onPress` des actions : le
+  // compilateur craint une lecture de ref au render, d'où la directive.
+  const repostSheetActions = REPOST_ACTIONS(
+    repostTarget,
+    actions,
+    () => setRepostTarget(null),
+    // eslint-disable-next-line react-hooks/refs
+    repostWithUndo,
+  );
+
   if (height <= 0) {
     return <View style={styles.flex} />;
   }
@@ -736,7 +746,7 @@ export function FeedPager({
       <ActionSheet
         visible={repostTarget !== null}
         title={fr.social.repostSheetTitle}
-        actions={REPOST_ACTIONS(repostTarget, actions, () => setRepostTarget(null), repostWithUndo)}
+        actions={repostSheetActions}
         onClose={() => setRepostTarget(null)}
       />
     </View>

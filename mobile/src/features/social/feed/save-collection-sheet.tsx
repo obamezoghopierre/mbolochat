@@ -41,6 +41,7 @@ export function SaveCollectionSheet({
       return;
     }
     let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCollections(null);
     setCreating(false);
     setName('');

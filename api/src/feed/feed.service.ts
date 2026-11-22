@@ -123,7 +123,7 @@ type PublicationRow = {
   mediaFilter: string | null;
   visibility: 'public' | 'followers' | 'private';
   createdAt: Date;
-  editedAt?: Date | null;
+  editedAt: Date | null;
   author: AuthorCard;
   authorPrivateAccount: boolean;
   likeCount: number;
