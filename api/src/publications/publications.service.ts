@@ -74,6 +74,8 @@ import { previewForText, type LinkPreviewMeta } from './link-preview.js';
 
 /** Borne anti-spam : au-delà, les mentions suivantes ne notifient pas. */
 const MAX_MENTIONS_PER_PUBLICATION = 20;
+/** Publications épinglées en tête de profil. */
+export const MAX_PINNED_PUBLICATIONS = 3;
 
 /** Carte d'auteur réduite au strict public : aucune donnée personnelle. */
 export interface AuthorCard {
@@ -117,6 +119,11 @@ export interface PublicationView {
   /** Filtre visuel choisi pour une publication média, `null` = brut. */
   mediaFilter?: string | null;
   visibility: 'public' | 'followers' | 'private';
+  /** Options de l'auteur : commentaires coupés, nombre de J'aime masqué. */
+  commentsDisabled?: boolean;
+  hideLikeCount?: boolean;
+  /** Épinglée en tête du profil de l'auteur. */
+  pinned?: boolean;
   createdAt: Date;
   /** Dernière retouche du texte par l'auteur, `null` = jamais modifiée. */
   editedAt?: Date | null;
@@ -497,6 +504,8 @@ export class PublicationsService {
           // Idem pour le filtre : il ne s'applique qu'aux publications média.
           mediaFilter: format !== 'text' ? (dto.mediaFilter ?? null) : null,
           visibility: dto.visibility ?? 'public',
+          commentsDisabled: dto.commentsDisabled === true,
+          hideLikeCount: dto.hideLikeCount === true,
           moderationStatus: flagged ? 'flagged' : 'pending',
           quotedPublicationId: quoted?.id ?? null,
           clientId: dto.clientId,
@@ -637,6 +646,40 @@ export class PublicationsService {
       imageUrl: first ? (first.kind === 'video' ? first.posterUrl : first.url) : null,
       isVideo: first?.kind === 'video',
     };
+  }
+
+  /** Profil : 3 publications épinglées au plus, comme Instagram. */
+  async setPinned(publicationId: string, viewerId: string, pinned: boolean): Promise<PublicationView> {
+    const { row } = await this.load(publicationId);
+    if (row.authorId !== viewerId) {
+      throw new ForbiddenException('Seul l’auteur peut épingler sa publication.');
+    }
+    if (row.deletedAt) {
+      throw new NotFoundException('Publication introuvable.');
+    }
+    if (pinned && row.pinnedAt === null) {
+      const [{ value }] = await this.db
+        .select({ value: count() })
+        .from(publications)
+        .where(
+          and(
+            eq(publications.authorId, viewerId),
+            isNotNull(publications.pinnedAt),
+            isNull(publications.deletedAt),
+          ),
+        );
+      if (value >= MAX_PINNED_PUBLICATIONS) {
+        throw new BadRequestException(
+          `Tu peux épingler ${MAX_PINNED_PUBLICATIONS} publications au plus.`,
+        );
+      }
+    }
+    const [updated] = await this.db
+      .update(publications)
+      .set({ pinnedAt: pinned ? (row.pinnedAt ?? new Date()) : null })
+      .where(eq(publications.id, publicationId))
+      .returning();
+    return this.view(updated ?? row, viewerId);
   }
 
   async get(publicationId: string, viewerId: string): Promise<PublicationView> {
@@ -843,6 +886,8 @@ export class PublicationsService {
                 ...(dto.textSize !== undefined ? { textSize: dto.textSize } : {}),
               }
             : {}),
+          ...(dto.commentsDisabled !== undefined ? { commentsDisabled: dto.commentsDisabled } : {}),
+          ...(dto.hideLikeCount !== undefined ? { hideLikeCount: dto.hideLikeCount } : {}),
           // Lieu : pour toutes les publications (texte, photo, vidéo).
           ...(dto.location !== undefined
             ? {
@@ -1258,6 +1303,9 @@ export class PublicationsService {
   ): Promise<CommentView> {
     const body = (dto.body ?? '').trim();
     const { row, facts } = await this.assertVisible(publicationId, viewerId);
+    if (row.commentsDisabled && row.authorId !== viewerId) {
+      throw new ForbiddenException('Les commentaires sont désactivés pour cette publication.');
+    }
 
     // Pièce jointe : sticker de catalogue, ou asset image/audio `ready` du
     // compte. Un commentaire sans corps ni pièce jointe est refusé.
@@ -2047,11 +2095,15 @@ export class PublicationsService {
       linkPreview: row.linkPreview ?? null,
       mediaFilter: row.mediaFilter ?? null,
       visibility: row.visibility,
+      commentsDisabled: row.commentsDisabled,
+      hideLikeCount: row.hideLikeCount,
+      pinned: row.pinnedAt !== null,
       createdAt: row.createdAt,
       editedAt: row.editedAt ?? null,
       author,
       counters: {
-        likes: row.likeCount,
+        // Nombre masqué par l'auteur : seul l'auteur le voit.
+        likes: row.hideLikeCount && viewerId !== row.authorId ? 0 : row.likeCount,
         comments: row.commentCount,
         reposts: row.repostCount,
         saves: row.saveCount,

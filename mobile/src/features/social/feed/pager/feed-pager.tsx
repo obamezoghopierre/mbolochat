@@ -3,6 +3,9 @@ import { NetworkStateType, useNetworkState } from 'expo-network';
 import {
   Bookmark,
   CircleUser,
+  HeartOff,
+  MessageCircleOff,
+  Pin,
   EyeOff,
   Flame,
   Info,
@@ -311,6 +314,46 @@ export function FeedPager({
       }
     },
     [actions, likeScale],
+  );
+
+  /** Options de l'auteur (commentaires, nombre de J'aime), effet au prochain affichage. */
+  const setAuthorOption = useCallback(
+    async (post: FeedPost, option: 'commentsDisabled' | 'hideLikeCount') => {
+      if (!token) {
+        return;
+      }
+      const next = !post[option];
+      try {
+        await api.updatePublication(token, post.id, { [option]: next });
+        showToast(
+          option === 'commentsDisabled'
+            ? next
+              ? fr.social.commentsTurnedOff
+              : fr.social.commentsTurnedOn
+            : next
+              ? fr.social.likesHidden
+              : fr.social.likesShown,
+        );
+      } catch {
+        actions.notifyError(fr.social.shareError);
+      }
+    },
+    [actions, showToast, token],
+  );
+
+  const togglePin = useCallback(
+    async (post: FeedPost) => {
+      if (!token) {
+        return;
+      }
+      try {
+        await api.pinPublication(token, post.id, !post.pinned);
+        showToast(post.pinned ? fr.social.unpinnedToast : fr.social.pinnedToast);
+      } catch (cause) {
+        actions.notifyError(cause instanceof Error ? cause.message : fr.social.shareError);
+      }
+    },
+    [actions, showToast, token],
   );
 
   /** « Ne plus suivre » depuis le menu ⋯ (l'état du fil se met à jour au retour). */
@@ -832,6 +875,9 @@ export function FeedPager({
           profile: () => openProfile(menuTarget),
           unfollow: () => void unfollowAuthor(menuTarget),
           about: () => setAboutTarget(menuTarget.author.id),
+          toggleComments: () => void setAuthorOption(menuTarget, 'commentsDisabled'),
+          toggleLikes: () => void setAuthorOption(menuTarget, 'hideLikeCount'),
+          togglePin: () => void togglePin(menuTarget),
           rest: moderationActions(menuTarget, actions, user?.id ?? null, () => setMenuTarget(null)),
         }) : []}
         onClose={() => setMenuTarget(null)}
@@ -1003,6 +1049,9 @@ function postMenuActions(
     profile: () => void;
     unfollow: () => void;
     about: () => void;
+    toggleComments: () => void;
+    toggleLikes: () => void;
+    togglePin: () => void;
     rest: ShareSheetAction[];
   },
 ): SheetAction[] {
@@ -1019,6 +1068,27 @@ function postMenuActions(
     { key: 'link', label: fr.social.copyLink, icon: Link2, onPress: handlers.copyLink },
     { key: 'qr', label: fr.social.qrCodeLabel, icon: QrCode, onPress: handlers.qr },
   ];
+  if (handlers.own) {
+    // Réglages de l'auteur, comme Instagram.
+    list.push({
+      key: 'pin',
+      label: target.pinned ? fr.social.unpinFromProfile : fr.social.pinToProfile,
+      icon: Pin,
+      onPress: handlers.togglePin,
+    });
+    list.push({
+      key: 'likes',
+      label: target.hideLikeCount ? fr.social.showLikeCount : fr.social.hideLikeCount,
+      icon: HeartOff,
+      onPress: handlers.toggleLikes,
+    });
+    list.push({
+      key: 'comments',
+      label: target.commentsDisabled ? fr.social.turnOnComments : fr.social.turnOffComments,
+      icon: MessageCircleOff,
+      onPress: handlers.toggleComments,
+    });
+  }
   if (!handlers.own) {
     list.push({ key: 'profile', label: fr.social.viewProfile, icon: CircleUser, onPress: handlers.profile });
     if (target.viewer.followingAuthor) {

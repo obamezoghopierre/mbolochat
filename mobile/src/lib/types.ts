@@ -506,6 +506,12 @@ export interface QuotedPost {
 /** Publication du fil social (posts et reels unifiés côté API). */
 export interface FeedPost {
   id: string;
+  /** L'auteur a désactivé les commentaires. */
+  commentsDisabled?: boolean;
+  /** L'auteur masque le nombre de J'aime (les autres reçoivent 0). */
+  hideLikeCount?: boolean;
+  /** Épinglée en tête du profil de l'auteur. */
+  pinned?: boolean;
   /** Dernière retouche du texte par l'auteur (ISO), `null` = jamais modifiée. */
   editedAt?: string | null;
   kind: 'post' | 'reel';

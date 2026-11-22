@@ -262,7 +262,10 @@ export default function UserProfileScreen() {
             </View>
           </View>
         ) : profile ? (
-          <RepostsSection userId={profile.id} token={token} />
+          <>
+            <RepostsSection userId={profile.id} token={token} source="authored" />
+            <RepostsSection userId={profile.id} token={token} />
+          </>
         ) : null}
 
         {error ? (

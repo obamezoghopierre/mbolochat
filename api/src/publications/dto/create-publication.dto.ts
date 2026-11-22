@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -268,6 +269,16 @@ export class CreatePublicationDto {
     message: `Le lieu ne peut pas dépasser ${MAX_LOCATION_LENGTH} caractères.`,
   })
   location?: string;
+
+  /** Désactiver les commentaires dès la publication. */
+  @IsOptional()
+  @IsBoolean()
+  commentsDisabled?: boolean;
+
+  /** Masquer le nombre de J'aime aux autres comptes. */
+  @IsOptional()
+  @IsBoolean()
+  hideLikeCount?: boolean;
 
   /**
    * Filtre visuel d'une publication média (clé du catalogue client).

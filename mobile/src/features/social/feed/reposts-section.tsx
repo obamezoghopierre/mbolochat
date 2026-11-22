@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { Images, Play } from 'lucide-react-native';
+import { Images, Pin, Play } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import { LayoutChangeEvent, Pressable, StyleSheet, View } from 'react-native';
 
@@ -39,7 +39,7 @@ function RepostCell({ post, width, onPress }: { post: FeedPost; width: number; o
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Voir la republication de ${post.author.displayName}`}
+      accessibilityLabel={`Voir la publication de ${post.author.displayName}`}
       style={({ pressed }) => [
         styles.cell,
         { width, backgroundColor: theme.backgroundElement },
@@ -64,6 +64,11 @@ function RepostCell({ post, width, onPress }: { post: FeedPost; width: number; o
         </View>
       )}
 
+      {post.pinned ? (
+        <View style={[styles.badge, styles.pinBadge]}>
+          <Icon icon={Pin} size={11} color={FeedSurface.onMedia} />
+        </View>
+      ) : null}
       {media?.kind === 'video' ? (
         <View style={styles.badge}>
           <Icon icon={Play} size={11} color={FeedSurface.onMedia} fill={FeedSurface.onMedia} />
@@ -82,7 +87,20 @@ function RepostCell({ post, width, onPress }: { post: FeedPost; width: number; o
  * grille Instagram. Masquée silencieusement quand le profil est privé sans
  * abonnement ou quand il n'y a rien à montrer.
  */
-export function RepostsSection({ userId, token }: { userId: string; token: string }) {
+export function RepostsSection({
+  userId,
+  token,
+  source = 'reposts',
+}: {
+  userId: string;
+  token: string;
+  /** `authored` : publications du compte (épinglées d'abord), `reposts` : republications. */
+  source?: 'reposts' | 'authored';
+}) {
+  const fetchPage = (cursor?: string) =>
+    source === 'authored'
+      ? api.userPublications(token, userId, cursor)
+      : api.userReposts(token, userId, cursor);
   const theme = useTheme();
   const [items, setItems] = useState<FeedPost[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -95,7 +113,7 @@ export function RepostsSection({ userId, token }: { userId: string; token: strin
 
   const load = useCallback(async () => {
     try {
-      const page = await api.userReposts(token, userId);
+      const page = await fetchPage();
       setItems(page.items);
       setCursor(page.nextCursor);
     } catch {
@@ -103,7 +121,8 @@ export function RepostsSection({ userId, token }: { userId: string; token: strin
       // profil porte déjà l'état correspondant.
       setItems([]);
     }
-  }, [token, userId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchPage dépend de source/token/userId
+  }, [source, token, userId]);
 
   useEffect(() => {
     // La requête part après le montage ; les états suivent la réponse.
@@ -117,7 +136,7 @@ export function RepostsSection({ userId, token }: { userId: string; token: strin
     }
     setLoadingMore(true);
     try {
-      const page = await api.userReposts(token, userId, cursor);
+      const page = await fetchPage(cursor);
       setItems((current) => {
         const known = new Set((current ?? []).map((item) => item.id));
         return [...(current ?? []), ...page.items.filter((item) => !known.has(item.id))];
@@ -128,7 +147,8 @@ export function RepostsSection({ userId, token }: { userId: string; token: strin
     } finally {
       setLoadingMore(false);
     }
-  }, [cursor, loadingMore, token, userId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchPage dépend de source/token/userId
+  }, [cursor, loadingMore, source, token, userId]);
 
   if (!items || items.length === 0) {
     return null;
@@ -138,7 +158,9 @@ export function RepostsSection({ userId, token }: { userId: string; token: strin
 
   return (
     <View style={styles.section}>
-      <ThemedText style={styles.title}>{fr.social.repostsTitle}</ThemedText>
+      <ThemedText style={styles.title}>
+        {source === 'authored' ? fr.social.publicationsTitle : fr.social.repostsTitle}
+      </ThemedText>
       <View style={styles.grid} onLayout={onGridLayout}>
         {cellWidth > 0
           ? items.map((post) => (
@@ -206,6 +228,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: FeedSurface.glassStrong,
   },
+  pinBadge: { right: undefined, left: Spacing.one },
   pressed: {
     opacity: 0.8,
   },

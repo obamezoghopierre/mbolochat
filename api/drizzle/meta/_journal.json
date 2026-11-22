@@ -414,6 +414,13 @@
       "when": 1795356046182,
       "tag": "0058_save_collections",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1795370187382,
+      "tag": "0059_publication_author_options",
+      "breakpoints": true
     }
   ]
 }

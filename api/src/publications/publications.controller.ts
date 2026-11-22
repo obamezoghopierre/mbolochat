@@ -40,6 +40,16 @@ export class PublicationsController {
     return this.publications.get(id, current.sub);
   }
 
+  @Post(':id/pin')
+  async pin(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.setPinned(id, current.sub, true);
+  }
+
+  @Delete(':id/pin')
+  async unpin(@CurrentUser() current: JwtPayload, @Param('id') id: string) {
+    return this.publications.setPinned(id, current.sub, false);
+  }
+
   @Patch(':id')
   async update(
     @CurrentUser() current: JwtPayload,

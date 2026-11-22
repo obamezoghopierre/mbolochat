@@ -58,6 +58,18 @@ export class FeedController {
     return this.feed.suggestedAccounts(current.sub, limit);
   }
 
+  /** Publications d'un compte (grille du profil, épinglées d'abord). */
+  @Get('authored/:userId')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async authored(
+    @CurrentUser() current: JwtPayload,
+    @Param('userId') userId: string,
+    @Query('limit', new DefaultValuePipe(FEED_DEFAULT_LIMIT), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.feed.listAuthored(userId, current.sub, limit, cursor);
+  }
+
   /** Republications d'un compte, pour sa grille de profil. */
   @Get('reposts/:userId')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })

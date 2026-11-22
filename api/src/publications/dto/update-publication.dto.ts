@@ -1,6 +1,7 @@
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -116,4 +117,14 @@ export class UpdatePublicationDto {
     message: `Le lieu ne peut pas dépasser ${MAX_LOCATION_LENGTH} caractères.`,
   })
   location?: string | null;
+
+  /** Activer / désactiver les commentaires. */
+  @IsOptional()
+  @IsBoolean()
+  commentsDisabled?: boolean;
+
+  /** Masquer / afficher le nombre de J'aime aux autres comptes. */
+  @IsOptional()
+  @IsBoolean()
+  hideLikeCount?: boolean;
 }
