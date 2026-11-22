@@ -39,7 +39,7 @@ import {
 import { fr } from '@/i18n/fr';
 import type { FeedPost, FeedTab } from '@/lib/types';
 import { COMMENTS_SHEET_SNAP_RATIO, CommentsSheet } from './pager/comments-sheet';
-import { FLOW_TOP_BAR, FeedPager } from './pager/feed-pager';
+import { FLOW_TOP_BAR, FeedPager, type FeedPagerActions } from './pager/feed-pager';
 import { OnMediaShadow, useTextPostTones } from './pager/feed-tokens';
 import { useFeed } from './use-feed';
 import { markLaunchReady } from '@/lib/launch-gate';
@@ -387,9 +387,16 @@ function FeedSurfaceView({
   const barInset = TabBarHeight + insets.bottom;
   const report = useReportPublication(feed.notifyError);
 
-  const reelItems = useMemo(() => feed.items.filter(isVideoPost), [feed.items]);
-  const reelsIndex = reelsFrom ? reelItems.findIndex((item) => item.id === reelsFrom) : -1;
-  const reelsVisible = reelsIndex >= 0;
+  // Point de départ des Reels : la vidéo touchée et les vidéos verticales qui
+  // la suivent dans le fil. Le fil vidéo dédié prend le relais ensuite.
+  const reelSeed = useMemo(() => {
+    if (!reelsFrom) {
+      return [];
+    }
+    const start = feed.items.findIndex((item) => item.id === reelsFrom);
+    return start < 0 ? [] : feed.items.slice(start).filter(isVideoPost);
+  }, [feed.items, reelsFrom]);
+  const reelsVisible = reelSeed.length > 0;
   const closeReels = useCallback(() => setReelsFrom(null), []);
   useEffect(() => {
     onReelsOpenChange?.(reelsVisible);
@@ -469,37 +476,20 @@ function FeedSurfaceView({
       )}
 
       {reelsVisible ? (
-        <View style={StyleSheet.absoluteFill}>
-          <FeedPager
-            key={reelsFrom ?? ''}
-            mode="pager"
-            items={reelItems}
-            initialIndex={reelsIndex}
-            height={height}
-            barInset={barInset}
-            playbackActive={playbackActive}
-            refreshing={false}
-            hasMore={feed.hasMore}
-            hideOverlays={hideOverlays}
-            onLoadMore={feed.loadMore}
-            onRefresh={() => undefined}
-            actions={pagerActions}
-          />
-          {hideOverlays ? null : (
-            <Pressable
-              onPress={closeReels}
-              hitSlop={12}
-              accessibilityRole="button"
-              accessibilityLabel={fr.social.reelsClose}
-              style={({ pressed }) => [
-                styles.reelsBack,
-                { top: topInset + Spacing.two },
-                pressed && styles.pressed,
-              ]}>
-              <Icon icon={ChevronLeft} size={28} color={FeedSurface.onMedia} />
-            </Pressable>
-          )}
-        </View>
+        <ReelsLayer
+          // Nouvelle ouverture = nouvelle séquence, en partant de la vidéo touchée.
+          key={reelsFrom ?? ''}
+          tab={tab}
+          seed={reelSeed}
+          homeActions={pagerActions}
+          onOpenComments={onOpenComments}
+          height={height}
+          barInset={barInset}
+          topInset={topInset}
+          playbackActive={playbackActive}
+          hideOverlays={hideOverlays}
+          onClose={closeReels}
+        />
       ) : null}
 
       {offline ? (
@@ -533,6 +523,105 @@ function FeedSurfaceView({
       ) : null}
 
       {report.sheet}
+    </View>
+  );
+}
+
+/**
+ * Reels plein écran ouverts depuis une vidéo du fil, comme Instagram : la vidéo
+ * touchée et celles qui la suivent dans le fil, puis le fil vidéo dédié de
+ * l'onglet (`?format=video`), chargé au fur et à mesure. Seules les vidéos
+ * verticales y figurent ; les doublons avec le fil d'accueil sont écartés.
+ */
+function ReelsLayer({
+  tab,
+  seed,
+  homeActions,
+  onOpenComments,
+  height,
+  barInset,
+  topInset,
+  playbackActive,
+  hideOverlays,
+  onClose,
+}: {
+  tab: FeedTab;
+  seed: FeedPost[];
+  homeActions: FeedPagerActions;
+  onOpenComments: (post: FeedPost) => void;
+  height: number;
+  barInset: number;
+  topInset: number;
+  playbackActive: boolean;
+  hideOverlays: boolean;
+  onClose: () => void;
+}) {
+  const videos = useFeed(tab, { format: 'video' });
+  // La séquence de départ est figée à l'ouverture : la liste ne saute pas
+  // sous le doigt si le fil d'accueil se recharge pendant le visionnage.
+  const [seedIds] = useState(() => seed.map((post) => post.id));
+  const homeById = useMemo(() => new Map(seed.map((post) => [post.id, post])), [seed]);
+  const items = useMemo(() => {
+    const head = seedIds
+      .map((id) => homeById.get(id))
+      .filter((post): post is FeedPost => Boolean(post));
+    const taken = new Set(head.map((post) => post.id));
+    const more = videos.items.filter((post) => isVideoPost(post) && !taken.has(post.id));
+    return [...head, ...more];
+  }, [homeById, seedIds, videos.items]);
+
+  // Une action part vers le fil qui détient la publication : le fil d'accueil
+  // pour la séquence de départ, le fil vidéo pour la suite.
+  const actions = useMemo<FeedPagerActions>(() => {
+    const home = (post: FeedPost) => homeById.has(post.id);
+    return {
+      ...homeActions,
+      toggleLike: (post) => (home(post) ? homeActions.toggleLike(post) : videos.toggleLike(post)),
+      setReaction: (post, kind) =>
+        home(post) ? homeActions.setReaction(post, kind) : videos.setReaction(post, kind),
+      dismiss: (post) => (home(post) ? homeActions.dismiss(post) : videos.dismiss(post)),
+      muteAuthor: (post) =>
+        home(post) ? homeActions.muteAuthor(post) : videos.muteAuthor(post),
+      toggleSave: (post) =>
+        home(post) ? homeActions.toggleSave(post) : videos.toggleSave(post),
+      toggleRepost: (post) =>
+        home(post) ? homeActions.toggleRepost(post) : videos.toggleRepost(post),
+      follow: (post) => (home(post) ? homeActions.follow(post) : videos.follow(post)),
+      remove: (post) => (home(post) ? homeActions.remove(post) : videos.remove(post)),
+      onOpenComments,
+    };
+  }, [homeActions, homeById, onOpenComments, videos]);
+
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <FeedPager
+        mode="pager"
+        items={items}
+        initialIndex={0}
+        height={height}
+        barInset={barInset}
+        playbackActive={playbackActive}
+        refreshing={false}
+        hasMore={videos.hasMore || videos.status === 'loading'}
+        hideOverlays={hideOverlays}
+        onLoadMore={videos.loadMore}
+        onRefresh={() => undefined}
+        actions={actions}
+      />
+      {hideOverlays ? null : (
+        <Pressable
+          onPress={onClose}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel={fr.social.reelsClose}
+          style={({ pressed }) => [
+            styles.reelsBack,
+            { top: topInset + Spacing.two },
+            pressed && styles.pressed,
+          ]}>
+          <Icon icon={ChevronLeft} size={28} color={FeedSurface.onMedia} />
+        </Pressable>
+      )}
     </View>
   );
 }

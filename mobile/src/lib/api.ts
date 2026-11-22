@@ -456,11 +456,17 @@ export const api = {
     });
   },
 
-  /** Fil social : Pour toi, Abonnements ou Local, avec curseur. */
-  feed(token: string, tab: FeedTab, cursor?: string) {
+  /**
+   * Fil social : Pour toi, Abonnements ou Local, avec curseur. `format`
+   * filtre côté serveur (`video` = fil dédié des Reels).
+   */
+  feed(token: string, tab: FeedTab, cursor?: string, format?: 'video') {
     const query = new URLSearchParams({ tab, limit: '20' });
     if (cursor) {
       query.set('cursor', cursor);
+    }
+    if (format) {
+      query.set('format', format);
     }
     return request<FeedPage>(`/feed?${query.toString()}`, { token });
   },

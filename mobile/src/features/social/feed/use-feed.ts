@@ -48,8 +48,8 @@ export function invalidateFeedCache(token: string): void {
 /** Au-delà, le fil est requêté à nouveau (le classement a pu bouger). */
 const FEED_CACHE_TTL_MS = 5 * 60 * 1000;
 
-function cacheKey(token: string, tab: FeedTab): string {
-  return `${token}:${tab}`;
+function cacheKey(token: string, tab: FeedTab, format?: 'video'): string {
+  return format ? `${token}:${tab}:${format}` : `${token}:${tab}`;
 }
 
 /**
@@ -59,14 +59,22 @@ function cacheKey(token: string, tab: FeedTab): string {
  * Chaque action renvoie l'état attendu pour que l'écran puisse afficher un
  * retour immédiat (toast, pastille) sans relire la liste.
  */
-export function useFeed(tab: FeedTab, options: { deferNetwork?: boolean } = {}) {
+export function useFeed(
+  tab: FeedTab,
+  options: {
+    deferNetwork?: boolean;
+    /** `video` : fil dédié des Reels (vidéos seules), sans copie sur l'appareil. */
+    format?: 'video';
+  } = {},
+) {
   const { token, user } = useAuth();
   const userId = user?.id ?? null;
-  const key = token ? cacheKey(token, tab) : '';
+  const format = options.format;
+  const key = token ? cacheKey(token, tab, format) : '';
   const cached = key ? feedCache.get(key) : undefined;
   // Démarrage à froid : sans fil en mémoire, on montre celui de la dernière
   // visite (gardé sur l'appareil) le temps que le réseau réponde.
-  const snapshot = cached ? null : readFeedSnapshot(userId, tab);
+  const snapshot = cached || format ? null : readFeedSnapshot(userId, tab);
 
   const [items, setItems] = useState<FeedPost[]>(cached?.items ?? snapshot?.items ?? []);
   const [cursor, setCursor] = useState<string | null>(cached?.cursor ?? snapshot?.cursor ?? null);
@@ -102,6 +110,7 @@ export function useFeed(tab: FeedTab, options: { deferNetwork?: boolean } = {}) 
           token,
           tab,
           options.reset ? undefined : (cursor ?? undefined),
+          format,
         );
         setItems((current) => {
           if (!options.reset) {
@@ -117,7 +126,7 @@ export function useFeed(tab: FeedTab, options: { deferNetwork?: boolean } = {}) 
           }
           return page.items;
         });
-        if (options.reset) {
+        if (options.reset && !format) {
           saveFeedSnapshot(userId, tab, page.items, page.nextCursor);
         }
         setCursor(page.nextCursor);
@@ -138,7 +147,7 @@ export function useFeed(tab: FeedTab, options: { deferNetwork?: boolean } = {}) 
         setRefreshing(false);
       }
     },
-    [cursor, tab, token, userId],
+    [cursor, format, tab, token, userId],
   );
 
   // Un onglet déjà visité garde sa liste : on ne requête que s'il n'y a rien
@@ -150,14 +159,14 @@ export function useFeed(tab: FeedTab, options: { deferNetwork?: boolean } = {}) 
     if (!token || deferNetwork) {
       return;
     }
-    const entry = feedCache.get(cacheKey(token, tab));
+    const entry = feedCache.get(cacheKey(token, tab, format));
     if (!entry || Date.now() - entry.loadedAt >= FEED_CACHE_TTL_MS) {
       // Les états sont posés après l'appel réseau, pas pendant le montage.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       void load({ reset: true });
     }
     // `load` change avec le curseur : la relancer à chaque page bouclerait.
-  }, [tab, token, deferNetwork]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, token, deferNetwork, format]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Compteurs temps réel : le serveur diffuse `publication:stats` à chaque
   // mutation (commentaire, réaction, save, repost, partage, vue). On recale
