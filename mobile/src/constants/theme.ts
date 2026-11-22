@@ -184,8 +184,8 @@ export const FeedSurface = {
   glassStrong: 'rgba(255,255,255,0.26)',
   glassPressed: 'rgba(255,255,255,0.32)',
   /** Réaction et abonnement : jaune clair, cohérent sur le média sombre. */
-  /** Cœur rempli des Reels : rouge Instagram. */
-  like: '#FF3040',
+  /** Cœur rempli : le jaune de la marque, partout dans le fil. */
+  like: '#FFFC00',
   follow: '#FFFC00',
   /** Enregistrement : même jaune que la réaction et le bouton « Suivre ». */
   /** Enregistrement : icône remplie en blanc, comme Instagram. */
