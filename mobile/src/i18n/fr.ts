@@ -801,6 +801,7 @@ export const fr = {
     muteAuthor: 'Masquer cet auteur',
     muteAuthorDone: 'Auteur masqué dans ton fil',
     endOfFeed: 'Tu es à jour',
+    reelsClose: 'Fermer les Reels',
     reactionPickerTitle: 'Réagir',
     offlineNotice: 'Hors ligne : le fil reprendra à la reconnexion',
     videoErrorTitle: 'Cette vidéo n’a pas pu être lue',

@@ -232,8 +232,11 @@ export function TextPage({
   const interactive = Boolean(actions && state) && !chrome.hideOverlays;
   // Liens, profil, suivi, menu et like : désactivés dans l'aperçu.
   const linksEnabled = interactive && !isPreview;
-  const topReserved = isPreview ? Spacing.two : CARD_TOP_RESERVED;
-  const bottomReserved = isPreview ? Spacing.two : CARD_BOTTOM_RESERVED;
+  // Fil libre (façon Instagram) : la liste réserve la place des barres, la
+  // carte prend sa hauteur naturelle avec un petit écart.
+  const flow = Boolean(chrome.flow) && !isPreview;
+  const topReserved = isPreview ? Spacing.two : flow ? Spacing.two : CARD_TOP_RESERVED;
+  const bottomReserved = isPreview ? Spacing.two : flow ? Spacing.four : CARD_BOTTOM_RESERVED;
   const author = post.author;
 
   // Format Instagram : en-tête au-dessus, visuel pleine largeur au ratio du
@@ -255,8 +258,9 @@ export function TextPage({
   const visualWidth = windowWidth;
   const estimatedTop =
     HEADER_AVATAR + (post.repostedBy ? 22 : 0) + (post.quoted ? 96 : 0);
-  const available =
-    chrome.height -
+  const available = flow
+    ? Number.POSITIVE_INFINITY
+    : chrome.height -
     topReserved -
     bottomReserved -
     (topHeight ?? estimatedTop) -
@@ -324,7 +328,7 @@ export function TextPage({
       style={[
         styles.page,
         {
-          height: chrome.height,
+          height: flow ? undefined : chrome.height,
           backgroundColor: tones.surface,
           paddingTop: topReserved,
           paddingBottom: bottomReserved,

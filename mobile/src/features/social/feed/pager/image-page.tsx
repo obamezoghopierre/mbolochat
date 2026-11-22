@@ -79,6 +79,7 @@ export function ImagePage({
   onDoubleTapLike,
   muted,
   onToggleMuted,
+  onOpenReels,
 }: {
   post: FeedPost;
   chrome: FeedPageChrome;
@@ -89,6 +90,11 @@ export function ImagePage({
   /** Son global du fil, partagé avec les Reels. */
   muted: boolean;
   onToggleMuted: () => void;
+  /**
+   * Vidéo verticale seule dans le fil d'accueil : un tap ouvre le plein écran
+   * Reels, comme Instagram. Sans ce rappel, le tap coupe ou remet le son.
+   */
+  onOpenReels?: () => void;
 }) {
   const tones = useTextPostTones();
   const { width: windowWidth } = useWindowDimensions();
@@ -129,10 +135,14 @@ export function ImagePage({
         setter(Math.round(value));
       }
     };
-  const topReserved = insets.top + TOP_BAR_HEIGHT;
-  const bottomReserved = chrome.barInset + Spacing.two;
-  const available =
-    chrome.height -
+  // Fil libre : la liste réserve déjà la place des barres, la carte n'a
+  // qu'un petit écart et prend sa hauteur naturelle.
+  const flow = Boolean(chrome.flow);
+  const topReserved = flow ? Spacing.two : insets.top + TOP_BAR_HEIGHT;
+  const bottomReserved = flow ? Spacing.four : chrome.barInset + Spacing.two;
+  const available = flow
+    ? Number.POSITIVE_INFINITY
+    : chrome.height -
     topReserved -
     bottomReserved -
     (topHeight ?? TOP_ESTIMATE) -
@@ -152,7 +162,12 @@ export function ImagePage({
   const currentIsVideo = media[index]?.kind === 'video';
   const [held, setHeld] = useState(false);
   const onToggleSound = () => {
-    if (currentIsVideo) {
+    if (!currentIsVideo) {
+      return;
+    }
+    if (onOpenReels) {
+      onOpenReels();
+    } else {
       onToggleMuted();
     }
   };
@@ -301,7 +316,7 @@ export function ImagePage({
       style={[
         styles.page,
         {
-          height: chrome.height,
+          height: flow ? undefined : chrome.height,
           backgroundColor: tones.surface,
           paddingTop: topReserved,
           paddingBottom: bottomReserved,

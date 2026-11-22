@@ -1,10 +1,12 @@
 import { Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
+import { ChevronLeft } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Animated,
   AppState,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -37,13 +39,13 @@ import {
 import { fr } from '@/i18n/fr';
 import type { FeedPost, FeedTab } from '@/lib/types';
 import { COMMENTS_SHEET_SNAP_RATIO, CommentsSheet } from './pager/comments-sheet';
-import { FeedPager } from './pager/feed-pager';
-import { OnMediaShadow } from './pager/feed-tokens';
+import { FLOW_TOP_BAR, FeedPager } from './pager/feed-pager';
+import { OnMediaShadow, useTextPostTones } from './pager/feed-tokens';
 import { useFeed } from './use-feed';
 import { markLaunchReady } from '@/lib/launch-gate';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { Image } from 'expo-image';
-import { primaryMedia } from './pager/feed-media';
+import { isVideoPost, primaryMedia } from './pager/feed-media';
 import { useReportPublication } from './use-report-publication';
 
 const TABS: { id: FeedTab; label: string }[] = [
@@ -70,6 +72,9 @@ export function FeedScreen() {
   const { width, height: screenHeight } = useWindowDimensions();
   const [tab, setTab] = useState<FeedTab>(DEFAULT_TAB);
   const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
+  // Plein écran Reels ouvert depuis une carte : la barre d'onglets du haut
+  // s'efface, comme sur Instagram.
+  const [reelsOpen, setReelsOpen] = useState(false);
   const pager = useRef<ScrollViewInstance | null>(null);
   const navigation = useNavigation();
   // Démarrage : « Pour toi » charge seul ; Local et Abonnements suivent une
@@ -213,6 +218,7 @@ export function FeedScreen() {
               onOpenComments={setCommentsPost}
               hideOverlays={commentsPost !== null}
               playbackActive={entry.id === tab && screenFocused && appActive}
+              onReelsOpenChange={entry.id === tab ? setReelsOpen : undefined}
             />
           </View>
         ))}
@@ -221,7 +227,7 @@ export function FeedScreen() {
 
       {/* Barre du haut FIXE : posée une seule fois au-dessus du pager, elle ne
           glisse pas pendant le swipe horizontal. */}
-      {commentsPost ? null : (
+      {commentsPost || reelsOpen ? null : (
         <FeedTopBar tab={tab} onTabChange={changeTab} topInset={insets.top} />
       )}
 
@@ -246,11 +252,19 @@ function FeedTopBar({
   onTabChange: (tab: FeedTab) => void;
   topInset: number;
 }) {
+  // Fil libre façon Instagram : bandeau opaque à la teinte des cartes, les
+  // posts défilent dessous.
+  const tones = useTextPostTones();
   const openSearch = useCallback(() => router.push('/discover'), []);
   const openCreate = useCallback(() => router.push('/create'), []);
 
   return (
-    <View pointerEvents="box-none" style={styles.fixedTop}>
+    <View
+      pointerEvents="box-none"
+      style={[
+        styles.fixedTop,
+        { height: topInset + FLOW_TOP_BAR, backgroundColor: tones.surface },
+      ]}>
       <View
         style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
         pointerEvents="box-none">
@@ -268,7 +282,7 @@ function FeedTopBar({
                 style={styles.tab}>
                 <ThemedText
                   numberOfLines={1}
-                  style={[styles.tabLabel, active && styles.tabLabelActive, OnMediaShadow]}>
+                  style={[styles.tabLabel, { color: tones.textFaint }, active && styles.tabLabelActive]}>
                   {entry.label}
                 </ThemedText>
                 <View style={[styles.tabUnderline, active && styles.tabUnderlineActive]} />
@@ -283,7 +297,7 @@ function FeedTopBar({
             accessibilityRole="button"
             accessibilityLabel={fr.social.discoverSearch}
             style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-            <Icon icon={Search} size={20} color={FeedSurface.onMedia} />
+            <Icon icon={Search} size={22} color={tones.text} />
           </Pressable>
         </View>
       </View>
@@ -298,7 +312,7 @@ function FeedTopBar({
           { top: topInset + Spacing.two, left: Spacing.three },
           pressed && styles.pressed,
         ]}>
-        <Icon icon={Plus} size={24} color={FeedSurface.onMedia} strokeWidth={2.6} />
+        <Icon icon={Plus} size={24} color={tones.text} strokeWidth={2.6} />
       </Pressable>
     </View>
   );
@@ -312,6 +326,7 @@ function FeedSurfaceView({
   onOpenComments,
   hideOverlays,
   playbackActive,
+  onReelsOpenChange,
 }: {
   tab: FeedTab;
   /** Onglet voisin au démarrage : pas de requête avant l'accueil. */
@@ -322,8 +337,13 @@ function FeedSurfaceView({
   onOpenComments: (post: FeedPost) => void;
   hideOverlays: boolean;
   playbackActive: boolean;
+  /** Le plein écran Reels s'ouvre ou se ferme (masque la barre du haut). */
+  onReelsOpenChange?: (open: boolean) => void;
 }) {
   const insets = useSafeAreaInsets();
+  // Reels ouverts depuis une vidéo verticale du fil : la vidéo touchée puis
+  // les suivantes, page par page.
+  const [reelsFrom, setReelsFrom] = useState<string | null>(null);
   const [screenHeight, setScreenHeight] = useState(0);
   const feed = useFeed(tab, { deferNetwork });
 
@@ -367,6 +387,40 @@ function FeedSurfaceView({
   const barInset = TabBarHeight + insets.bottom;
   const report = useReportPublication(feed.notifyError);
 
+  const reelItems = useMemo(() => feed.items.filter(isVideoPost), [feed.items]);
+  const reelsIndex = reelsFrom ? reelItems.findIndex((item) => item.id === reelsFrom) : -1;
+  const reelsVisible = reelsIndex >= 0;
+  const closeReels = useCallback(() => setReelsFrom(null), []);
+  useEffect(() => {
+    onReelsOpenChange?.(reelsVisible);
+  }, [onReelsOpenChange, reelsVisible]);
+  // Retour Android : ferme les Reels avant de quitter le fil.
+  useEffect(() => {
+    if (!reelsVisible) {
+      return;
+    }
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeReels();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [closeReels, reelsVisible]);
+  const pagerActions = {
+    toggleLike: feed.toggleLike,
+    setReaction: feed.setReaction,
+    dismiss: feed.dismiss,
+    muteAuthor: feed.muteAuthor,
+    toggleSave: feed.toggleSave,
+    toggleRepost: feed.toggleRepost,
+    follow: feed.follow,
+    remove: feed.remove,
+    // Réouverture du compositeur texte en mode édition.
+    edit: (post: FeedPost) => router.push(`/create/text?id=${post.id}`),
+    report: (post: FeedPost) => report.open(post),
+    onOpenComments,
+    notifyError: feed.notifyError,
+  };
+
   // Le toast ne doit jamais rester affiché indéfiniment.
   const noticeOpacity = useMemo(() => new Animated.Value(0), []);
   useEffect(() => {
@@ -399,32 +453,54 @@ function FeedSurfaceView({
         <View style={styles.emptyFill}>{renderEmpty(feed, tab)}</View>
       ) : (
         <FeedPager
+          mode="flow"
           items={feed.items}
           height={height}
           barInset={barInset}
-          playbackActive={playbackActive}
+          playbackActive={playbackActive && !reelsVisible}
           refreshing={feed.refreshing}
           hasMore={feed.hasMore}
           hideOverlays={hideOverlays}
           onLoadMore={feed.loadMore}
           onRefresh={feed.refresh}
-          actions={{
-            toggleLike: feed.toggleLike,
-            setReaction: feed.setReaction,
-            dismiss: feed.dismiss,
-            muteAuthor: feed.muteAuthor,
-            toggleSave: feed.toggleSave,
-            toggleRepost: feed.toggleRepost,
-            follow: feed.follow,
-            remove: feed.remove,
-            // Réouverture du compositeur texte en mode édition.
-            edit: (post) => router.push(`/create/text?id=${post.id}`),
-            report: (post) => report.open(post),
-            onOpenComments,
-            notifyError: feed.notifyError,
-          }}
+          onOpenReels={(post) => setReelsFrom(post.id)}
+          actions={pagerActions}
         />
       )}
+
+      {reelsVisible ? (
+        <View style={StyleSheet.absoluteFill}>
+          <FeedPager
+            key={reelsFrom ?? ''}
+            mode="pager"
+            items={reelItems}
+            initialIndex={reelsIndex}
+            height={height}
+            barInset={barInset}
+            playbackActive={playbackActive}
+            refreshing={false}
+            hasMore={feed.hasMore}
+            hideOverlays={hideOverlays}
+            onLoadMore={feed.loadMore}
+            onRefresh={() => undefined}
+            actions={pagerActions}
+          />
+          {hideOverlays ? null : (
+            <Pressable
+              onPress={closeReels}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={fr.social.reelsClose}
+              style={({ pressed }) => [
+                styles.reelsBack,
+                { top: topInset + Spacing.two },
+                pressed && styles.pressed,
+              ]}>
+              <Icon icon={ChevronLeft} size={28} color={FeedSurface.onMedia} />
+            </Pressable>
+          )}
+        </View>
+      ) : null}
 
       {offline ? (
         <View style={[styles.offline, { top: topInset + Spacing.six }]} pointerEvents="none">
@@ -559,6 +635,14 @@ const styles = StyleSheet.create({
   },
   // Calque unique posé au-dessus du pager horizontal : la barre reste fixe
   // pendant le swipe, contrairement aux anciennes copies par onglet.
+  reelsBack: {
+    position: 'absolute',
+    left: Spacing.three,
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fixedTop: {
     position: 'absolute',
     top: 0,
@@ -627,7 +711,6 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.28)',
   },
   offline: {
     position: 'absolute',

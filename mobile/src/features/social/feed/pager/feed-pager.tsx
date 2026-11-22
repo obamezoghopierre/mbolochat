@@ -42,6 +42,7 @@ import { useThemePreference } from '@/lib/theme-preference';
 import type { ConversationSummary, FeedPost, SocialReaction } from '@/lib/types';
 import { FeedActionRail, type FeedActions, type FeedActionState } from './action-rail';
 import { isVideoPost, primaryMedia } from './feed-media';
+import { useTextPostTones } from './feed-tokens';
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { ImagePage } from './image-page';
 import { isPageActive, videoPageMode } from './preload';
@@ -74,6 +75,8 @@ export interface FeedPagerActions {
 }
 
 const TOAST_DURATION = 1600;
+/** Barre d'onglets du haut sous la zone sûre, dans le fil libre. */
+export const FLOW_TOP_BAR = 52;
 
 /**
  * `FlatList` animée : obligatoire pour un `onScroll` piloté par
@@ -107,6 +110,9 @@ export function FeedPager({
   actions,
   onLoadMore,
   onRefresh,
+  mode = 'pager',
+  initialIndex = 0,
+  onOpenReels,
 }: {
   items: FeedPost[];
   /** Hauteur de l'écran entier : un item = un écran. */
@@ -132,7 +138,18 @@ export function FeedPager({
   onLoadMore: () => void;
   /** Recharge le fil depuis le début. */
   onRefresh: () => void;
+  /**
+   * `flow` : fil d'accueil façon Instagram, défilement libre, toutes les
+   * publications en carte (les vidéos verticales aussi, tap = plein écran).
+   * `pager` : plein écran page par page (Reels).
+   */
+  mode?: 'flow' | 'pager';
+  /** Page affichée à l'ouverture (Reels ouverts depuis une carte). */
+  initialIndex?: number;
+  /** Fil libre : ouvre le plein écran Reels sur cette vidéo. */
+  onOpenReels?: (post: FeedPost) => void;
 }) {
+  const flow = mode === 'flow';
   const insets = useSafeAreaInsets();
   // Sur réseau mobile, on ne précharge pas la vidéo voisine : le lecteur de la
   // page active suffit, et deux flux simultanés coûtent cher en données.
@@ -143,7 +160,8 @@ export function FeedPager({
   const preferLowQuality = network.type === NetworkStateType.CELLULAR;
   const { user, token } = useAuth();
   const { scheme } = useThemePreference();
-  const [activeIndex, setActiveIndex] = useState(0);
+  const tones = useTextPostTones();
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
 
   const [muted, setMuted] = useState(false);
   // Un glissement sur la barre de progression doit geler le scroll vertical :
@@ -182,11 +200,18 @@ export function FeedPager({
   const activeItem = items[activeIndex];
   // Cartes texte et photo : fond clair en thème clair ; seules les vidéos
   // restent sur fond sombre.
-  const feedPageIsLight = scheme === 'light' && !!activeItem && !isVideoPost(activeItem);
+  // Fil libre : tout est en carte, donc clair en thème clair.
+  const feedPageIsLight =
+    scheme === 'light' && (flow || (!!activeItem && !isVideoPost(activeItem)));
+  // Seul le fil visible publie sa teinte : le fil d'accueil et les Reels
+  // ouverts par-dessus sont montés ensemble.
   useEffect(() => {
+    if (!playbackActive) {
+      return;
+    }
     setFeedPageIsLight(feedPageIsLight);
     return () => setFeedPageIsLight(false);
-  }, [feedPageIsLight]);
+  }, [feedPageIsLight, playbackActive]);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -196,37 +221,11 @@ export function FeedPager({
     toastTimer.current = setTimeout(() => setToast(null), TOAST_DURATION);
   }, []);
 
-  const viewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 60 }), []);
-
-  // Position verticale du scroll : pilote l'échelle/fondu de chaque page pour
-  // une transition de type fil vidéo (la page entrante grandit légèrement,
-  // la sortante rétrécit). `useNativeDriver` : aucun rendu React par frame.
-  const scrollY = useMemo(() => new Animated.Value(0), []);
-  const scrollHandler = useMemo(
-    () =>
-      Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
-        useNativeDriver: true,
-      }),
-    [scrollY],
-  );
-  const pageAnim = useCallback(
-    (index: number) => ({
-      transform: [
-        {
-          scale: scrollY.interpolate({
-            inputRange: [(index - 1) * height, index * height, (index + 1) * height],
-            outputRange: [0.94, 1, 0.94],
-            extrapolate: 'clamp',
-          }),
-        },
-      ],
-      opacity: scrollY.interpolate({
-        inputRange: [(index - 1) * height, index * height, (index + 1) * height],
-        outputRange: [0.55, 1, 0.55],
-        extrapolate: 'clamp',
-      }),
-    }),
-    [scrollY, height],
+  // Fil libre : une carte est « active » (vidéo qui joue, vue comptée) dès
+  // qu'elle est à moitié visible ; plein écran : 60 % de la page.
+  const viewabilityConfig = useMemo(
+    () => ({ itemVisiblePercentThreshold: flow ? 50 : 60 }),
+    [flow],
   );
 
   const onViewableItemsChanged = useCallback(
@@ -335,21 +334,37 @@ export function FeedPager({
         // Item = écran entier : `pagingEnabled` et `snapToInterval` décrivent
         // alors la même page, donc plus de snap bancal ni de page suivante
         // visible en bas pendant le geste.
-        pagingEnabled
-        snapToInterval={height}
-        snapToAlignment="start"
+        pagingEnabled={!flow}
+        snapToInterval={flow ? undefined : height}
+        snapToAlignment={flow ? undefined : 'start'}
+        // Plein écran : un geste = une page, même lancé vite (comme TikTok).
+        disableIntervalMomentum={!flow}
+        decelerationRate={flow ? 'normal' : 'fast'}
         // Pendant un glissement sur la barre, le feed ne doit pas bouger.
         scrollEnabled={!scrubbing}
-        getItemLayout={(_, index) => ({ length: height, offset: height * index, index })}
-        onScroll={scrollHandler}
-        scrollEventThrottle={16}
+        getItemLayout={
+          flow ? undefined : (_, index) => ({ length: height, offset: height * index, index })
+        }
+        initialScrollIndex={!flow && initialIndex > 0 ? initialIndex : undefined}
+        // Fil libre : la barre d'onglets du haut et celle du bas flottent
+        // par-dessus ; la liste leur laisse la place.
+        contentContainerStyle={
+          flow ? { paddingTop: insets.top + FLOW_TOP_BAR, paddingBottom: barInset } : undefined
+        }
+        ListFooterComponent={
+          flow && !hasMore && items.length > 0 ? (
+            <ThemedText type="small" style={[styles.flowEnd, { color: tones.textFaint }]}>
+              {fr.social.endOfFeed}
+            </ThemedText>
+          ) : null
+        }
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         // 3 = la page active et ses deux voisines. Seule la page active monte
         // une `VideoView` ; les voisines se contentent d'un poster ou d'un
         // lecteur détaché (cache disque).
-        windowSize={3}
-        initialNumToRender={2}
+        windowSize={flow ? 7 : 3}
+        initialNumToRender={flow ? 3 : 2}
         maxToRenderPerBatch={3}
         // Désactivé explicitement : sur Android c'est **actif par défaut**, et
         // le détachement d'une `TextureVideoView` encore rattachée à un lecteur
@@ -363,6 +378,7 @@ export function FeedPager({
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
+            progressViewOffset={flow ? insets.top + FLOW_TOP_BAR : undefined}
             tintColor={FeedSurface.onMedia}
             colors={[FeedSurface.onMedia]}
             progressBackgroundColor="rgba(0,0,0,0.6)"
@@ -380,6 +396,7 @@ export function FeedPager({
             burstPoint: burst.id === item.id ? burst.point : null,
             likeScale,
             hideOverlays,
+            flow,
           };
           const doubleTap = (point?: { x: number; y: number } | null) =>
             handleDoubleTap(item, point ?? null);
@@ -389,7 +406,7 @@ export function FeedPager({
           // Publication texte ou photo : carte au format Instagram avec son
           // propre pied (barre d'actions horizontale), sans rail vertical ni
           // bloc infos. Seules les vidéos verticales seules restent en plein écran (Reels).
-          const isCardPost = !isVideoPost(item);
+          const isCardPost = flow || !isVideoPost(item);
           const railState: FeedActionState = {
             reacted: item.viewer.reaction !== null,
             saved: Boolean(item.viewer.saved),
@@ -422,8 +439,8 @@ export function FeedPager({
           const paddingBottom = barInset - Spacing.two;
 
           return (
-            <Animated.View style={[styles.page, { height, width: '100%' }, pageAnim(index)]}>
-              {isVideoPost(item) ? (
+            <View style={[flow ? styles.flowItem : styles.page, flow ? null : { height }, { width: '100%' }]}>
+              {!flow && isVideoPost(item) ? (
                 videoMode === 'play' ? (
                   <VideoPage
                     post={item}
@@ -462,6 +479,9 @@ export function FeedPager({
                   onDoubleTapLike={doubleTap}
                   muted={muted}
                   onToggleMuted={() => setMuted((value) => !value)}
+                  onOpenReels={
+                    flow && onOpenReels && isVideoPost(item) ? () => onOpenReels(item) : undefined
+                  }
                 />
                 </>
               ) : (
@@ -511,17 +531,18 @@ export function FeedPager({
                   />
                 </View>
               ) : null}
-            </Animated.View>
+            </View>
           );
         }}
       />
 
-      {/* Dégradé haut fixe : les onglets restent lisibles pendant le scroll. */}
-      <TopScrim />
+      {/* Dégradé haut fixe : les onglets restent lisibles sur les Reels. Le
+          fil libre a son propre bandeau opaque (barre du haut). */}
+      {flow ? null : <TopScrim />}
 
       {/* Fin du fil : posée en overlay, jamais en pied de liste — un élément
           supplémentaire casserait le snap plein écran. */}
-      {!hasMore && items.length > 0 && activeIndex === items.length - 1 ? (
+      {!flow && !hasMore && items.length > 0 && activeIndex === items.length - 1 ? (
         <View style={[styles.endOfFeed, { bottom: barInset + Spacing.four }]} pointerEvents="none">
           <ThemedText type="small" style={styles.endOfFeedText}>
             {fr.social.endOfFeed}
@@ -799,6 +820,11 @@ function VideoPoster({ post, height }: { post: FeedPost; height: number }) {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
+  flowItem: {},
+  flowEnd: {
+    textAlign: 'center',
+    paddingVertical: Spacing.four,
+  },
   page: {
     backgroundColor: FeedSurface.background,
   },

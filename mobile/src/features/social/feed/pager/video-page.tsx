@@ -45,6 +45,11 @@ export interface FeedPageChrome {
   likeScale: Animated.Value;
   /** Feuille de commentaires ouverte : le média s'affiche sans contrôles. */
   hideOverlays: boolean;
+  /**
+   * Fil d'accueil façon Instagram : la carte prend sa hauteur naturelle dans
+   * une liste à défilement libre, au lieu d'occuper un écran entier.
+   */
+  flow?: boolean;
 }
 
 
