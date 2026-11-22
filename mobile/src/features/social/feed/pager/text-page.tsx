@@ -133,7 +133,7 @@ export function TextPage({
   state,
   likeScale,
   onDoubleTapLike,
-  preview = false,
+  preview: isPreview = false,
 }: {
   post: FeedPost;
   chrome: FeedPageChrome;
@@ -174,7 +174,7 @@ export function TextPage({
   // Entrée de carte : un fondu léger, seulement la première fois qu'un post
   // apparaît. Le pager démonte et remonte les pages : sans ce registre, chaque
   // retour en arrière refaisait le fondu et donnait un effet de clignotement.
-  const alreadySeen = preview || seenTextPosts.has(post.id);
+  const alreadySeen = isPreview || seenTextPosts.has(post.id);
   const enter = useMemo(() => new Animated.Value(alreadySeen ? 1 : 0), [alreadySeen]);
   useEffect(() => {
     if (alreadySeen) {
@@ -231,9 +231,9 @@ export function TextPage({
 
   const interactive = Boolean(actions && state) && !chrome.hideOverlays;
   // Liens, profil, suivi, menu et like : désactivés dans l'aperçu.
-  const linksEnabled = interactive && !preview;
-  const topReserved = preview ? Spacing.two : CARD_TOP_RESERVED;
-  const bottomReserved = preview ? Spacing.two : CARD_BOTTOM_RESERVED;
+  const linksEnabled = interactive && !isPreview;
+  const topReserved = isPreview ? Spacing.two : CARD_TOP_RESERVED;
+  const bottomReserved = isPreview ? Spacing.two : CARD_BOTTOM_RESERVED;
   const author = post.author;
 
   // Format Instagram : en-tête au-dessus, visuel pleine largeur au ratio du
@@ -364,7 +364,7 @@ export function TextPage({
           <View style={styles.header}>
             <Pressable
               onPress={actions?.onOpenProfile}
-              disabled={!actions || preview}
+              disabled={!actions || isPreview}
               accessibilityRole="button"
               accessibilityLabel={`Voir le profil de ${author.displayName}${
                 author.verified ? `, ${fr.social.verifiedAccount}` : ''
@@ -406,7 +406,7 @@ export function TextPage({
             </Pressable>
 
             <View style={styles.headerActions}>
-              {actions?.onFollow && !preview ? (
+              {actions?.onFollow && !isPreview ? (
                 <Pressable
                   onPress={actions.onFollow}
                   hitSlop={8}
@@ -418,7 +418,7 @@ export function TextPage({
                   </ThemedText>
                 </Pressable>
               ) : null}
-              {actions && !preview ? (
+              {actions && !isPreview ? (
                 // Options (signaler, masquer…) : elles vivent dans la feuille
                 // Partager, ouverte ici comme le ⋯ d'Instagram.
                 <Pressable
@@ -438,7 +438,7 @@ export function TextPage({
           {post.quoted ? (
             <Pressable
               onPress={() => router.push(`/post/${post.quoted!.id}`)}
-              disabled={preview}
+              disabled={isPreview}
               accessibilityRole="button"
               accessibilityLabel={`Voir la publication de ${post.quoted.authorDisplayName}`}
               style={({ pressed }) => [
@@ -540,7 +540,7 @@ export function TextPage({
               {post.linkPreview ? (
                 <Pressable
                   onPress={() => void Linking.openURL(post.linkPreview!.url).catch(() => undefined)}
-                disabled={preview}
+                disabled={isPreview}
                   accessibilityRole="link"
                   accessibilityLabel={post.linkPreview.title}
                   style={({ pressed }) => [
@@ -597,9 +597,9 @@ export function TextPage({
           <View
             style={styles.footer}
             // Aperçu : la barre est montrée telle quelle mais inerte.
-            pointerEvents={preview ? 'none' : 'auto'}
-            importantForAccessibility={preview ? 'no-hide-descendants' : 'auto'}
-            accessibilityElementsHidden={preview}
+            pointerEvents={isPreview ? 'none' : 'auto'}
+            importantForAccessibility={isPreview ? 'no-hide-descendants' : 'auto'}
+            accessibilityElementsHidden={isPreview}
             onLayout={(event) => onFooterLayout(event.nativeEvent.layout.height)}>
             <PostActionBar
               post={post}
@@ -616,7 +616,7 @@ export function TextPage({
             />
             {/* « Aimé par X et N autres » : un compte suivi s'il y en a un,
                 sinon le nombre de J'aime seul — la ligne d'Instagram. */}
-            <LikedByLine post={post} color={tones.text} interactive={!preview} />
+            <LikedByLine post={post} color={tones.text} interactive={!isPreview} />
             <View style={styles.metaRow}>
               {post.counters.comments > 0 ? (
                 <Pressable

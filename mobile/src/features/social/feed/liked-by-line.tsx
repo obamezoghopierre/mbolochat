@@ -74,7 +74,7 @@ export function LikedByLine({
             {others > 0 ? fr.social.likedByOthers(others, formatCompactCount(others)) : ''}
           </>
         ) : (
-          fr.social.likesCount(likes, formatCompactCount(likes))
+          fr.social.likedByCount(likes, formatCompactCount(likes))
         )}
       </ThemedText>
     </View>
