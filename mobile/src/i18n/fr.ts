@@ -983,6 +983,13 @@ export const fr = {
       left > 1 ? `${left} caractères restants` : `${left} caractère restant`,
     /** Indicateur de page du carrousel de texte, ex. « 2/5 ». */
     textPageIndicator: (index: number, total: number) => `${index}/${total}`,
+    /** Ligne « Aimé par » sous les actions d'un post, comme sur Instagram. */
+    likedByPrefix: 'Aimé par ',
+    likedByOthers: (count: number, label: string) =>
+      count > 1 ? ` et ${label} autres personnes` : ' et 1 autre personne',
+    likesCount: (count: number, label: string) => (count > 1 ? `${label} J’aime` : '1 J’aime'),
+    likedByA11y: (name: string, others: number) =>
+      others > 0 ? `Aimé par ${name} et ${others} autres personnes` : `Aimé par ${name}`,
     verifiedAccount: 'compte vérifié',
     textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
     notificationsTitle: 'Aucune notification',

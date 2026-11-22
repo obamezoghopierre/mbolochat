@@ -570,6 +570,11 @@ export interface FeedPost {
    * « Abonnements » (attribution « X a republié »). `null` sinon.
    */
   repostedBy?: SocialAuthor | null;
+  /**
+   * « Aimé par X et N autres » : compte suivi qui a réagi le plus récemment.
+   * `null` si aucun compte suivi n'a réagi (on affiche alors le nombre seul).
+   */
+  likedBy?: SocialAuthor | null;
 }
 
 export interface FeedPage {

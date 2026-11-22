@@ -633,4 +633,69 @@ describe('Feed (e2e)', () => {
         .where(and(eq(publications.id, post.id))))[0].hotScore,
     ).toBe(42);
   });
+
+  describe('« Aimé par » dans le fil', () => {
+    const follow = (follower: { token: string }, targetId: string) =>
+      request(app.getHttpServer())
+        .post(`/users/${targetId}/follow`)
+        .set('Authorization', `Bearer ${follower.token}`)
+        .expect(201);
+    const like = (actor: { token: string }, publicationId: string) =>
+      request(app.getHttpServer())
+        .post(`/publications/${publicationId}/like`)
+        .set('Authorization', `Bearer ${actor.token}`)
+        .send({ kind: 'like' })
+        .expect(201);
+    const itemOf = async (viewer: { token: string }, publicationId: string) =>
+      (await feed(viewer, { tab: 'following' }).expect(200)).body.items.find(
+        (item: { id: string }) => item.id === publicationId,
+      );
+
+    it('montre le compte suivi qui a aimé, jamais un inconnu ni soi-même', async () => {
+      const author = await register('Aimee');
+      const friend = await register('Amie');
+      const stranger = await register('Passante');
+      const viewer = await register('Lectrice');
+      const post = await publish(author);
+      await follow(viewer, author.id);
+      await follow(viewer, friend.id);
+
+      // Seuls un inconnu et le visiteur ont aimé : pas d'attribution.
+      await like(stranger, post.id);
+      await like(viewer, post.id);
+      let item = await itemOf(viewer, post.id);
+      expect(item.counters.likes).toBe(2);
+      expect(item.likedBy).toBeNull();
+
+      // Un compte suivi aime : il est cité, sans données privées.
+      await like(friend, post.id);
+      item = await itemOf(viewer, post.id);
+      expect(item.counters.likes).toBe(3);
+      expect(item.likedBy).toEqual({
+        id: friend.id,
+        username: friend.username,
+        displayName: friend.displayName,
+        avatarUrl: null,
+        verified: false,
+      });
+      expect(JSON.stringify(item.likedBy)).not.toContain('@e2e.dev');
+    });
+
+    it('n’affiche pas un compte bloqué', async () => {
+      const author = await register('Bloquante');
+      const friend = await register('Bloquee');
+      const viewer = await register('Prudente');
+      const post = await publish(author);
+      await follow(viewer, author.id);
+      await follow(viewer, friend.id);
+      await like(friend, post.id);
+      expect((await itemOf(viewer, post.id)).likedBy?.id).toBe(friend.id);
+
+      await request(app.getHttpServer())
+        .post(`/users/${friend.id}/block`)
+        .set('Authorization', `Bearer ${viewer.token}`)
+        .expect(201);
+      expect((await itemOf(viewer, post.id)).likedBy).toBeNull();
+    });
+  });
 });

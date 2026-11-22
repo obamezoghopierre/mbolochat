@@ -77,8 +77,10 @@ const HEADER_AVATAR = 36;
 const COLUMN_GAP = Spacing.two;
 /** En dessous, le visuel n'est plus lisible : on accepte de rogner le texte. */
 const MIN_VISUAL_HEIGHT = 200;
+/** Avatar de la ligne « Aimé par ». */
+const LIKED_BY_AVATAR = 18;
 /** Pied avant sa première mesure (actions + ligne de méta). */
-const FOOTER_ESTIMATE = 96;
+const FOOTER_ESTIMATE = 118;
 /** Points de pagination + écart au-dessus. */
 const PAGE_DOTS_BLOCK = 6 + Spacing.two;
 /** Ligne « Voir plus » sous un post long. */
@@ -613,6 +615,55 @@ export function TextPage({
               onToggleRepost={actions.onToggleRepost}
               onShare={actions.onShare}
             />
+            {/* « Aimé par X et N autres » : un compte suivi s'il y en a un,
+                sinon le nombre de J'aime seul — la ligne d'Instagram. */}
+            {post.counters.likes > 0 ? (
+              <View style={styles.likesRow}>
+                {post.likedBy ? (
+                  <Avatar
+                    name={post.likedBy.displayName}
+                    uri={post.likedBy.avatarUrl}
+                    size={LIKED_BY_AVATAR}
+                    shape="circle"
+                  />
+                ) : null}
+                <ThemedText
+                  numberOfLines={1}
+                  style={[styles.likesText, { color: tones.text }]}
+                  accessibilityLabel={
+                    post.likedBy
+                      ? fr.social.likedByA11y(post.likedBy.displayName, post.counters.likes - 1)
+                      : undefined
+                  }>
+                  {post.likedBy ? (
+                    <>
+                      {fr.social.likedByPrefix}
+                      <ThemedText
+                        style={[styles.likesText, styles.likesStrong, { color: tones.text }]}
+                        onPress={
+                          preview
+                            ? undefined
+                            : () => router.push(`/user/${post.likedBy!.id}`)
+                        }
+                        suppressHighlighting>
+                        {post.likedBy.displayName}
+                      </ThemedText>
+                      {post.counters.likes > 1
+                        ? fr.social.likedByOthers(
+                            post.counters.likes - 1,
+                            formatCompactCount(post.counters.likes - 1),
+                          )
+                        : ''}
+                    </>
+                  ) : (
+                    fr.social.likesCount(
+                      post.counters.likes,
+                      formatCompactCount(post.counters.likes),
+                    )
+                  )}
+                </ThemedText>
+              </View>
+            ) : null}
             <View style={styles.metaRow}>
               {post.counters.comments > 0 ? (
                 <Pressable
@@ -1084,6 +1135,18 @@ const styles = StyleSheet.create({
   footer: {
     gap: Spacing.one,
     paddingHorizontal: Spacing.three,
+  },
+  likesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  likesText: {
+    ...Type.caption,
+    flexShrink: 1,
+  },
+  likesStrong: {
+    fontWeight: '700',
   },
   metaRow: {
     flexDirection: 'row',

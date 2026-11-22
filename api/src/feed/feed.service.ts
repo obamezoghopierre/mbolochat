@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -63,6 +63,12 @@ export interface FeedItem extends PublicationView {
    * « Abonnements » (façon Instagram). `null`/absent sinon.
    */
   repostedBy?: AuthorCard | null;
+  /**
+   * « Aimé par X et N autres » : le compte suivi par le visiteur qui a réagi
+   * le plus récemment à la publication. `null` si aucun compte suivi n'a
+   * réagi (le client affiche alors seulement le nombre de J'aime).
+   */
+  likedBy?: AuthorCard | null;
 }
 
 export interface FeedPage {
@@ -392,7 +398,7 @@ export class FeedService {
 
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
-    const items = await this.toItems(page);
+    const items = await this.toItems(page, viewerId);
     // Comme dans le fil, chaque republication porte l'auteur du repost.
     const reposters = await this.authorCards([userId]);
     const reposter = reposters.get(userId) ?? null;
@@ -602,7 +608,7 @@ export class FeedService {
     const ordered = ids
       .map((id) => byId.get(id))
       .filter((row): row is PublicationRow => row !== undefined);
-    return this.toItems(ordered);
+    return this.toItems(ordered, viewerId);
   }
 
   /** Colonnes communes aux deux chemins. */
@@ -712,8 +718,58 @@ export class FeedService {
     return sql`${publications.hotScore} * ${affinity}`;
   }
 
+  /**
+   * Pour chaque publication, le compte suivi par le visiteur qui y a réagi le
+   * plus récemment (« Aimé par X »). Une seule requête par page : abonnement
+   * accepté, jamais le visiteur lui-même, ni un compte supprimé, ni un compte
+   * bloqué dans un sens ou dans l'autre.
+   */
+  private async likedByFollowed(
+    publicationIds: string[],
+    viewerId: string,
+  ): Promise<Map<string, AuthorCard>> {
+    if (publicationIds.length === 0) {
+      return new Map();
+    }
+    const rows = await this.db
+      .selectDistinctOn([publicationReactions.publicationId], {
+        publicationId: publicationReactions.publicationId,
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        avatarUrl: users.avatarUrl,
+        verified: users.verified,
+      })
+      .from(publicationReactions)
+      .innerJoin(
+        follows,
+        and(
+          eq(follows.followingId, publicationReactions.userId),
+          eq(follows.followerId, viewerId),
+          eq(follows.status, 'accepted'),
+        ),
+      )
+      .innerJoin(users, eq(users.id, publicationReactions.userId))
+      .where(
+        and(
+          inArray(publicationReactions.publicationId, publicationIds),
+          ne(publicationReactions.userId, viewerId),
+          isNull(users.deletedAt),
+          sql`not exists (
+            select 1 from ${blocks}
+            where (${blocks.blockerId} = ${viewerId} and ${blocks.blockedId} = ${publicationReactions.userId})
+               or (${blocks.blockerId} = ${publicationReactions.userId} and ${blocks.blockedId} = ${viewerId})
+          )`,
+        ),
+      )
+      .orderBy(publicationReactions.publicationId, desc(publicationReactions.createdAt));
+    return new Map(
+      rows.map(({ publicationId, ...author }) => [publicationId, author as AuthorCard]),
+    );
+  }
+
   /** Hydrate les URLs de médias et rend les éléments de fil. */
-  private async toItems(rows: PublicationRow[]): Promise<FeedItem[]> {
+  private async toItems(rows: PublicationRow[], viewerId: string): Promise<FeedItem[]> {
     if (rows.length === 0) {
       return [];
     }
@@ -734,12 +790,18 @@ export class FeedService {
           : 'signed',
       ]),
     );
-    const media = await loadPublicationMedia(
-      this.db,
-      rows.map((row) => row.id),
-      this.storage.isConfigured() ? this.storage : null,
-      (publicationId) => access.get(publicationId) ?? 'signed',
-    );
+    const [media, likers] = await Promise.all([
+      loadPublicationMedia(
+        this.db,
+        rows.map((row) => row.id),
+        this.storage.isConfigured() ? this.storage : null,
+        (publicationId) => access.get(publicationId) ?? 'signed',
+      ),
+      this.likedByFollowed(
+        rows.filter((row) => row.likeCount > 0).map((row) => row.id),
+        viewerId,
+      ),
+    ]);
 
     return rows.map((row) => ({
       id: row.id,
@@ -784,6 +846,7 @@ export class FeedService {
               caption: row.quotedCaption,
             }
           : null,
+      likedBy: likers.get(row.id) ?? null,
     }));
   }
 }
