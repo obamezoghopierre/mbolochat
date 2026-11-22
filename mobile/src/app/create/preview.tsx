@@ -134,7 +134,8 @@ export default function CreatePreviewScreen() {
       setProgress(null);
       // Retour au fil : la pile de création est remplacée par le résultat.
       router.dismissTo('/');
-    } catch {
+    } catch (error) {
+      console.error('[create:preview] publication échouée', error);
       setPublishing(false);
       setProgress(null);
       setError(fr.social.createPublishError);
