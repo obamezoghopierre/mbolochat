@@ -40,6 +40,7 @@ import { COMMENTS_SHEET_SNAP_RATIO, CommentsSheet } from './pager/comments-sheet
 import { FeedPager } from './pager/feed-pager';
 import { OnMediaShadow } from './pager/feed-tokens';
 import { useFeed } from './use-feed';
+import { markLaunchReady } from '@/lib/launch-gate';
 import { useReportPublication } from './use-report-publication';
 
 const TABS: { id: FeedTab; label: string }[] = [
@@ -310,6 +311,14 @@ function FeedSurfaceView({
   const insets = useSafeAreaInsets();
   const [screenHeight, setScreenHeight] = useState(0);
   const feed = useFeed(tab);
+
+  // Démarrage : l'écran de lancement natif disparaît quand le fil d'accueil
+  // a quelque chose à montrer (posts, état vide ou erreur), jamais avant.
+  useEffect(() => {
+    if (tab === DEFAULT_TAB && feed.status !== 'loading' && screenHeight > 0) {
+      markLaunchReady();
+    }
+  }, [feed.status, screenHeight, tab]);
   // État réseau : le fil reste lisible hors ligne (contenu déjà chargé), mais
   // l'utilisateur doit savoir pourquoi rien de nouveau n'arrive.
   const network = useNetworkState();

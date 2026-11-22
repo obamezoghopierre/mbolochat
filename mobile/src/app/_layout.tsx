@@ -1,4 +1,6 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, router } from 'expo-router';
+// Importé en premier : garde l'écran de lancement natif jusqu'au premier contenu.
+import '@/lib/launch-gate';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
@@ -9,6 +11,7 @@ import { CallProvider } from '@/features/calls/CallProvider';
 import { CallBanner } from '@/features/calls/CallBanner';
 import { CallScreen } from '@/features/calls/CallScreen';
 import { PresenceProvider } from '@/features/presence/PresenceProvider';
+import { Colors } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { loadAppPreferences } from '@/lib/app-preferences';
 import { TextScaleProvider } from '@/lib/text-scale';
@@ -27,6 +30,17 @@ import { CityAutoDetector } from '@/features/location/CityAutoDetector';
 import { drain } from '@/lib/outbox';
 import { configureNotificationHandler, subscribeToNotificationOpens } from '@/lib/push';
 import { runSync, startReliability } from '@/lib/sync';
+
+// Fond du navigateur aligné sur celui des écrans : aucun flash blanc ou gris
+// entre deux transitions au démarrage.
+const DARK_NAV = {
+  ...DarkTheme,
+  colors: { ...DarkTheme.colors, background: Colors.dark.background, card: Colors.dark.background },
+};
+const LIGHT_NAV = {
+  ...DefaultTheme,
+  colors: { ...DefaultTheme.colors, background: Colors.light.background, card: Colors.light.background },
+};
 
 export default function RootLayout() {
   return (
@@ -55,7 +69,7 @@ function RootLayoutBody() {
           le provider doit être à la racine pour qu'ils reçoivent les insets. */}
       <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <AuthProvider>
-          <ThemeProvider value={scheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <ThemeProvider value={scheme === 'dark' ? DARK_NAV : LIGHT_NAV}>
             <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
             <CallProvider>
               <E2eeBootstrapGate />

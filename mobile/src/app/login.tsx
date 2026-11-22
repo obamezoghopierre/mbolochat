@@ -1,5 +1,5 @@
 import { Link, Redirect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
-import { useRef, useState, type ComponentRef } from 'react';
+import { useEffect, useRef, useState, type ComponentRef } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -20,9 +20,14 @@ import { Colors, Spacing } from '@/constants/theme';
 import { useKeyboardHeight } from '@/hooks/use-keyboard-height';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
+import { markLaunchReady } from '@/lib/launch-gate';
 
 export default function LoginScreen() {
   const { token, signIn } = useAuth();
+  // Premier écran sans session : l'écran de lancement natif peut partir.
+  useEffect(() => {
+    markLaunchReady();
+  }, []);
   const router = useRouter();
   const { next } = useLocalSearchParams<{ next?: string }>();
   const keyboardHeight = useKeyboardHeight();

@@ -80,7 +80,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       // Le cache disque est chargé avant tout affichage : les pages s'ouvrent
-      // ensuite instantanément, avec leur contenu déjà prêt.
+      // ensuite instantanément, avec leur contenu déjà prêt. L'écran de
+      // lancement natif reste affiché pendant ce temps (cf. LaunchGate).
       await cache.hydrate();
       const restoreOffline = async (
         accessToken: string,
@@ -99,6 +100,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const stored = await getStoredAccessToken();
         const cachedUser = await getCachedUser();
+
+        // Démarrage instantané, comme Instagram : avec une session et un profil
+        // déjà enregistrés sur l'appareil, l'app s'ouvre tout de suite. La
+        // vérification serveur (`me`, puis `refresh` si besoin) continue en
+        // arrière-plan ; seul un refus explicite du serveur déconnecte.
+        if (stored && cachedUser) {
+          await restoreOffline(stored, cachedUser);
+          if (!cancelled) {
+            setLoading(false);
+          }
+          void (async () => {
+            try {
+              const me = await api.me(stored);
+              await storeCachedUser(me);
+              if (!cancelled) {
+                setToken(getCachedAccessToken() ?? stored);
+                setUser(me);
+              }
+              return;
+            } catch (error) {
+              if (isTransientSessionError(error)) {
+                return;
+              }
+            }
+            const rt = await getStoredRefreshToken();
+            if (!rt) {
+              await clearStoredTokens();
+              if (!cancelled) {
+                setToken(null);
+                setUser(null);
+              }
+              return;
+            }
+            try {
+              const refreshed = await api.refresh(rt);
+              await storeTokens(refreshed.accessToken, refreshed.refreshToken ?? rt);
+              const me = await api.me(refreshed.accessToken);
+              await storeCachedUser(me);
+              if (!cancelled) {
+                setToken(refreshed.accessToken);
+                setUser(me);
+              }
+            } catch (refreshError) {
+              if (isTransientSessionError(refreshError)) {
+                return;
+              }
+              await clearStoredTokens();
+              if (!cancelled) {
+                setToken(null);
+                setUser(null);
+              }
+            }
+          })();
+          return;
+        }
+
         if (stored) {
           try {
             const me = await api.me(stored);
