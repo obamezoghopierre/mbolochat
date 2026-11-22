@@ -143,8 +143,8 @@ export const FeedActionRail = memo(function FeedActionRail({
       <RailAction
         icon={Forward}
         label={
-          post.counters.shares + post.counters.reposts > 0
-            ? compactCount(post.counters.shares + post.counters.reposts)
+          (post.counters.shares ?? 0) + post.counters.reposts > 0
+            ? compactCount((post.counters.shares ?? 0) + post.counters.reposts)
             : fr.social.shareShort
         }
         accessibilityLabel={fr.social.shareLabel}
