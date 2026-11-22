@@ -1,6 +1,12 @@
 /** Limites alignées sur le backend (uploads.service.ts). */
 export const MAX_MEDIA_SELECTION = 9;
 
+/**
+ * Médias d'une publication du fil (carrousel), aligné sur `@ArrayMaxSize(10)`
+ * de `CreatePublicationDto`. Distinct du chat, qui garde `MAX_MEDIA_SELECTION`.
+ */
+export const MAX_PUBLICATION_MEDIA = 10;
+
 const MB = 1024 * 1024;
 
 export const MAX_IMAGE_BYTES = 25 * MB;

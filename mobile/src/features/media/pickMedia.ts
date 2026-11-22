@@ -208,11 +208,17 @@ export function isRejectedMedia(value: PickedAttachment | RejectedMedia): value 
   return 'reason' in value;
 }
 
-export async function pickLibraryMedia(): Promise<PickedMediaResult | null> {
+/**
+ * Galerie système, photos et vidéos. `limit` : 9 par défaut (chat), 10 pour
+ * une publication (`MAX_PUBLICATION_MEDIA`).
+ */
+export async function pickLibraryMedia(
+  limit: number = MAX_MEDIA_SELECTION,
+): Promise<PickedMediaResult | null> {
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images', 'videos'],
     allowsMultipleSelection: true,
-    selectionLimit: MAX_MEDIA_SELECTION,
+    selectionLimit: limit,
     // iOS 15+ numérote la sélection ; le sélecteur Android dépend de sa version.
     orderedSelection: true,
     quality: 1,
@@ -220,13 +226,13 @@ export async function pickLibraryMedia(): Promise<PickedMediaResult | null> {
   if (result.canceled || result.assets.length === 0) {
     return null;
   }
-  const assets = result.assets.slice(0, MAX_MEDIA_SELECTION);
+  const assets = result.assets.slice(0, limit);
   const extra = result.assets.length - assets.length;
   const collected = collect(assets.map(normalizeImageAsset));
   if (extra > 0) {
     collected.rejected.push({
       name: `${extra} fichier${extra > 1 ? 's' : ''}`,
-      reason: `Maximum ${MAX_MEDIA_SELECTION} fichiers par sélection`,
+      reason: `Maximum ${limit} fichiers par sélection`,
     });
   }
   return collected;

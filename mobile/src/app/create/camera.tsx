@@ -28,6 +28,7 @@ import {
   pickLibraryMedia,
   type PickedAttachment,
 } from '@/features/media/pickMedia';
+import { MAX_PUBLICATION_MEDIA } from '@/features/media/mediaLimits';
 import { FilterStrip } from '@/features/social/create/filter-strip';
 import { fr } from '@/i18n/fr';
 import { setPendingCreation } from '@/lib/pending-creation';
@@ -220,14 +221,14 @@ export default function CreateCameraScreen() {
   /** Galerie rapide : même validation que le hub, vers l'aperçu. */
   const pickFromGallery = useCallback(async () => {
     if (recording || busy) return;
-    const result = await pickLibraryMedia();
+    const result = await pickLibraryMedia(MAX_PUBLICATION_MEDIA);
     if (!result) return;
+    // Photos et vidéos peuvent se mélanger dans un carrousel (10 max).
     const assets = result.files.filter(
       (asset) => asset.kind === 'image' || asset.kind === 'video',
     );
-    const hasVideo = assets.some((asset) => asset.kind === 'video');
-    if (assets.length === 0 || (hasVideo && assets.length > 1)) {
-      Alert.alert(fr.social.createMediaErrorTitle, fr.social.createMixedMedia);
+    if (assets.length === 0) {
+      Alert.alert(fr.social.createMediaErrorTitle, fr.social.createMediaErrorBody);
       return;
     }
     setPendingCreation({ assets, filter });

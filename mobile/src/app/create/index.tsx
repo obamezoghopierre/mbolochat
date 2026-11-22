@@ -22,7 +22,7 @@ import { FeedSurface, Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { useAuth } from '@/lib/auth-context';
 import { setPendingCreation } from '@/lib/pending-creation';
-import { MAX_MEDIA_SELECTION } from '@/features/media/mediaLimits';
+import { MAX_PUBLICATION_MEDIA } from '@/features/media/mediaLimits';
 import {
   isRejectedMedia,
   pickLibraryMedia,
@@ -139,10 +139,10 @@ export default function CreatePickerScreen() {
         if (previous.includes(asset.id)) {
           return previous.filter((id) => id !== asset.id);
         }
-        if (previous.length >= MAX_MEDIA_SELECTION) {
+        if (previous.length >= MAX_PUBLICATION_MEDIA) {
           Alert.alert(
             fr.social.createMediaErrorTitle,
-            fr.social.createMaxSelection(MAX_MEDIA_SELECTION),
+            fr.social.createMaxSelection(MAX_PUBLICATION_MEDIA),
           );
           return previous;
         }
@@ -186,7 +186,7 @@ export default function CreatePickerScreen() {
     }
     setPublishing(true);
     try {
-      const result = await pickLibraryMedia();
+      const result = await pickLibraryMedia(MAX_PUBLICATION_MEDIA);
       if (!result) {
         return;
       }
