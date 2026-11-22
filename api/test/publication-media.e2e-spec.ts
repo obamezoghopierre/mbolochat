@@ -378,4 +378,62 @@ describe('Publications avec médias (e2e)', () => {
     // Ni texte ni média.
     await publish(author, { caption: '   ' }).expect(400);
   });
+
+  describe('retouche des médias d’un carrousel', () => {
+    const edit = (actor: { token: string }, id: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .patch(`/publications/${id}`)
+        .set('Authorization', `Bearer ${actor.token}`)
+        .send(body);
+
+    it('réordonne puis retire des médias, en recalculant le format', async () => {
+      const author = await register('Retoucheuse');
+      const a = await readyAsset(author, { kind: 'image', mime: 'image/png', bytes: await png() });
+      const b = await readyAsset(author, { kind: 'image', mime: 'image/png', bytes: await png() });
+      const clip = await readyAsset(author, { kind: 'video', mime: 'video/mp4', bytes: await mp4() });
+      const created = await publish(author, { assetIds: [a, b, clip], caption: 'Trois' }).expect(201);
+      const id = created.body.id;
+
+      const reordered = await edit(author, id, { mediaAssetIds: [clip, a, b] }).expect(200);
+      expect(reordered.body.format).toBe('carousel');
+      expect(reordered.body.media.map((item: { assetId: string }) => item.assetId)).toEqual([
+        clip,
+        a,
+        b,
+      ]);
+      expect(reordered.body.editedAt).toEqual(expect.any(String));
+
+      // Il ne reste que la vidéo : le post devient une vidéo seule.
+      const trimmed = await edit(author, id, { mediaAssetIds: [clip] }).expect(200);
+      expect(trimmed.body.format).toBe('video');
+      expect(trimmed.body.media).toHaveLength(1);
+
+      const detail = await request(app.getHttpServer())
+        .get(`/publications/${id}`)
+        .set('Authorization', `Bearer ${author.token}`)
+        .expect(200);
+      expect(detail.body.media.map((item: { assetId: string }) => item.assetId)).toEqual([clip]);
+    });
+
+    it('refuse d’ajouter un média, de tout retirer ou de doubler un média', async () => {
+      const author = await register('Gardienne');
+      const a = await readyAsset(author, { kind: 'image', mime: 'image/png', bytes: await png() });
+      const b = await readyAsset(author, { kind: 'image', mime: 'image/png', bytes: await png() });
+      const extra = await readyAsset(author, { kind: 'image', mime: 'image/png', bytes: await png() });
+      const created = await publish(author, { assetIds: [a, b], caption: 'Deux' }).expect(201);
+      const id = created.body.id;
+
+      await edit(author, id, { mediaAssetIds: [a, b, extra] }).expect(400);
+      await edit(author, id, { mediaAssetIds: [] }).expect(400);
+      await edit(author, id, { mediaAssetIds: [a, a] }).expect(400);
+
+      // Rien n'a bougé.
+      const detail = await request(app.getHttpServer())
+        .get(`/publications/${id}`)
+        .set('Authorization', `Bearer ${author.token}`)
+        .expect(200);
+      expect(detail.body.media.map((item: { assetId: string }) => item.assetId)).toEqual([a, b]);
+      expect(detail.body.format).toBe('carousel');
+    });
+  });
 });

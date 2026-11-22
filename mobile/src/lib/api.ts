@@ -226,6 +226,8 @@ export const api = {
     publicationId: string,
     body: {
       caption?: string;
+      /** Médias gardés, dans le nouvel ordre (retirer / réordonner seulement). */
+      mediaAssetIds?: string[];
       textPages?: string[];
       /** Style par page, aligné sur `textPages` (ou pages existantes). */
       textPageStyles?: ({ background?: string; color?: string; font?: string; align?: string; size?: number } | null)[];

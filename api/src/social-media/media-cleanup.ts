@@ -89,3 +89,37 @@ export async function enqueuePublicationCleanup(
     rows.map((row) => row.assetId),
   );
 }
+
+/**
+ * Purge des médias retirés d'une publication encore visible (retouche d'un
+ * carrousel) : seuls ceux que plus aucun contenu vivant n'utilise partent.
+ * À appeler dans la transaction qui réécrit `publication_media`.
+ */
+export async function enqueueOrphanAssetCleanup(
+  tx: Transaction,
+  assetIds: string[],
+): Promise<number> {
+  const unique = [...new Set(assetIds)].filter((id) => id.length > 0);
+  if (unique.length === 0) {
+    return 0;
+  }
+  const stillUsed = await tx
+    .select({ assetId: publicationMedia.assetId })
+    .from(publicationMedia)
+    .where(
+      and(
+        inArray(publicationMedia.assetId, unique),
+        sql`exists (
+          select 1 from publications p2
+          where p2.id = ${publicationMedia.publicationId}
+            and p2.deleted_at is null
+            and p2.moderation_status <> 'removed'
+        )`,
+      ),
+    );
+  const used = new Set(stillUsed.map((row) => row.assetId));
+  return enqueueAssetCleanup(
+    tx,
+    unique.filter((assetId) => !used.has(assetId)),
+  );
+}

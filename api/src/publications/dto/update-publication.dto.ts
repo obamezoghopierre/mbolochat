@@ -36,6 +36,17 @@ import {
  * mêmes listes que la création et ne s'appliquent qu'aux posts texte.
  */
 export class UpdatePublicationDto {
+  /**
+   * Nouvel ordre des médias d'une publication photo/vidéo/carrousel, comme
+   * Instagram : on peut retirer des médias ou les réordonner, pas en ajouter.
+   * Seuls les médias déjà attachés sont acceptés ; au moins un reste.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  mediaAssetIds?: string[];
+
   @IsOptional()
   @IsString({ message: 'La légende doit être un texte.' })
   @MaxLength(MAX_CAPTION_LENGTH, {

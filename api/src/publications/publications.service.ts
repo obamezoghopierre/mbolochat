@@ -41,7 +41,10 @@ import {
 } from '../db/schema.js';
 import { FollowsService } from '../follows/follows.service.js';
 import { ModerationService } from '../moderation/moderation.service.js';
-import { enqueuePublicationCleanup } from '../social-media/media-cleanup.js';
+import {
+  enqueueOrphanAssetCleanup,
+  enqueuePublicationCleanup,
+} from '../social-media/media-cleanup.js';
 import { ObjectStorageService } from '../social-media/object-storage.service.js';
 import { SocialNotificationsService } from '../social-notifications/social-notifications.service.js';
 import {
@@ -664,6 +667,61 @@ export class PublicationsService {
       throw new BadRequestException('La légende ne peut pas être vide sans média.');
     }
 
+    // Médias : retirer ou réordonner ceux déjà attachés, jamais en ajouter.
+    let nextMedia: Array<{ assetId: string; altText: string | null }> | null = null;
+    let nextFormat: 'image' | 'carousel' | 'video' | null = null;
+    let removedAssetIds: string[] = [];
+    if (dto.mediaAssetIds !== undefined) {
+      if (!hasMedia) {
+        throw new BadRequestException('Un post texte n’a pas de média à modifier.');
+      }
+      const requested = dto.mediaAssetIds;
+      if (requested.length === 0) {
+        throw new BadRequestException(
+          'Garde au moins un média, ou supprime la publication.',
+        );
+      }
+      if (new Set(requested).size !== requested.length) {
+        throw new BadRequestException('Média fourni deux fois.');
+      }
+      const current = await this.db
+        .select({
+          assetId: publicationMedia.assetId,
+          altText: publicationMedia.altText,
+          kind: mediaAssets.kind,
+        })
+        .from(publicationMedia)
+        .innerJoin(mediaAssets, eq(mediaAssets.id, publicationMedia.assetId))
+        .where(eq(publicationMedia.publicationId, publicationId))
+        .orderBy(asc(publicationMedia.position));
+      const byId = new Map(current.map((entry) => [entry.assetId, entry]));
+      if (requested.some((assetId) => !byId.has(assetId))) {
+        throw new BadRequestException(
+          'Seuls les médias déjà publiés peuvent être gardés ou réordonnés.',
+        );
+      }
+      const unchangedOrder =
+        requested.length === current.length &&
+        requested.every((assetId, index) => current[index]?.assetId === assetId);
+      if (!unchangedOrder) {
+        nextMedia = requested.map((assetId) => ({
+          assetId,
+          altText: byId.get(assetId)?.altText ?? null,
+        }));
+        removedAssetIds = current
+          .map((entry) => entry.assetId)
+          .filter((assetId) => !requested.includes(assetId));
+        // Même règle qu'à la création : plusieurs médias = carrousel, sinon
+        // le format suit le média restant.
+        nextFormat =
+          requested.length > 1
+            ? 'carousel'
+            : byId.get(requested[0])?.kind === 'video'
+              ? 'video'
+              : 'image';
+      }
+    }
+
     // Le texte réellement publié est re-scanné, légende d'une photo ou d'une
     // vidéo comprise : une retouche qui introduit un mot bloqué repasse le
     // post en revue.
@@ -728,7 +786,8 @@ export class PublicationsService {
               }
             : {}),
           ...(flagged ? { moderationStatus: 'flagged' as const } : {}),
-          ...(textChanged ? { editedAt: new Date() } : {}),
+          ...(textChanged || nextMedia ? { editedAt: new Date() } : {}),
+          ...(nextFormat ? { format: nextFormat } : {}),
           updatedAt: new Date(),
           // Le texte a pu changer : l'aperçu du premier lien est recalculé
           // (annulé s'il n'y a plus d'URL exploitable).
@@ -741,6 +800,24 @@ export class PublicationsService {
         })
         .where(eq(publications.id, publicationId))
         .returning();
+      if (result && nextMedia) {
+        // Réécriture complète : l'index unique (publication, position) interdit
+        // de permuter les lignes en place.
+        await tx.delete(publicationMedia).where(eq(publicationMedia.publicationId, publicationId));
+        await tx.insert(publicationMedia).values(
+          nextMedia.map((entry, position) => ({
+            publicationId,
+            assetId: entry.assetId,
+            altText: entry.altText,
+            position,
+          })),
+        );
+        // Médias retirés et plus utilisés ailleurs : effacés du stockage, sinon
+        // leur URL resterait valable.
+        if (removedAssetIds.length > 0) {
+          await enqueueOrphanAssetCleanup(tx, removedAssetIds);
+        }
+      }
       // Nouvelles mentions ajoutées par la retouche : notifiées comme à la
       // création (la clé de déduplication ignore celles déjà prévenues). Un
       // post en revue attend la décision de la modération.

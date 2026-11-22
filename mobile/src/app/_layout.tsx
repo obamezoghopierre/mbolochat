@@ -213,7 +213,7 @@ function RootNavigator() {
       <Stack.Screen name="document-viewer" options={{ headerShown: false }} />
       <Stack.Screen name="profile/edit" options={{ title: 'Modifier le profil' }} />
       <Stack.Screen name="post/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="post/edit/[id]" options={{ title: 'Modifier la légende' }} />
+      <Stack.Screen name="post/edit/[id]" options={{ title: 'Modifier la publication' }} />
       <Stack.Screen name="user/[id]" options={{ title: 'Profil' }} />
       <Stack.Screen name="settings" options={{ title: 'Paramètres' }} />
     </Stack>
