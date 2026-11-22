@@ -16,6 +16,7 @@ import type {
   DeviceSession,
   FeedPage,
   FeedTab,
+  SaveCollection,
   FollowState,
   ForgotPasswordResult,
   Gender,
@@ -576,6 +577,49 @@ export const api = {
     return request<{ reposted: boolean; repostCount: number }>(
       `/publications/${publicationId}/repost`,
       { method: 'DELETE', token },
+    );
+  },
+
+  /** Enregistrements du compte connecté (tous, ou ceux d'une collection). */
+  saved(token: string, options: { cursor?: string; collectionId?: string } = {}) {
+    const query = new URLSearchParams({ limit: '30' });
+    if (options.cursor) query.set('cursor', options.cursor);
+    if (options.collectionId) query.set('collection', options.collectionId);
+    return request<FeedPage>(`/saved?${query.toString()}`, { token });
+  },
+
+  saveCollections(token: string) {
+    return request<SaveCollection[]>('/saved/collections', { token });
+  },
+
+  createSaveCollection(token: string, name: string) {
+    return request<SaveCollection>('/saved/collections', {
+      method: 'POST',
+      token,
+      body: { name },
+    });
+  },
+
+  renameSaveCollection(token: string, collectionId: string, name: string) {
+    return request<SaveCollection>(`/saved/collections/${collectionId}`, {
+      method: 'PATCH',
+      token,
+      body: { name },
+    });
+  },
+
+  deleteSaveCollection(token: string, collectionId: string) {
+    return request<{ deleted: true }>(`/saved/collections/${collectionId}`, {
+      method: 'DELETE',
+      token,
+    });
+  },
+
+  /** Range une publication enregistrée (`null` = hors collection). */
+  assignSaveCollection(token: string, publicationId: string, collectionId: string | null) {
+    return request<{ publicationId: string; collectionId: string | null }>(
+      `/saved/${publicationId}/collection`,
+      { method: 'PUT', token, body: { collectionId } },
     );
   },
 

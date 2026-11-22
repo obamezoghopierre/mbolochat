@@ -579,6 +579,15 @@ export interface FeedPost {
   likedBy?: SocialAuthor | null;
 }
 
+/** Collection d'enregistrements (privée), comme Instagram. */
+export interface SaveCollection {
+  id: string;
+  name: string;
+  /** Publications rangées dans la collection. */
+  count: number;
+  createdAt: string;
+}
+
 export interface FeedPage {
   items: FeedPost[];
   nextCursor: string | null;

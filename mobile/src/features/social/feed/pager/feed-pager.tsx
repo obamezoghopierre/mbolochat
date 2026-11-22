@@ -52,6 +52,7 @@ import { ImagePage } from './image-page';
 import { isPageActive, videoPageMode } from './preload';
 import { PostInfoBlock } from './post-info';
 import { PostQrSheet } from './post-qr-sheet';
+import { SaveCollectionSheet } from '../save-collection-sheet';
 import { ShareTargetsRow, type ShareSheetAction } from './share-targets';
 import { TextPage } from './text-page';
 import { FeedViewTracker } from './view-tracker';
@@ -182,6 +183,8 @@ export function FeedPager({
   const [qrTarget, setQrTarget] = useState<FeedPost | null>(null);
   const [reactionTarget, setReactionTarget] = useState<FeedPost | null>(null);
   const [repostTarget, setRepostTarget] = useState<FeedPost | null>(null);
+  /** Publication à ranger dans une collection (« Enregistrer dans… »). */
+  const [collectionTarget, setCollectionTarget] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -464,7 +467,24 @@ export function FeedPager({
             },
             onPickReaction: () => setReactionTarget(item),
             onOpenComments: () => actions.onOpenComments(item),
-            onToggleSave: () => void actions.toggleSave(item),
+            onToggleSave: () => {
+              const willSave = !item.viewer.saved;
+              void actions.toggleSave(item);
+              // Comme Instagram : « Enregistré · Ajouter à une collection ».
+              if (willSave) {
+                showToast(fr.social.savedToast, {
+                  label: fr.social.saveToCollectionShort,
+                  run: () => setCollectionTarget(item.id),
+                });
+              }
+            },
+            onPickCollection: () => {
+              // L'appui long enregistre d'abord si besoin, puis ouvre le choix.
+              if (!item.viewer.saved) {
+                void actions.toggleSave(item);
+              }
+              setCollectionTarget(item.id);
+            },
             onToggleRepost: () => setRepostTarget(item),
             onShare: () => setShareTarget(item),
             onOpenProfile: () => openProfile(item),
@@ -694,6 +714,15 @@ export function FeedPager({
       />
 
       <PostQrSheet post={qrTarget} onClose={() => setQrTarget(null)} />
+
+      {token ? (
+        <SaveCollectionSheet
+          token={token}
+          publicationId={collectionTarget}
+          onClose={() => setCollectionTarget(null)}
+          onDone={(collection) => showToast(fr.social.savedInCollection(collection.name))}
+        />
+      ) : null}
 
       {/* Sélecteur de réaction : appui long sur le cœur du rail. */}
       <ActionSheet

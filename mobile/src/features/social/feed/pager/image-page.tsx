@@ -499,6 +499,7 @@ export function ImagePage({
               onPickReaction={actions.onPickReaction}
               onOpenComments={actions.onOpenComments}
               onToggleSave={actions.onToggleSave}
+                onPickCollection={actions.onPickCollection}
               onToggleRepost={actions.onToggleRepost}
               onShare={actions.onShare}
             />

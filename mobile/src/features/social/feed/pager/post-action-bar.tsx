@@ -28,6 +28,7 @@ export function PostActionBar({
   onPickReaction,
   onOpenComments,
   onToggleSave,
+  onPickCollection,
   onToggleRepost,
   onShare,
 }: {
@@ -40,6 +41,8 @@ export function PostActionBar({
   onPickReaction?: (() => void) | null;
   onOpenComments: () => void;
   onToggleSave: () => void;
+  /** Appui long sur Enregistrer : choisir une collection. */
+  onPickCollection?: (() => void) | null;
   onToggleRepost: () => void;
   onShare: () => void;
 }) {
@@ -133,6 +136,8 @@ export function PostActionBar({
 
       <Pressable
         onPress={handleSave}
+        onLongPress={onPickCollection ?? undefined}
+        delayLongPress={320}
         hitSlop={8}
         accessibilityRole="button"
         accessibilityState={{ selected: saved }}

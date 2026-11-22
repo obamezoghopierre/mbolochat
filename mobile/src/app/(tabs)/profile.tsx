@@ -1,14 +1,17 @@
 import { Redirect, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Bookmark, ChevronRight } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ProfileAction, ProfileHeader } from '@/components/profile-view';
+import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { RepostsSection } from '@/features/social/feed/reposts-section';
 import { useTheme } from '@/hooks/use-theme';
+import { fr } from '@/i18n/fr';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { cache } from '@/lib/cache';
@@ -96,6 +99,20 @@ export default function ProfileScreen() {
           />
         ) : null}
 
+        {/* Enregistrés : privé, comme Instagram (visible sur son propre profil). */}
+        <Pressable
+          onPress={() => router.push('/saved')}
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.savedRow,
+            { backgroundColor: theme.backgroundElement },
+            pressed && { opacity: 0.7 },
+          ]}>
+          <Icon icon={Bookmark} size={20} color={theme.text} />
+          <ThemedText style={styles.savedLabel}>{fr.social.savedTitle}</ThemedText>
+          <Icon icon={ChevronRight} size={18} color={theme.textSecondary} />
+        </Pressable>
+
         {profile ? <RepostsSection userId={profile.id} token={token} /> : null}
 
         {error ? (
@@ -115,6 +132,15 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.three,
     gap: Spacing.four,
   },
+  savedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    borderRadius: 12,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.threeHalf,
+  },
+  savedLabel: { flex: 1, fontWeight: '600' },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',

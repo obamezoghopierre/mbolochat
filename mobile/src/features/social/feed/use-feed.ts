@@ -307,10 +307,11 @@ export function useFeed(
         } else {
           await api.unsavePublication(token, post.id);
         }
-        setNotice({
-          message: next.saved ? 'Publication enregistrée' : 'Enregistrement retiré',
-          tone: 'info',
-        });
+        // L'enregistrement a son propre bandeau dans le fil (« Enregistré ·
+        // Collection ») : seul le retrait est confirmé ici.
+        if (!next.saved) {
+          setNotice({ message: 'Enregistrement retiré', tone: 'info' });
+        }
       } catch {
         setItems((current) => restorePost(current, post));
         notifyError('Enregistrement impossible. Vérifie ta connexion.');

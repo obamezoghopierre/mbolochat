@@ -26,6 +26,8 @@ export interface FeedActions {
   onPickReaction?: (() => void) | null;
   onOpenComments: () => void;
   onToggleSave: () => void;
+  /** Appui long sur Enregistrer : choisir une collection (Instagram). */
+  onPickCollection?: (() => void) | null;
   onToggleRepost: () => void;
   onShare: () => void;
   onOpenProfile: () => void;
@@ -136,6 +138,7 @@ export const FeedActionRail = memo(function FeedActionRail({
           void Haptics.selectionAsync().catch(() => undefined);
           actions.onToggleSave();
         }}
+        onLongPress={actions.onPickCollection ?? undefined}
       />
 
       {/* Partager, comme TikTok : la feuille porte aussi Republier, Copier le
