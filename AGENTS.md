@@ -65,6 +65,10 @@ bash scripts/check.sh         # fmt + clippy + tests + licences
 
 CI : `.github/workflows/crypto.yml` (Rust) et `.github/workflows/ci.yml` (à chaque push et PR sur `master` : `npm run test:e2e` dans `api/` sur un PostgreSQL de service, avec ffmpeg ; `npx tsc --noEmit` dans `mobile/`). Lint, tests unitaires et `expo lint` ne tournent pas en CI : les commandes ci-dessus restent à lancer avant de conclure.
 
+Après un `git pull` demandé par l'utilisateur : vérifier le nouveau code avec les commandes ci-dessus (typecheck, lint et tests des dossiers touchés), comparer le bruit de lint existant, et signaler les erreurs sans corriger hors sujet.
+
+Ne jamais vider le cache Metro (`expo start --clear`) ni purger des données applicatives sans l'accord explicite de l'utilisateur.
+
 ## Architecture
 
 - `api/src/main.ts` : bootstrap, CORS, Helmet, migrations, service du bundle web `../mobile/dist`. **L'API doit tourner avec `api/` comme cwd** ("drizzle" et "uploads" sont relatifs).
