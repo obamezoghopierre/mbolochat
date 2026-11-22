@@ -104,31 +104,37 @@ export async function processImageVariants(
   if (!original) {
     throw new Error('Objet source introuvable dans le stockage.');
   }
-  const metadata = await sharp(original).metadata();
+  // GIF / WebP animés : toutes les images sont conservées (`animated`), la
+  // variante reste une WebP animée que l'app lit en boucle, comme Instagram.
+  const probeMeta = await sharp(original).metadata();
+  const animated = (probeMeta.pages ?? 1) > 1;
+  const metadata = probeMeta;
   // Dimensions **affichées** : une photo prise en portrait au téléphone est
   // souvent stockée en paysage avec une orientation EXIF de 5 à 8 (rotation
   // de 90°). Les variantes sont tournées (`.rotate()`), les dimensions
   // annoncées au fil doivent l'être aussi, sinon le cadre est faux.
   const [sourceWidth, sourceHeight] = displayedImageSize(
     metadata.width ?? null,
-    metadata.height ?? null,
+    // Animation : `height` additionne toutes les images, `pageHeight` en donne une.
+    (animated ? metadata.pageHeight : metadata.height) ?? null,
     metadata.orientation,
   );
 
   const produced: MediaVariant[] = [];
   for (const target of IMAGE_VARIANTS) {
     const width = sourceWidth ? Math.min(target.width, sourceWidth) : target.width;
-    const buffer = await sharp(original)
+    const buffer = await sharp(original, animated ? { animated: true } : undefined)
       .rotate() // applique l'orientation EXIF avant de la supprimer
       .resize({ width, withoutEnlargement: true })
-      .webp({ quality: WEBP_QUALITY })
+      .webp({ quality: WEBP_QUALITY, ...(animated ? { loop: 0, effort: 2 } : {}) })
       .toBuffer({ resolveWithObject: true });
     const key = `social/variants/${options.assetId}/${target.label}.webp`;
     await options.storage.put(key, buffer.data, 'image/webp');
     produced.push({
       label: target.label,
       width: buffer.info.width,
-      height: buffer.info.height,
+      // Animation : hauteur d'une image, pas de la pile.
+      height: animated ? (buffer.info.pageHeight ?? buffer.info.height) : buffer.info.height,
       url: options.storage.publicUrl(key) ?? key,
       key,
       sizeBytes: buffer.data.length,

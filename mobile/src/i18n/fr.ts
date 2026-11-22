@@ -768,6 +768,10 @@ export const fr = {
     shareShort: 'Partager',
     repostToast: 'Republié sur ton profil',
     undo: 'Annuler',
+    liveTitle: 'Live Photo',
+    liveBody: 'Publier la photo fixe ou la courte vidéo (Live) ?',
+    liveAsPhoto: 'Photo',
+    liveAsVideo: 'Vidéo (Live)',
     shareMessagePlaceholder: 'Écris un message…',
     shareSendCount: (count: number) => (count > 1 ? `Envoyer (${count})` : 'Envoyer'),
     shareSentTo: (count: number) =>

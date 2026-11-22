@@ -31,6 +31,7 @@ import {
 import {
   assetToPicked,
   useCreateLibrary,
+  isLivePhoto,
 } from '@/features/social/create/use-create-library';
 
 /**
@@ -101,6 +102,8 @@ export default function CreatePickerScreen() {
   const insets = useSafeAreaInsets();
   const [segment, setSegment] = useState<Segment>('all');
   const [selected, setSelected] = useState<string[]>([]);
+  /** Live Photos à publier en vidéo (appui long → « En vidéo »). */
+  const [liveAsVideo, setLiveAsVideo] = useState<string[]>([]);
   const [publishing, setPublishing] = useState(false);
   const requestedRef = useRef(false);
 
@@ -152,6 +155,35 @@ export default function CreatePickerScreen() {
     [segment],
   );
 
+  /**
+   * Appui long sur une Live Photo : choisir photo fixe ou vidéo (Live), comme
+   * le menu d'Instagram. La Live Photo est sélectionnée dans la foulée.
+   */
+  const chooseLiveMode = useCallback(
+    (asset: MediaLibrary.Asset) => {
+      const select = () =>
+        setSelected((previous) => (previous.includes(asset.id) ? previous : [...previous, asset.id]));
+      Alert.alert(fr.social.liveTitle, fr.social.liveBody, [
+        {
+          text: fr.social.liveAsPhoto,
+          onPress: () => {
+            setLiveAsVideo((current) => current.filter((id) => id !== asset.id));
+            select();
+          },
+        },
+        {
+          text: fr.social.liveAsVideo,
+          onPress: () => {
+            setLiveAsVideo((current) => (current.includes(asset.id) ? current : [...current, asset.id]));
+            select();
+          },
+        },
+        { text: fr.common.cancel, style: 'cancel' },
+      ]);
+    },
+    [],
+  );
+
   /** Sélection → aperçu de publication (upload + légende + filtre). */
   const goNext = useCallback(async () => {
     if (!token || publishing || selected.length === 0) {
@@ -160,7 +192,9 @@ export default function CreatePickerScreen() {
     setPublishing(true);
     try {
       const chosen = library.assets.filter((asset) => selected.includes(asset.id));
-      const results = await Promise.all(chosen.map(assetToPicked));
+      const results = await Promise.all(
+        chosen.map((asset) => assetToPicked(asset, { liveAsVideo: liveAsVideo.includes(asset.id) })),
+      );
       const rejected = results.filter(isRejectedMedia);
       const files: PickedAttachment[] = results.filter(
         (result): result is PickedAttachment => !isRejectedMedia(result),
@@ -177,7 +211,7 @@ export default function CreatePickerScreen() {
     } finally {
       setPublishing(false);
     }
-  }, [library.assets, publishing, selected, token]);
+  }, [library.assets, liveAsVideo, publishing, selected, token]);
 
   /** Repli : le sélecteur système, qui fonctionne sans permission bibliothèque. */
   const pickFromSystem = useCallback(async () => {
@@ -214,6 +248,8 @@ export default function CreatePickerScreen() {
       return (
         <Pressable
           onPress={() => toggleAsset(item)}
+          onLongPress={isLivePhoto(item) && segment !== 'video' ? () => chooseLiveMode(item) : undefined}
+          delayLongPress={350}
           accessibilityRole="imagebutton"
           accessibilityLabel={item.filename}
           accessibilityState={{ selected: isSelected }}
@@ -237,6 +273,18 @@ export default function CreatePickerScreen() {
               ) : null}
             </>
           ) : null}
+          {/* Live Photo : pastille « LIVE », pleine quand elle part en vidéo. */}
+          {!isVideo && isLivePhoto(item) ? (
+            <View
+              style={[
+                styles.liveBadge,
+                liveAsVideo.includes(item.id) && styles.liveBadgeOn,
+              ]}>
+              <ThemedText type="micro" style={styles.liveText}>
+                LIVE
+              </ThemedText>
+            </View>
+          ) : null}
           {isSelected ? (
             <>
               <View style={styles.selectedRing} />
@@ -250,7 +298,7 @@ export default function CreatePickerScreen() {
         </Pressable>
       );
     },
-    [selected, segment, toggleAsset],
+    [chooseLiveMode, liveAsVideo, selected, segment, toggleAsset],
   );
 
   const keyExtractor = useCallback((asset: MediaLibrary.Asset) => asset.id, []);
@@ -459,6 +507,17 @@ export default function CreatePickerScreen() {
 }
 
 const styles = StyleSheet.create({
+  liveBadge: {
+    position: 'absolute',
+    left: 4,
+    top: 4,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  liveBadgeOn: { backgroundColor: FeedSurface.follow },
+  liveText: { color: '#FFFFFF', fontWeight: '700', fontSize: 9 },
   screen: { flex: 1, backgroundColor: FeedSurface.background },
   topBar: {
     flexDirection: 'row',

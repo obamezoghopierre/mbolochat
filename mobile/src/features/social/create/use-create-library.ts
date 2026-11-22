@@ -120,10 +120,53 @@ export function useCreateLibrary(kind: CreateLibraryKind | null): CreateLibrary 
   };
 }
 
+/** Live Photo d'iPhone (photo + courte vidéo jointe). */
+export function isLivePhoto(asset: MediaLibrary.Asset): boolean {
+  return (asset.mediaSubtypes ?? []).includes('livePhoto');
+}
+
+/**
+ * Vidéo jointe d'une Live Photo, si iOS la fournit : publiée comme une vidéo
+ * courte en boucle, à la manière du « Boomerang » d'Instagram. `null` si la
+ * vidéo n'est pas disponible (iCloud, Android, ancienne version d'iOS).
+ */
+export async function livePhotoVideo(
+  asset: MediaLibrary.Asset,
+): Promise<PickedAttachment | RejectedMedia | null> {
+  try {
+    const info = (await MediaLibrary.getAssetInfoAsync(asset)) as MediaLibrary.AssetInfo & {
+      pairedVideoAsset?: { uri?: string; localUri?: string; duration?: number } | null;
+    };
+    const paired = info.pairedVideoAsset;
+    const uri = paired?.localUri ?? paired?.uri;
+    if (!uri) {
+      return null;
+    }
+    return normalizeLocalMedia({
+      uri,
+      kind: 'video',
+      name: asset.filename.replace(/\.[^.]+$/, '.mov'),
+      width: asset.width,
+      height: asset.height,
+      durationMs: paired?.duration ? Math.round(paired.duration * 1000) : 3000,
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Convertit un asset de la photothèque en pièce jointe publiable. */
 export async function assetToPicked(
   asset: MediaLibrary.Asset,
+  options: { liveAsVideo?: boolean } = {},
 ): Promise<PickedAttachment | RejectedMedia> {
+  // Live Photo : photo fixe par défaut (comme Instagram) ; en vidéo si demandé.
+  if (options.liveAsVideo && isLivePhoto(asset)) {
+    const video = await livePhotoVideo(asset);
+    if (video) {
+      return video;
+    }
+  }
   const kind =
     asset.mediaType === 'video' || asset.mediaType === 'pairedVideo' ? 'video' : 'image';
   return normalizeLocalMedia({
