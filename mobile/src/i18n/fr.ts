@@ -757,6 +757,8 @@ export const fr = {
     repostsMore: 'Voir plus',
     shareLabel: 'Partager',
     shareShort: 'Partager',
+    /** Badge du créateur de la publication sur ses commentaires. */
+    commentCreatorBadge: 'Auteur',
     shareMoreOptions: 'Plus d’options',
     shareError: 'Partage impossible.',
     copyLink: 'Copier le lien',

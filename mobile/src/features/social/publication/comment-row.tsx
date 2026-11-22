@@ -93,6 +93,7 @@ export function CommentRow({
   indented = false,
   isPublicationAuthor = false,
   pinLimitReached = false,
+  publicationAuthorId = null,
 }: {
   comment: PublicationComment;
   onReply?: (comment: PublicationComment) => void;
@@ -109,6 +110,8 @@ export function CommentRow({
   isPublicationAuthor?: boolean;
   /** 3 commentaires déjà épinglés : l'action est masquée pour les autres. */
   pinLimitReached?: boolean;
+  /** Auteur de la publication : son commentaire porte le badge « Auteur ». */
+  publicationAuthorId?: string | null;
 }) {
   const { token, user } = useAuth();
   const theme = useTheme();
@@ -386,6 +389,13 @@ export function CommentRow({
         ) : null}
         <View style={styles.nameRow}>
           <ThemedText style={styles.author}>{comment.author.displayName}</ThemedText>
+          {publicationAuthorId && comment.author.id === publicationAuthorId ? (
+            <View style={[styles.creatorBadge, { backgroundColor: theme.backgroundSelected }]}>
+              <ThemedText type="caption" style={[styles.creatorText, { color: theme.text }]}>
+                {fr.social.commentCreatorBadge}
+              </ThemedText>
+            </View>
+          ) : null}
           {!isOwnComment && following && followedBy ? (
             <ThemedText type="caption" themeColor="textSecondary">
               {fr.social.mutualFollow}
@@ -559,6 +569,12 @@ export function CommentRow({
             fill={liked ? FeedSurface.like : 'transparent'}
             strokeWidth={2}
           />
+          {/* Compteur sous le cœur, comme Instagram et TikTok. */}
+          {likeCount > 0 ? (
+            <ThemedText type="caption" themeColor="textSecondary" style={styles.likeCount}>
+              {likeCount}
+            </ThemedText>
+          ) : null}
         </Pressable>
         <Pressable
           onPress={() => void toggleDislike()}
@@ -625,6 +641,13 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
   },
   indented: { paddingLeft: Spacing.four },
+  creatorBadge: {
+    borderRadius: Radii.xs,
+    paddingHorizontal: Spacing.one,
+    paddingVertical: 1,
+  },
+  creatorText: { fontSize: 10, fontWeight: '700' },
+  likeCount: { fontSize: 11, marginTop: 1, textAlign: 'center' },
   commentImage: {
     width: 180,
     height: 180,
@@ -683,5 +706,5 @@ const styles = StyleSheet.create({
   reactionBarItem: { padding: Spacing.two },
   reactionBarEmoji: { fontSize: 26 },
   actions: { flexDirection: 'row', alignItems: 'center' },
-  action: { paddingVertical: Spacing.half, paddingLeft: Spacing.one },
+  action: { paddingVertical: Spacing.half, paddingLeft: Spacing.one, alignItems: 'center' },
 });

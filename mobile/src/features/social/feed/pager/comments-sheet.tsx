@@ -66,6 +66,8 @@ export const COMMENTS_SHEET_SNAP_RATIO = 0.75;
 const COMPOSER_SYSTEM_BAR_FALLBACK = 48;
 
 const EMOJIS = ['👍', '❤️', '😂', '🎉', '🙏', '🔥', '😮', '👏'];
+/** Réactions rapides au-dessus de la saisie, comme Instagram : un tap les insère. */
+const QUICK_EMOJIS = ['❤️', '🙌', '🔥', '👏', '😢', '😍', '😮', '😂'];
 
 type AutocompleteSuggestion = {
   value: string;
@@ -1013,6 +1015,7 @@ export function CommentsSheet({
                   onReact={(target, kind) => void reactToComment(target, kind)}
                   isPublicationAuthor={isPublicationAuthor}
                   pinLimitReached={pinned.length >= 3 && !item.pinned}
+                  publicationAuthorId={current.author.id}
                 />
                 {replies.length > 0 ? (
                   <Pressable
@@ -1037,6 +1040,7 @@ export function CommentsSheet({
                         onNotice={setNotice}
                         onScoreChange={updateScore}
                         onReact={(target, kind) => void reactToComment(target, kind)}
+                        publicationAuthorId={current.author.id}
                         indented
                       />
                     ))
@@ -1217,6 +1221,23 @@ export function CommentsSheet({
             />
           </View>
         ) : null}
+        {/* Emojis rapides (Instagram) : visibles tant que le panneau
+            d'expressions est fermé. */}
+        {!exprOpen ? (
+          <View style={styles.quickEmojis}>
+            {QUICK_EMOJIS.map((emoji) => (
+              <Pressable
+                key={emoji}
+                onPress={() => insertEmoji(emoji)}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel={emoji}
+                style={({ pressed }) => pressed && styles.quickEmojiPressed}>
+                <ThemedText style={styles.quickEmoji}>{emoji}</ThemedText>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
         {/* Rangée d'actions média au-dessus de la saisie, alignée sur la
             pilule (avatar + espacements à gauche). */}
         <View style={styles.iconRow}>
@@ -1354,6 +1375,14 @@ function AttachmentPreview({
 }
 
 const styles = StyleSheet.create({
+  quickEmojis: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
+  },
+  quickEmoji: { fontSize: 24, lineHeight: 30 },
+  quickEmojiPressed: { transform: [{ scale: 1.2 }] },
   header: {
     alignItems: 'center',
     justifyContent: 'center',
