@@ -63,7 +63,7 @@ npm run build                 # dist/ servi par l'API à /admin
 bash scripts/check.sh         # fmt + clippy + tests + licences
 ```
 
-Le seul workflow CI est `.github/workflows/crypto.yml`. **Aucun CI TypeScript** : les commandes ci-dessus sont le vrai garde-fou, à lancer avant de conclure.
+CI : `.github/workflows/crypto.yml` (Rust) et `.github/workflows/ci.yml` (à chaque push et PR sur `master` : `npm run test:e2e` dans `api/` sur un PostgreSQL de service, avec ffmpeg ; `npx tsc --noEmit` dans `mobile/`). Lint, tests unitaires et `expo lint` ne tournent pas en CI : les commandes ci-dessus restent à lancer avant de conclure.
 
 ## Architecture
 
