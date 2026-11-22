@@ -18,7 +18,7 @@ export const REELS_MAX_ASPECT = 3 / 4;
 
 /**
  * La publication se lit-elle en plein écran vidéo (Reels) ? Seulement une
- * vidéo seule et **verticale**, comme Instagram :
+ * vidéo seule et **verticale** (hauteur > largeur), comme Instagram :
  * - un carrousel, même s'il commence par une vidéo, s'affiche en carte ;
  * - une vidéo carrée ou paysage s'affiche en carte au fil, à son format,
  *   au lieu d'un plein écran avec de larges bandes noires.
@@ -30,7 +30,7 @@ export function isVideoPost(post: FeedPost): boolean {
     return false;
   }
   const { width, height } = playable[0];
-  return !(width && height) || width / height <= REELS_MAX_ASPECT;
+  return !(width && height) || width < height;
 }
 
 /** Nombre de médias supplémentaires, affiché en pastille si > 0. */
