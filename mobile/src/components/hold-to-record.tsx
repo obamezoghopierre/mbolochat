@@ -5,7 +5,7 @@ import {
   useAudioRecorder,
 } from 'expo-audio';
 import * as Haptics from 'expo-haptics';
-import { Lock, Mic, Trash2 } from 'lucide-react-native';
+import { ChevronLeft, Lock, Mic, Trash2 } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -272,6 +272,29 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
     ],
   }));
 
+  // Corbeille qui grossit et rougit à mesure qu'on glisse vers la gauche.
+  const trashStyle = useAnimatedStyle(() => {
+    const t = interpolate(dx.value, [CANCEL_DX, 0], [1, 0], 'clamp');
+    return { opacity: 0.35 + t * 0.65, transform: [{ scale: 0.85 + t * 0.55 }, { rotate: `${t * -12}deg` }] };
+  });
+  // « Glisse pour annuler » suit le doigt puis s'efface.
+  const hintStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(dx.value, [CANCEL_DX, 0], [0, 1], 'clamp'),
+    transform: [{ translateX: dx.value * 0.5 }],
+  }));
+  // Chevron qui invite à glisser (aller-retour léger, en boucle).
+  const chevronStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -6 * pulse.value }],
+    opacity: 0.4 + 0.6 * (1 - pulse.value),
+  }));
+  // Barres « vivantes » qui sautent au rythme de la voix (en plus de l'onde).
+  const blobStyle = useAnimatedStyle(() => ({
+    opacity: press.value * 0.22,
+    transform: [{ scale: 1.6 + level.value * 1.1 + pulse.value * 0.25 }],
+  }));
+  // Anneau de progression : se remplit vers la limite de 60 s.
+  const progressPct = Math.min(1, elapsed / MAX_MS);
+
   const remaining = Math.max(0, MAX_MS - elapsed);
 
   return (
@@ -281,12 +304,24 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
         <View
           pointerEvents={locked ? 'box-none' : 'none'}
           style={[styles.strip, { backgroundColor: theme.backgroundElement }]}>
+          <Animated.View style={[styles.trash, trashStyle]}>
+            <Trash2 size={18} color={armedCancel ? RECORD_RED : theme.textSecondary} />
+          </Animated.View>
           <View style={styles.dot} />
           <ThemedText style={[styles.timer, remaining < 10_000 && { color: RECORD_RED }]}>
             {formatDuration(elapsed)}
           </ThemedText>
           <View style={styles.wave}>
             <WaveTrack recorder={recorder} paused={false} />
+            {/* Limite de 60 s : fine jauge sous l'onde. */}
+            <View style={[styles.limitTrack, { backgroundColor: theme.border }]}>
+              <View
+                style={[
+                  styles.limitFill,
+                  { width: `${progressPct * 100}%`, backgroundColor: remaining < 10_000 ? RECORD_RED : theme.text },
+                ]}
+              />
+            </View>
           </View>
           {locked ? (
             <View style={styles.lockedActions}>
@@ -308,12 +343,17 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
               </Pressable>
             </View>
           ) : (
-            <ThemedText
-              type="caption"
-              numberOfLines={1}
-              style={[styles.hint, { color: armedCancel ? theme.danger : theme.textSecondary }]}>
-              {armedCancel ? fr.social.voiceReleaseToCancel : fr.social.voiceSlideToCancel}
-            </ThemedText>
+            <Animated.View style={[styles.hintRow, hintStyle]}>
+              <Animated.View style={chevronStyle}>
+                <ChevronLeft size={16} color={armedCancel ? theme.danger : theme.textSecondary} />
+              </Animated.View>
+              <ThemedText
+                type="caption"
+                numberOfLines={1}
+                style={[styles.hint, { color: armedCancel ? theme.danger : theme.textSecondary }]}>
+                {armedCancel ? fr.social.voiceReleaseToCancel : fr.social.voiceSlideToCancel}
+              </ThemedText>
+            </Animated.View>
           )}
         </View>
       ) : null}
@@ -338,6 +378,7 @@ export function HoldToRecordButton({ onSend, onActiveChange, onHint, disabled }:
               accessibilityLabel={fr.social.voiceHoldA11y}
               hitSlop={10}
               style={styles.touch}>
+              <Animated.View pointerEvents="none" style={[styles.halo, blobStyle]} />
               <Animated.View pointerEvents="none" style={[styles.halo, haloStyle]} />
               <Animated.View pointerEvents="none" style={[styles.halo, levelRingStyle]} />
               <Animated.View
@@ -403,7 +444,11 @@ const styles = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: RECORD_RED },
   timer: { fontWeight: '700', fontVariant: ['tabular-nums'], minWidth: 40 },
   wave: { flex: 1, minWidth: 40 },
-  hint: { maxWidth: 140 },
+  hint: { maxWidth: 130 },
+  hintRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  trash: { width: 24, alignItems: 'center' },
+  limitTrack: { height: 2, borderRadius: 1, marginTop: 4, overflow: 'hidden' },
+  limitFill: { height: 2, borderRadius: 1 },
   lockedActions: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   lockedButton: { padding: Spacing.one },
   sendPill: {

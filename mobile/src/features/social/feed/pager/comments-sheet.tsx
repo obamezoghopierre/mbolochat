@@ -961,6 +961,10 @@ export function CommentsSheet({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           scrollEventsHandlersHook={scrollEventsHandlersHook}
+          // La liste occupe toute la hauteur restante : la barre de saisie
+          // reste collée en bas de la feuille, comme TikTok, même avec peu
+          // de commentaires.
+          style={styles.listFill}
           contentContainerStyle={styles.list}
           refreshControl={
             <RefreshControl
@@ -1372,7 +1376,8 @@ const styles = StyleSheet.create({
   sortButton: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half },
   close: { padding: Spacing.one },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 120 },
-  list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.four },
+  listFill: { flex: 1 },
+  list: { paddingHorizontal: Spacing.three, paddingBottom: Spacing.four, flexGrow: 1 },
   repliesToggle: { paddingLeft: 42, paddingTop: Spacing.half, paddingBottom: Spacing.one },
   notice: {
     flexDirection: 'row',

@@ -722,7 +722,7 @@ export const fr = {
     commentAttachmentHint: 'Ajoute un texte ou publie directement.',
     voiceHoldA11y: 'Maintenir pour enregistrer un vocal',
     voiceHoldHint: 'Maintiens le micro pour enregistrer, relâche pour envoyer.',
-    voiceSlideToCancel: '‹ Glisse pour annuler',
+    voiceSlideToCancel: 'Glisse pour annuler',
     voiceReleaseToCancel: 'Relâche pour annuler',
     voiceSend: 'Envoyer',
     voiceDiscard: 'Supprimer le vocal',
