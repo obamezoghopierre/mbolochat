@@ -263,9 +263,16 @@ describe('Worker média (e2e)', () => {
         status: 'uploaded',
       })
       .returning();
+    // Échéance explicite dans le passé : le défaut SQL `now()` est en
+    // microsecondes, l'horloge JS du worker en millisecondes. Réclamé dans la
+    // même milliseconde, le job paraissait « pas encore dû » (vu en CI).
     const [job] = await db
       .insert(mediaJobs)
-      .values({ assetId: broken.id, kind: 'image_variants' })
+      .values({
+        assetId: broken.id,
+        kind: 'image_variants',
+        nextAttemptAt: new Date(Date.now() - 1000),
+      })
       .returning();
 
     const first = await worker.runOnce(5);
