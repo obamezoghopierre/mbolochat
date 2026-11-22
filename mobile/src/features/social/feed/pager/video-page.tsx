@@ -47,6 +47,12 @@ export interface FeedPageChrome {
   hideOverlays: boolean;
 }
 
+/**
+ * Au-delà de ce ratio (largeur / hauteur), la vidéo n'est plus « verticale »
+ * et s'affiche entière : 3:4 couvre les formats portrait des téléphones.
+ */
+const REELS_COVER_MAX_ASPECT = 3 / 4;
+
 /** Cadence des `timeUpdate` en lecture normale : la barre n'a pas besoin de plus. */
 const TIME_UPDATE_INTERVAL_S = 0.25;
 /** Cadence pendant un glissement sur la barre : le doigt veut du précis. */
@@ -120,18 +126,14 @@ export function VideoPage({
   const posterUrl = videoPosterUrl(post);
   const insets = useSafeAreaInsets();
   const { width: pageWidth } = useWindowDimensions();
-  // Comportement d'un fil vidéo : une vidéo plus large que l'écran est
-  // affichée entière, avec des barres noires haut/bas (`contain`) ; une
-  // vidéo plus haute est rognée en haut/bas (`cover`) pour remplir l'écran.
+  // Cadrage façon Reels / TikTok : une vidéo verticale (jusqu'à ~3:4) remplit
+  // l'écran (`cover`), rognée légèrement sur les bords — un 9:16 n'a donc
+  // jamais de bandes noires sur un téléphone plus allongé. Une vidéo carrée
+  // ou paysage est montrée entière (`contain`), centrée sur fond noir.
   const media = primaryMedia(post);
   const videoAspect =
     media?.width && media?.height ? media.width / media.height : null;
-  const screenAspect =
-    pageWidth > 0 && chrome.height > 0 ? pageWidth / chrome.height : null;
-  const letterboxed =
-    videoAspect !== null &&
-    screenAspect !== null &&
-    videoAspect >= screenAspect;
+  const letterboxed = videoAspect !== null && videoAspect > REELS_COVER_MAX_ASPECT;
   const viewRef = useRef<VideoView>(null);
   const [userPaused, setUserPaused] = useState(false);
   // Source dont la première image a été décodée : le poster reste affiché page

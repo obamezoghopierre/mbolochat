@@ -13,7 +13,6 @@ import {
   StyleSheet,
   TextInput,
   View,
-  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -49,11 +48,13 @@ const VISIBILITY_LABELS: Record<SocialVisibility, string> = {
 const READY_TIMEOUT_MS = 180_000;
 const READY_POLL_MS = 2_500;
 const CAPTION_MAX = 2200;
+/** Ratios du fil (carte photo) : 4:5 portrait à 1.91:1 paysage. */
+const FEED_MIN_ASPECT = 4 / 5;
+const FEED_MAX_ASPECT = 1.91;
 
 export default function CreatePreviewScreen() {
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
 
   // Consommé une seule fois : un retour sur cet écran sans média repart.
   const [creation] = useState<PendingCreation | null>(() => consumePendingCreation());
@@ -80,6 +81,18 @@ export default function CreatePreviewScreen() {
     [assets],
   );
   const [slideIndex, setSlideIndex] = useState(0);
+  // Zone d'aperçu mesurée : le cadre du fil s'y inscrit sans déborder.
+  const [area, setArea] = useState({ width: 0, height: 0 });
+  const frame = useMemo(() => {
+    const first = slides[0];
+    const raw = first?.width && first?.height ? first.width / first.height : FEED_MIN_ASPECT;
+    const aspect = Math.min(FEED_MAX_ASPECT, Math.max(FEED_MIN_ASPECT, raw));
+    if (area.width <= 0 || area.height <= 0) {
+      return { width: 0, height: 0 };
+    }
+    const height = Math.min(area.height, area.width / aspect);
+    return { width: Math.round(height * aspect), height: Math.round(height) };
+  }, [area, slides]);
 
   const waitUntilReady = useCallback(
     async (assetId: string): Promise<void> => {
@@ -190,46 +203,57 @@ export default function CreatePreviewScreen() {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {/* Aperçu : vidéo unique en boucle, ou carrousel horizontal de photos. */}
-        <View style={styles.mediaArea}>
+        <View
+          style={styles.mediaArea}
+          onLayout={(event) =>
+            setArea({
+              width: event.nativeEvent.layout.width,
+              height: event.nativeEvent.layout.height,
+            })
+          }>
           {singleVideo ? (
             <PreviewVideo uri={singleVideo.uri} filterKey={filter} muted={false} />
-          ) : slides.length > 0 ? (
-            <ScrollView
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              style={styles.flex}
-              contentContainerStyle={{ width: width * slides.length }}
-              onMomentumScrollEnd={(event) =>
-                setSlideIndex(
-                  Math.min(
-                    slides.length - 1,
-                    Math.max(0, Math.round(event.nativeEvent.contentOffset.x / width)),
-                  ),
-                )
-              }>
-              {slides.map((asset, index) => (
-                <View key={asset.uri} style={{ width, flex: 1 }}>
-                  {asset.kind === 'video' && index === slideIndex ? (
-                    <PreviewVideo uri={asset.uri} filterKey={filter} muted />
-                  ) : (
-                    <>
-                      {asset.kind === 'video' ? (
-                        <VideoSlideThumb uri={asset.uri} />
-                      ) : (
-                        <Image
-                          source={{ uri: asset.uri }}
-                          style={StyleSheet.absoluteFill}
-                          contentFit="cover"
-                          accessibilityLabel={asset.name}
-                        />
-                      )}
-                      <MediaFilterOverlay filterKey={filter} />
-                    </>
-                  )}
-                </View>
-              ))}
-            </ScrollView>
+          ) : slides.length > 0 && frame.width > 0 ? (
+            // Cadre du fil : ratio du premier média, borné 4:5 – 1.91:1 comme
+            // Instagram — ce qui est montré ici est ce qui sera publié.
+            <View style={[styles.frame, { width: frame.width, height: frame.height }]}>
+              <ScrollView
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                style={{ width: frame.width, height: frame.height }}
+                contentContainerStyle={{ width: frame.width * slides.length }}
+                onMomentumScrollEnd={(event) =>
+                  setSlideIndex(
+                    Math.min(
+                      slides.length - 1,
+                      Math.max(0, Math.round(event.nativeEvent.contentOffset.x / Math.max(1, frame.width))),
+                    ),
+                  )
+                }>
+                {slides.map((asset, index) => (
+                  <View key={asset.uri} style={{ width: frame.width, height: frame.height }}>
+                    {asset.kind === 'video' && index === slideIndex ? (
+                      <PreviewVideo uri={asset.uri} filterKey={filter} muted />
+                    ) : (
+                      <>
+                        {asset.kind === 'video' ? (
+                          <VideoSlideThumb uri={asset.uri} />
+                        ) : (
+                          <Image
+                            source={{ uri: asset.uri }}
+                            style={StyleSheet.absoluteFill}
+                            contentFit="cover"
+                            accessibilityLabel={asset.name}
+                          />
+                        )}
+                        <MediaFilterOverlay filterKey={filter} />
+                      </>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
           ) : null}
           {slides.length > 1 ? (
             <View style={styles.counterPill} pointerEvents="none">
@@ -375,6 +399,11 @@ const styles = StyleSheet.create({
   mediaArea: {
     flex: 1,
     backgroundColor: MediaSurface.background,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  frame: {
     overflow: 'hidden',
   },
   counterPill: {

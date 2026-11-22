@@ -5,6 +5,7 @@ import { Image } from 'expo-image';
 import { useEffect, useMemo, useState } from 'react';
 import { Animated, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Reanimated, {
   runOnJS,
   useAnimatedStyle,
@@ -30,9 +31,12 @@ import { PostActionBar } from './post-action-bar';
 import { renderTokens } from './rich-text';
 import type { FeedPageChrome } from './video-page';
 
-/** Réserve haute (onglets du fil) et basse (barre d'onglets), comme la carte texte. */
-const TOP_RESERVED = 112;
-const BOTTOM_RESERVED = 128;
+/**
+ * Hauteur de la barre d'onglets du fil sous la zone sûre (onglets + soulignement
+ * + marges) : la réserve haute réelle est `insets.top + TOP_BAR_HEIGHT`. La
+ * réserve basse est la barre d'onglets elle-même (`chrome.barInset`).
+ */
+const TOP_BAR_HEIGHT = 52;
 /** Avatar de l'en-tête, calqué sur une publication Instagram. */
 const HEADER_AVATAR = 36;
 /** Écart vertical entre en-tête, photo et pied. */
@@ -88,6 +92,7 @@ export function ImagePage({
 }) {
   const tones = useTextPostTones();
   const { width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const interactive = !chrome.hideOverlays;
   const author = post.author;
 
@@ -124,17 +129,23 @@ export function ImagePage({
         setter(Math.round(value));
       }
     };
+  const topReserved = insets.top + TOP_BAR_HEIGHT;
+  const bottomReserved = chrome.barInset + Spacing.two;
   const available =
     chrome.height -
-    TOP_RESERVED -
-    BOTTOM_RESERVED -
+    topReserved -
+    bottomReserved -
     (topHeight ?? TOP_ESTIMATE) -
     (interactive ? (footerHeight ?? FOOTER_ESTIMATE) : 0) -
     COLUMN_GAP * 2;
-  const mediaWidth = windowWidth;
+  // Le cadre garde toujours le ratio du média (borné 4:5 – 1.91:1), comme
+  // Instagram : quand la hauteur manque, il rétrécit en largeur et se centre,
+  // au lieu de rogner la photo dans un cadre plus plat.
+  const fullHeight = windowWidth / aspect;
   const mediaHeight = Math.round(
-    Math.max(MIN_MEDIA_HEIGHT, Math.min(mediaWidth / aspect, available)),
+    Math.max(MIN_MEDIA_HEIGHT, Math.min(fullHeight, available)),
   );
+  const mediaWidth = Math.round(Math.min(windowWidth, mediaHeight * aspect));
 
   // Média visible : une vidéo de carrousel réagit au tap (son) et à l'appui
   // long (pause), comme les Reels.
@@ -292,8 +303,8 @@ export function ImagePage({
         {
           height: chrome.height,
           backgroundColor: tones.surface,
-          paddingTop: TOP_RESERVED,
-          paddingBottom: BOTTOM_RESERVED,
+          paddingTop: topReserved,
+          paddingBottom: bottomReserved,
         },
       ]}>
       <View style={styles.column}>
@@ -379,7 +390,10 @@ export function ImagePage({
         {/* Photo pleine largeur au ratio d'origine (borné). */}
         <GestureDetector gesture={gestures}>
           <View
-            style={[styles.media, { width: mediaWidth, height: mediaHeight }]}
+            style={[
+              styles.media,
+              { width: mediaWidth, height: mediaHeight, alignSelf: 'center' },
+            ]}
             accessible
             accessibilityRole="image"
             accessibilityLabel={
