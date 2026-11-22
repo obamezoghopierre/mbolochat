@@ -39,6 +39,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
   following,
   followState,
   showCaption = true,
+  railHasAuthor = false,
   onFollow,
   onOpenProfile,
 }: {
@@ -47,6 +48,11 @@ export const PostInfoBlock = memo(function PostInfoBlock({
   followState: 'idle' | 'pending';
   /** Les posts texte affichent déjà leur contenu dans la carte du pager. */
   showCaption?: boolean;
+  /**
+   * Le rail porte déjà l'avatar et le « + » (TikTok) : ici, seulement le nom,
+   * pour ne pas répéter l'avatar ni le bouton Suivre.
+   */
+  railHasAuthor?: boolean;
   onFollow: () => void;
   onOpenProfile: () => void;
 }) {
@@ -70,12 +76,14 @@ export const PostInfoBlock = memo(function PostInfoBlock({
             post.author.verified ? `, ${fr.social.verifiedAccount}` : ''
           }`}
           style={({ pressed }) => [styles.authorIdentity, pressed && styles.pressed]}>
-          <Avatar
-            name={post.author.displayName}
-            uri={resolveMediaUrl(post.author.avatarUrl)}
-            size={AUTHOR_AVATAR}
-            shape="circle"
-          />
+          {railHasAuthor ? null : (
+            <Avatar
+              name={post.author.displayName}
+              uri={resolveMediaUrl(post.author.avatarUrl)}
+              size={AUTHOR_AVATAR}
+              shape="circle"
+            />
+          )}
           <ThemedText numberOfLines={1} style={[styles.authorName, OnMediaShadow]}>
             {post.author.displayName}
           </ThemedText>
@@ -83,7 +91,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
             <Icon icon={BadgeCheck} size={15} color={VERIFIED} strokeWidth={2.4} />
           ) : null}
         </Pressable>
-        {following ? null : followState === 'pending' ? (
+        {following || railHasAuthor ? null : followState === 'pending' ? (
           <View style={styles.followOutline}>
             <ThemedText style={[feedText.pill, styles.followText]}>{fr.social.requested}</ThemedText>
           </View>

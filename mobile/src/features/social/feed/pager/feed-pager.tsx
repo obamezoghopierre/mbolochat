@@ -532,6 +532,7 @@ export function FeedPager({
                       following={item.viewer.followingAuthor}
                       followState="idle"
                       showCaption={item.format !== 'text'}
+                      railHasAuthor
                       onFollow={() => void actions.follow(item)}
                       onOpenProfile={() => openProfile(item)}
                     />
@@ -606,9 +607,36 @@ export function FeedPager({
               }}
               extraActions={
                 shareTarget
-                  ? moderationActions(shareTarget, actions, user?.id ?? null, () =>
-                      setShareTarget(null),
-                    )
+                  ? [
+                      // Republier / Citer en tête, comme la feuille Partager
+                      // de TikTok (le rail n'a plus de bouton dédié).
+                      {
+                        key: 'repost',
+                        label: shareTarget.viewer.reposted
+                          ? fr.social.unrepostLabel
+                          : fr.social.repostLabel,
+                        icon: Repeat2,
+                        onPress: () => {
+                          const target = shareTarget;
+                          setShareTarget(null);
+                          void Haptics.selectionAsync().catch(() => undefined);
+                          void actions.toggleRepost(target);
+                        },
+                      },
+                      {
+                        key: 'quote',
+                        label: fr.social.quoteLabel,
+                        icon: Quote,
+                        onPress: () => {
+                          const target = shareTarget;
+                          setShareTarget(null);
+                          router.push(`/quote/${target.id}`);
+                        },
+                      },
+                      ...moderationActions(shareTarget, actions, user?.id ?? null, () =>
+                        setShareTarget(null),
+                      ),
+                    ]
                   : []
               }
             />

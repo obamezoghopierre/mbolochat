@@ -756,6 +756,7 @@ export const fr = {
     repostsTitle: 'Republications',
     repostsMore: 'Voir plus',
     shareLabel: 'Partager',
+    shareShort: 'Partager',
     shareMoreOptions: 'Plus d’options',
     shareError: 'Partage impossible.',
     copyLink: 'Copier le lien',

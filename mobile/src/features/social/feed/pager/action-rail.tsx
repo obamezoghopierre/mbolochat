@@ -1,16 +1,18 @@
 import {
   Bookmark,
-  Ellipsis,
   Forward,
   Heart,
   MessageCircle,
-  Repeat2,
+  Plus,
 } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import type { LucideIcon } from 'lucide-react-native';
 import { memo, useCallback } from 'react';
 import { Animated, Pressable, StyleSheet, View } from 'react-native';
 
+import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
+import { resolveMediaUrl } from '@/lib/media-url';
 import { ThemedText } from '@/components/themed-text';
 import { FeedMetrics, FeedSurface, PressScale, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
@@ -49,6 +51,9 @@ export interface FeedActionState {
  * Chaque action est câblée sur une capacité réelle de l'API ; aucune n'est
  * décorative. Les compteurs viennent du serveur (état optimiste côté écran).
  */
+/** Avatar de l'auteur en tête du rail (TikTok). */
+const RAIL_AVATAR = 44;
+
 export const FeedActionRail = memo(function FeedActionRail({
   post,
   state,
@@ -62,6 +67,39 @@ export const FeedActionRail = memo(function FeedActionRail({
 }) {
   return (
     <View style={styles.rail} pointerEvents="box-none">
+      {/* Auteur en tête du rail, comme TikTok : avatar rond et pastille « + »
+          pour s'abonner, qui disparaît une fois abonné. */}
+      <View style={styles.authorSlot}>
+        <Pressable
+          onPress={actions.onOpenProfile}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel={`Voir le profil de ${post.author.displayName}`}
+          style={({ pressed }) => pressed && styles.pressed}>
+          <View style={styles.avatarRing}>
+            <Avatar
+              name={post.author.displayName}
+              uri={resolveMediaUrl(post.author.avatarUrl)}
+              size={RAIL_AVATAR}
+              shape="circle"
+            />
+          </View>
+        </Pressable>
+        {actions.onFollow && !state.following ? (
+          <Pressable
+            onPress={() => {
+              void Haptics.selectionAsync().catch(() => undefined);
+              actions.onFollow?.();
+            }}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={`Suivre ${post.author.displayName}`}
+            style={({ pressed }) => [styles.followBadge, pressed && styles.pressed]}>
+            <Icon icon={Plus} size={14} color="#000000" strokeWidth={3} />
+          </Pressable>
+        ) : null}
+      </View>
+
       <RailAction
         icon={Heart}
         label={compactCount(post.counters.likes)}
@@ -94,30 +132,24 @@ export const FeedActionRail = memo(function FeedActionRail({
         selected={state.saved}
         color={state.saved ? FeedSurface.save : FeedSurface.onMedia}
         fill={state.saved ? FeedSurface.save : 'none'}
-        onPress={actions.onToggleSave}
+        onPress={() => {
+          void Haptics.selectionAsync().catch(() => undefined);
+          actions.onToggleSave();
+        }}
       />
 
-      <RailAction
-        icon={Repeat2}
-        label={compactCount(post.counters.reposts)}
-        accessibilityLabel={state.reposted ? fr.social.repostedLabel : fr.social.repostLabel}
-        selected={state.reposted}
-        color={state.reposted ? FeedSurface.reposted : FeedSurface.onMedia}
-        onPress={actions.onToggleRepost}
-      />
-
+      {/* Partager, comme TikTok : la feuille porte aussi Republier, Copier le
+          lien et les options (signaler, pas intéressé…). */}
       <RailAction
         icon={Forward}
-        label={post.counters.shares ? compactCount(post.counters.shares) : ''}
+        label={
+          post.counters.shares + post.counters.reposts > 0
+            ? compactCount(post.counters.shares + post.counters.reposts)
+            : fr.social.shareShort
+        }
         accessibilityLabel={fr.social.shareLabel}
-        onPress={actions.onShare}
-      />
-
-      {/* ⋯ comme sur les Reels : signaler, masquer… vivent dans la feuille. */}
-      <RailAction
-        icon={Ellipsis}
-        label=""
-        accessibilityLabel={fr.social.shareMoreOptions}
+        selected={state.reposted}
+        color={state.reposted ? FeedSurface.reposted : FeedSurface.onMedia}
         onPress={actions.onShare}
       />
     </View>
@@ -177,6 +209,26 @@ const styles = StyleSheet.create({
   // Le rail participe au flux (pas `position: absolute`) : il partage ainsi la
   // même ancre basse que le bloc infos posé à sa gauche, au lieu de descendre
   // jusqu'au bas de la page.
+  authorSlot: {
+    alignItems: 'center',
+    marginBottom: Spacing.two,
+  },
+  avatarRing: {
+    borderRadius: RAIL_AVATAR,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+  },
+  // Pastille « + » à cheval sur le bas de l'avatar, jaune de la marque.
+  followBadge: {
+    position: 'absolute',
+    bottom: -9,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: FeedSurface.follow,
+  },
   rail: {
     width: FeedMetrics.railWidth,
     alignItems: 'center',
