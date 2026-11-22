@@ -23,6 +23,7 @@ import {
   type NativeSyntheticEvent,
   Image,
   Platform,
+  Pressable,
   RefreshControl,
   Share,
   StyleSheet,
@@ -216,13 +217,39 @@ export function FeedPager({
     return () => setFeedPageIsLight(false);
   }, [feedPageIsLight, playbackActive]);
 
-  const showToast = useCallback((message: string) => {
+  // Bandeau avec action (« Republié · Annuler »), comme Instagram/X.
+  const [undo, setUndo] = useState<{ label: string; run: () => void } | null>(null);
+  const showToast = useCallback((message: string, undoAction?: { label: string; run: () => void }) => {
     setToast(message);
+    setUndo(undoAction ?? null);
     if (toastTimer.current) {
       clearTimeout(toastTimer.current);
     }
-    toastTimer.current = setTimeout(() => setToast(null), TOAST_DURATION);
+    toastTimer.current = setTimeout(
+      () => {
+        setToast(null);
+        setUndo(null);
+      },
+      undoAction ? TOAST_DURATION * 2.5 : TOAST_DURATION,
+    );
   }, []);
+
+  /** Republie avec bandeau « Annuler » : un second appel retire la republication. */
+  const repostWithUndo = useCallback(
+    (target: FeedPost) => {
+      const wasReposted = target.viewer.reposted === true;
+      void Haptics.selectionAsync().catch(() => undefined);
+      void actions.toggleRepost(target);
+      if (!wasReposted) {
+        const after: FeedPost = { ...target, viewer: { ...target.viewer, reposted: true } };
+        showToast(fr.social.repostToast, {
+          label: fr.social.undo,
+          run: () => void actions.toggleRepost(after),
+        });
+      }
+    },
+    [actions, showToast],
+  );
 
   // Fil libre : une carte est « active » (vidéo qui joue, vue comptée) dès
   // qu'elle est à moitié visible ; plein écran : 60 % de la page.
@@ -566,10 +593,27 @@ export function FeedPager({
       ) : null}
 
       {toast ? (
-        <View style={[styles.toast, { bottom: insets.bottom + Spacing.six }]} pointerEvents="none">
+        <View
+          style={[styles.toast, styles.toastRow, { bottom: barInset + Spacing.four }]}
+          pointerEvents={undo ? 'box-none' : 'none'}>
           <ThemedText type="small" style={styles.toastText}>
             {toast}
           </ThemedText>
+          {undo ? (
+            <Pressable
+              onPress={() => {
+                const action = undo;
+                setUndo(null);
+                setToast(null);
+                action.run();
+              }}
+              hitSlop={10}
+              accessibilityRole="button">
+              <ThemedText type="small" style={styles.toastAction}>
+                {undo.label}
+              </ThemedText>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -619,8 +663,7 @@ export function FeedPager({
                         onPress: () => {
                           const target = shareTarget;
                           setShareTarget(null);
-                          void Haptics.selectionAsync().catch(() => undefined);
-                          void actions.toggleRepost(target);
+                          repostWithUndo(target);
                         },
                       },
                       {
@@ -633,10 +676,14 @@ export function FeedPager({
                           router.push(`/quote/${target.id}`);
                         },
                       },
-                      ...moderationActions(shareTarget, actions, user?.id ?? null, () =>
-                        setShareTarget(null),
-                      ),
                     ]
+                  : []
+              }
+              moreActions={
+                shareTarget
+                  ? moderationActions(shareTarget, actions, user?.id ?? null, () =>
+                      setShareTarget(null),
+                    )
                   : []
               }
             />
@@ -660,7 +707,7 @@ export function FeedPager({
       <ActionSheet
         visible={repostTarget !== null}
         title={fr.social.repostSheetTitle}
-        actions={REPOST_ACTIONS(repostTarget, actions, () => setRepostTarget(null))}
+        actions={REPOST_ACTIONS(repostTarget, actions, () => setRepostTarget(null), repostWithUndo)}
         onClose={() => setRepostTarget(null)}
       />
     </View>
@@ -787,6 +834,7 @@ function REPOST_ACTIONS(
   target: FeedPost | null,
   actions: FeedPagerActions,
   close: () => void,
+  repost: (post: FeedPost) => void,
 ): SheetAction[] {
   if (!target) {
     return [];
@@ -800,7 +848,7 @@ function REPOST_ACTIONS(
       selected: reposted,
       onPress: () => {
         close();
-        void actions.toggleRepost(target);
+        repost(target);
       },
     },
     {
@@ -942,5 +990,14 @@ const styles = StyleSheet.create({
   toastText: {
     color: FeedSurface.onMedia,
     fontWeight: '600',
+  },
+  toastRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  toastAction: {
+    color: FeedSurface.follow,
+    fontWeight: '700',
   },
 });

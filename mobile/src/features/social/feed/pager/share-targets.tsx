@@ -40,6 +40,7 @@ export function ShareTargetsRow({
   onShareTo,
   onShowQr,
   extraActions,
+  moreActions,
 }: {
   token: string;
   currentUserId: string | null;
@@ -52,8 +53,13 @@ export function ShareTargetsRow({
   onShareTo?: () => void;
   /** « QR code » : affiche le QR du lien profond de la publication. */
   onShowQr?: () => void;
-  /** Actions de modération ajoutées en fin de rangée (ex- menu ⋯). */
+  /** Actions ajoutées en fin de rangée de partage (Republier, Citer). */
   extraActions?: ShareSheetAction[];
+  /**
+   * Options de la publication (pas intéressé, masquer, modifier, supprimer,
+   * signaler), en liste sous les partages — séparées comme sur Instagram.
+   */
+  moreActions?: ShareSheetAction[];
 }) {
   const theme = useTheme();
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
@@ -74,7 +80,12 @@ export function ShareTargetsRow({
   }, [token]);
 
   const hasActions =
-    !!onCopyLink || !!onShare || !!onShareTo || !!onShowQr || !!extraActions?.length;
+    !!onCopyLink ||
+    !!onShare ||
+    !!onShareTo ||
+    !!onShowQr ||
+    !!extraActions?.length ||
+    !!moreActions?.length;
   if ((!conversations || conversations.length === 0) && !hasActions) {
     return null;
   }
@@ -110,6 +121,15 @@ export function ShareTargetsRow({
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.row}
           keyboardShouldPersistTaps="handled">
+          {extraActions?.map((action) => (
+            <ShareActionTarget
+              key={action.key}
+              icon={action.icon}
+              label={action.label}
+              onPress={action.onPress}
+              danger={action.danger}
+            />
+          ))}
           {onCopyLink ? (
             <ShareActionTarget
               icon={Link2}
@@ -134,18 +154,29 @@ export function ShareTargetsRow({
               onPress={onShareTo}
             />
           ) : null}
-          {extraActions?.map((action) => (
-            <ShareActionTarget
-              key={action.key}
-              icon={action.icon}
-              label={action.label}
-              onPress={action.onPress}
-              danger={action.danger}
-            />
-          ))}
         </ScrollView>
       ) : null}
-      <View style={[styles.divider, { backgroundColor: theme.border }]} />
+      {moreActions && moreActions.length > 0 ? (
+        <View style={[styles.more, { borderTopColor: theme.border }]}>
+          {moreActions.map((action) => {
+            const tint = action.danger ? theme.danger : theme.text;
+            return (
+              <Pressable
+                key={action.key}
+                onPress={action.onPress}
+                accessibilityRole="button"
+                accessibilityLabel={action.label}
+                style={({ pressed }) => [
+                  styles.moreRow,
+                  pressed && { backgroundColor: theme.backgroundSelected },
+                ]}>
+                <Icon icon={action.icon} size={20} color={tint} />
+                <ThemedText style={{ color: tint }}>{action.label}</ThemedText>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -251,5 +282,18 @@ const styles = StyleSheet.create({
   divider: {
     height: StyleSheet.hairlineWidth,
     marginTop: Spacing.two,
+  },
+  more: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: Spacing.two,
+    marginHorizontal: -Spacing.three,
+    paddingTop: Spacing.one,
+  },
+  moreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    minHeight: 48,
+    paddingHorizontal: Spacing.three,
   },
 });
