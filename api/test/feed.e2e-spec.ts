@@ -411,8 +411,16 @@ describe('Feed (e2e)', () => {
       .where(eq(publications.id, post.id));
     expect(row.hotScore).toBeGreaterThan(0);
 
-    // Deuxième passe : plus rien à réécrire.
-    expect(await ranking.recomputeHotScores()).toBe(0);
+    // Deuxième passe : le score de cette publication est stable. On ne compte
+    // pas les lignes réécrites : la base est partagée par toutes les suites, et
+    // le score d'un autre post peut franchir le seuil de dérive entre les deux
+    // passes (test instable en CI).
+    await ranking.recomputeHotScores();
+    const [again] = await db
+      .select({ hotScore: publications.hotScore })
+      .from(publications)
+      .where(eq(publications.id, post.id));
+    expect(again.hotScore).toBe(row.hotScore);
   });
 
   it('garde l’ordre d’une session stable malgré une interaction', async () => {
