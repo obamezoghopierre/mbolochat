@@ -187,12 +187,10 @@ export const FeedSurface = {
   /** Cœur rempli : le jaune de la marque, partout dans le fil. */
   like: '#FFFC00',
   follow: '#FFFC00',
-  /** Enregistrement : même jaune que la réaction et le bouton « Suivre ». */
-  /** Enregistrement : icône remplie en blanc, comme Instagram. */
-  save: '#FFFFFF',
-  /** Republication : même jaune que la réaction, le suivi et l'enregistrement. */
-  /** Republication active : vert de la republication Instagram. */
-  reposted: '#3BD16F',
+  /** Enregistrement actif : même jaune que le cœur et « Suivre ». */
+  save: '#FFFC00',
+  /** Republication active : même jaune que le cœur, le suivi et l'enregistrement. */
+  reposted: '#FFFC00',
   /** Dégradé bas du média : transparent → noir, pour la lisibilité du texte. */
   gradientBottom: ['transparent', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.82)'] as const,
   /** Dégradé haut du média, sous les onglets. */
