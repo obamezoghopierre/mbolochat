@@ -1375,6 +1375,29 @@ export const publicationReactions = pgTable(
   ],
 );
 
+/**
+ * Collection d'enregistrements (« Recettes », « Voyages »…), comme Instagram.
+ * Privée : seul son propriétaire la voit.
+ */
+export const saveCollections = pgTable(
+  'save_collections',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('save_collections_user_idx').on(table.userId),
+    uniqueIndex('save_collections_user_name_idx').on(table.userId, sql`lower(${table.name})`),
+  ],
+);
+
 /** Publication enregistrée par un utilisateur. */
 export const publicationSaves = pgTable(
   'publication_saves',
@@ -1385,11 +1408,16 @@ export const publicationSaves = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    /** Collection choisie, `null` = « Tous les enregistrements » seulement. */
+    collectionId: text('collection_id').references(() => saveCollections.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.publicationId, table.userId] }),
     index('publication_saves_user_idx').on(table.userId),
+    index('publication_saves_collection_idx').on(table.collectionId),
   ],
 );
 

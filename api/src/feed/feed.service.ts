@@ -17,6 +17,7 @@ import {
   publicationReposts,
   publicationSaves,
   publications,
+  saveCollections,
   users,
   type TextPageStyle,
 } from '../db/schema.js';
@@ -301,6 +302,81 @@ export class FeedService {
    * grille de profil. La visibilité du profil est vérifiée avant la liste :
    * compte privé → abonnés acceptés, blocage → refus.
    */
+  /**
+   * Enregistrements du visiteur, du plus récent au plus ancien, comme l'écran
+   * « Enregistrés » d'Instagram. `collectionId` filtre une collection ;
+   * absent = tous les enregistrements. Privé : seul le propriétaire y accède.
+   */
+  async listSaved(
+    viewerId: string,
+    limit: number,
+    cursor?: string,
+    collectionId?: string,
+  ): Promise<FeedPage> {
+    const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
+    if (collectionId) {
+      const [owned] = await this.db
+        .select({ id: saveCollections.id })
+        .from(saveCollections)
+        .where(and(eq(saveCollections.id, collectionId), eq(saveCollections.userId, viewerId)));
+      if (!owned) {
+        throw new NotFoundException('Collection introuvable.');
+      }
+    }
+    const conditions = [
+      eq(publicationSaves.userId, viewerId),
+      ...visiblePublicationConditions(viewerId),
+      ...(collectionId ? [eq(publicationSaves.collectionId, collectionId)] : []),
+    ];
+    if (cursor) {
+      const decoded = decodeFeedTimeCursor(cursor);
+      conditions.push(
+        sql`(${publicationSaves.createdAt}, ${publications.id}) < (${decoded.createdAt.toISOString()}::timestamptz, ${decoded.id})`,
+      );
+    }
+    const rows = await this.db
+      .select({ ...this.feedColumns(viewerId), savedAt: publicationSaves.createdAt })
+      .from(publicationSaves)
+      .innerJoin(publications, eq(publications.id, publicationSaves.publicationId))
+      .innerJoin(users, eq(users.id, publications.authorId))
+      .leftJoin(
+        publicationReactions,
+        and(
+          eq(publicationReactions.publicationId, publications.id),
+          eq(publicationReactions.userId, viewerId),
+        ),
+      )
+      .leftJoin(
+        publicationReposts,
+        and(
+          eq(publicationReposts.publicationId, publications.id),
+          eq(publicationReposts.userId, viewerId),
+        ),
+      )
+      .leftJoin(
+        quotedPublications,
+        and(
+          eq(quotedPublications.id, publications.quotedPublicationId),
+          isNull(quotedPublications.deletedAt),
+        ),
+      )
+      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
+      .where(and(...conditions))
+      .orderBy(desc(publicationSaves.createdAt), desc(publications.id))
+      .limit(bounded + 1);
+
+    const page = rows.slice(0, bounded);
+    const last = page.at(-1);
+    const items = await this.toItems(page, viewerId);
+    return {
+      items,
+      nextCursor:
+        rows.length > bounded && last?.savedAt
+          ? encodeFeedTimeCursor(last.savedAt, last.id)
+          : null,
+    };
+  }
+
   async listReposts(
     userId: string,
     viewerId: string,
