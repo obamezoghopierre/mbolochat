@@ -1,4 +1,4 @@
-import { AtSign, Check, Link2, Lock, Mail, MessageCircle as WhatsAppIcon, MessageSquare, QrCode, Send, Twitter, UserPlus } from 'lucide-react-native';
+import { AtSign, Check, Link2, Lock, Mail, MessageCircle as WhatsAppIcon, MessageSquare, QrCode, Send, UserPlus, X as XIcon } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
@@ -24,7 +24,7 @@ const SOCIAL_NETWORKS: { key: SocialNetwork; label: string; icon: typeof Link2 }
   { key: 'whatsapp', label: 'WhatsApp', icon: WhatsAppIcon },
   { key: 'telegram', label: 'Telegram', icon: Send },
   { key: 'messenger', label: 'Messenger', icon: WhatsAppIcon },
-  { key: 'x', label: 'X', icon: Twitter },
+  { key: 'x', label: 'X', icon: XIcon },
   { key: 'threads', label: 'Threads', icon: AtSign },
   { key: 'sms', label: 'SMS', icon: MessageSquare },
   { key: 'email', label: 'E-mail', icon: Mail },
