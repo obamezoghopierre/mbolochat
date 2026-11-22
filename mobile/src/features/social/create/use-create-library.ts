@@ -15,11 +15,12 @@ import {
  * plafonds que la galerie système).
  */
 
-export type CreateLibraryKind = 'photo' | 'video';
+export type CreateLibraryKind = 'all' | 'photo' | 'video';
 
 const PAGE_SIZE = 60;
 
 const MEDIA_TYPES: Record<CreateLibraryKind, MediaLibrary.MediaTypeValue[]> = {
+  all: ['photo', 'video', 'pairedVideo'],
   photo: ['photo'],
   video: ['video', 'pairedVideo'],
 };

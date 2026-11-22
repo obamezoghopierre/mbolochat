@@ -404,22 +404,17 @@ export class PublicationsService {
       if (ordered.length === 0 && effectiveCaption.length === 0) {
         throw new BadRequestException('La légende ne peut pas être vide sans média.');
       }
-      const kinds = new Set(ordered.map((asset) => asset.kind));
-      if (kinds.size > 1) {
-        throw new BadRequestException('Une publication ne mélange pas images et vidéos.');
-      }
-      const mediaKind = ordered[0]?.kind;
-      if (mediaKind === 'video' && ordered.length > 1) {
-        throw new BadRequestException('Une seule vidéo par publication.');
-      }
-      if (mediaKind === 'audio') {
+      // Carrousel façon Instagram : jusqu'à 10 photos et vidéos, mélangées
+      // dans l'ordre choisi. Le son seul n'est jamais un média de publication.
+      if (ordered.some((asset) => asset.kind === 'audio')) {
         throw new BadRequestException('Le son seul n’est pas une publication.');
       }
+      const mediaKind = ordered[0]?.kind;
       const format: 'text' | 'image' | 'carousel' | 'video' =
-        mediaKind === 'video'
-          ? 'video'
-          : ordered.length > 1
-            ? 'carousel'
+        ordered.length > 1
+          ? 'carousel'
+          : mediaKind === 'video'
+            ? 'video'
             : ordered.length === 1
               ? 'image'
               : 'text';

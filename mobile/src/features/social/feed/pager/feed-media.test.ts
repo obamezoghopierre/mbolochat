@@ -65,6 +65,19 @@ describe('isVideoPost', () => {
     expect(isVideoPost(post({ media: [media({ kind: 'image' })] }))).toBe(false);
     expect(isVideoPost(post())).toBe(false);
   });
+
+  it('affiche un carrousel mixte en carte, même s’il commence par une vidéo', () => {
+    expect(
+      isVideoPost(
+        post({ media: [media({ kind: 'video' }), media({ assetId: 'b', kind: 'image' })] }),
+      ),
+    ).toBe(false);
+    expect(
+      isVideoPost(
+        post({ media: [media({ kind: 'video' }), media({ assetId: 'b', kind: 'video' })] }),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe('extraMediaCount', () => {

@@ -36,11 +36,14 @@ import {
 /**
  * Sélecteur « Créer » façon Instagram : le bouton + ouvre directement la
  * photothèque (grille « Récentes »), avec un sélecteur de type en bas —
- * Photo (multi-sélection, carrousel), Vidéo (une seule) ou Texte (qui mène au
- * compositeur). La caméra reste accessible en haut à droite.
+ * Tout ou Photo (multi-sélection, carrousel), Vidéo (une seule) ou Texte (qui mène au
+ * compositeur). « Tout » mélange photos et vidéos dans un carrousel (10 max).
+ * La caméra reste accessible en haut à droite.
  */
 
-type Segment = 'photo' | 'video';
+// « Tout » : photos et vidéos mélangées dans un même carrousel, comme
+// Instagram. « Vidéo » reste une vidéo seule (publiée façon Reels).
+type Segment = 'all' | 'photo' | 'video';
 
 const THUMB_CACHE_LIMIT = 300;
 const thumbCache = new Map<string, string>();
@@ -96,7 +99,7 @@ function formatDuration(seconds: number): string {
 export default function CreatePickerScreen() {
   const { token } = useAuth();
   const insets = useSafeAreaInsets();
-  const [segment, setSegment] = useState<Segment>('photo');
+  const [segment, setSegment] = useState<Segment>('all');
   const [selected, setSelected] = useState<string[]>([]);
   const [publishing, setPublishing] = useState(false);
   const requestedRef = useRef(false);
@@ -190,13 +193,8 @@ export default function CreatePickerScreen() {
       const files = result.files.filter(
         (asset) => asset.kind === 'image' || asset.kind === 'video',
       );
-      const hasVideo = files.some((asset) => asset.kind === 'video');
       if (files.length === 0) {
         Alert.alert(fr.social.createMediaErrorTitle, fr.social.createMediaErrorBody);
-        return;
-      }
-      if (hasVideo && files.length > 1) {
-        Alert.alert(fr.social.createMediaErrorTitle, fr.social.createMixedMedia);
         return;
       }
       setPendingCreation({ assets: files, filter: null });
@@ -244,7 +242,7 @@ export default function CreatePickerScreen() {
               <View style={styles.selectedRing} />
               <View style={styles.orderBadge}>
                 <ThemedText type="micro" style={styles.orderText}>
-                  {segment === 'photo' && selected.length > 1 ? order + 1 : ''}
+                  {segment !== 'video' && selected.length > 1 ? order + 1 : ''}
                 </ThemedText>
               </View>
             </>
@@ -295,6 +293,7 @@ export default function CreatePickerScreen() {
         <View style={styles.segment} accessibilityRole="tablist">
           {(
             [
+              { id: 'all', label: fr.social.createAll },
               { id: 'photo', label: fr.social.createPhoto },
               { id: 'video', label: fr.social.createVideo },
             ] as const

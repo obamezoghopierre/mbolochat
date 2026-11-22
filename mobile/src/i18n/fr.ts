@@ -834,6 +834,7 @@ export const fr = {
     createHubTitle: 'Créer',
     createVideo: 'Vidéo',
     createVideoHint: 'Filme avec la caméra',
+    createAll: 'Tout',
     createPhoto: 'Photo',
     createPhotoHint: 'Capture une photo',
     createGallery: 'Galerie',

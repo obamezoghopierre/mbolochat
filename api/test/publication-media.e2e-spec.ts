@@ -216,6 +216,36 @@ describe('Publications avec médias (e2e)', () => {
     expect(created.body.media.map((item: { position: number }) => item.position)).toEqual([0, 1]);
   });
 
+  it('publie un carrousel mixte photos et vidéos, dans l’ordre choisi', async () => {
+    const author = await register('Mixte');
+    const photo = await readyAsset(author, { kind: 'image', mime: 'image/png', bytes: await png() });
+    const clip = await readyAsset(author, { kind: 'video', mime: 'video/mp4', bytes: await mp4() });
+    const secondClip = await readyAsset(author, {
+      kind: 'video',
+      mime: 'video/mp4',
+      bytes: await mp4(),
+    });
+
+    const created = await publish(author, {
+      assetIds: [clip, photo, secondClip],
+      caption: 'Vidéo, photo, vidéo',
+    }).expect(201);
+    // Plusieurs médias = carrousel, même quand le premier est une vidéo.
+    expect(created.body.format).toBe('carousel');
+    expect(
+      created.body.media.map((item: { assetId: string; kind: string }) => [item.assetId, item.kind]),
+    ).toEqual([
+      [clip, 'video'],
+      [photo, 'image'],
+      [secondClip, 'video'],
+    ]);
+    // Chaque vidéo garde son poster et son MP4.
+    for (const item of created.body.media.filter((entry: { kind: string }) => entry.kind === 'video')) {
+      expect(item.url).toContain('.mp4');
+      expect(item.posterUrl).toContain('posters');
+    }
+  });
+
   it('publie une vidéo avec poster et MP4 transcodé', async () => {
     const author = await register('Filmeur');
     const assetId = await readyAsset(author, {
@@ -334,12 +364,6 @@ describe('Publications avec médias (e2e)', () => {
       mime: 'image/png',
       bytes: await png(),
     });
-    const video = await readyAsset(author, {
-      kind: 'video',
-      mime: 'video/mp4',
-      bytes: await mp4(),
-    });
-
     // Média appartenant à un autre compte.
     await publish(other, { assetIds: [image], caption: 'Vol' }).expect(400);
     // Média encore en attente de traitement.
@@ -349,8 +373,6 @@ describe('Publications avec médias (e2e)', () => {
       .send({ kind: 'image', mime: 'image/png', sizeBytes: 10 })
       .expect(201);
     await publish(author, { assetIds: [pendingTicket.body.id], caption: 'Pas prêt' }).expect(400);
-    // Mélange image + vidéo.
-    await publish(author, { assetIds: [image, video], caption: 'Mixte' }).expect(400);
     // Même média deux fois.
     await publish(author, { assetIds: [image, image], caption: 'Double' }).expect(400);
     // Ni texte ni média.

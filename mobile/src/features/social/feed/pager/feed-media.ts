@@ -10,10 +10,14 @@ export function primaryMedia(post: FeedPost): PublicationMedia | null {
   return (post.media ?? []).find((media) => Boolean(media.url)) ?? null;
 }
 
-/** La publication se lit-elle en plein écran vidéo ? */
+/**
+ * La publication se lit-elle en plein écran vidéo (Reels) ? Seulement une
+ * vidéo seule : un carrousel, même s'il commence par une vidéo, s'affiche en
+ * carte avec les autres médias.
+ */
 export function isVideoPost(post: FeedPost): boolean {
-  const media = primaryMedia(post);
-  return media?.kind === 'video';
+  const playable = (post.media ?? []).filter((media) => Boolean(media.url));
+  return playable.length === 1 && playable[0].kind === 'video';
 }
 
 /** Nombre de médias supplémentaires, affiché en pastille si > 0. */

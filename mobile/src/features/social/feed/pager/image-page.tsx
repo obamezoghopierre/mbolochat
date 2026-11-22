@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
-import { BadgeCheck, Ellipsis, MapPin } from 'lucide-react-native';
+import { BadgeCheck, Ellipsis, MapPin, Volume2, VolumeX } from 'lucide-react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { Image } from 'expo-image';
 import { useEffect, useMemo, useState } from 'react';
 import { Animated, Pressable, StyleSheet, useWindowDimensions, View } from 'react-native';
@@ -72,6 +73,8 @@ export function ImagePage({
   state,
   likeScale,
   onDoubleTapLike,
+  muted,
+  onToggleMuted,
 }: {
   post: FeedPost;
   chrome: FeedPageChrome;
@@ -79,6 +82,9 @@ export function ImagePage({
   state: FeedActionState;
   likeScale?: Animated.Value;
   onDoubleTapLike: (point: { x: number; y: number } | null) => void;
+  /** Son global du fil, partagé avec les Reels. */
+  muted: boolean;
+  onToggleMuted: () => void;
 }) {
   const tones = useTextPostTones();
   const { width: windowWidth } = useWindowDimensions();
@@ -89,8 +95,12 @@ export function ImagePage({
   const media = useMemo(
     () =>
       (post.media ?? [])
-        .filter((entry) => entry.kind === 'image')
-        .map((entry) => ({ ...entry, url: resolveMediaUrl(entry.url) }))
+        .filter((entry) => entry.kind === 'image' || entry.kind === 'video')
+        .map((entry) => ({
+          ...entry,
+          url: resolveMediaUrl(entry.url),
+          posterUrl: resolveMediaUrl(entry.posterUrl),
+        }))
         .filter((entry) => Boolean(entry.url)),
     [post.media],
   );
@@ -125,6 +135,16 @@ export function ImagePage({
   const mediaHeight = Math.round(
     Math.max(MIN_MEDIA_HEIGHT, Math.min(mediaWidth / aspect, available)),
   );
+
+  // Média visible : une vidéo de carrousel réagit au tap (son) et à l'appui
+  // long (pause), comme les Reels.
+  const currentIsVideo = media[index]?.kind === 'video';
+  const [held, setHeld] = useState(false);
+  const onToggleSound = () => {
+    if (currentIsVideo) {
+      onToggleMuted();
+    }
+  };
 
   // --- Carrousel : glisser horizontal, comme la carte texte multi-pages ---
   const lastIndex = Math.max(0, total - 1);
@@ -192,7 +212,29 @@ export function ImagePage({
       }
     });
 
-  const gestures = Gesture.Simultaneous(pinch, Gesture.Race(doubleTap, pan));
+  // Vidéo du carrousel : un tap coupe ou remet le son, l'appui long met en
+  // pause, comme les Reels. Sur une photo, le tap simple ne fait rien.
+  const singleTap = Gesture.Tap()
+    .maxDuration(250)
+    .onEnd((_event, success) => {
+      if (success) {
+        runOnJS(onToggleSound)();
+      }
+    });
+  const hold = Gesture.LongPress()
+    .minDuration(300)
+    .onStart(() => {
+      runOnJS(setHeld)(true);
+    })
+    .onFinalize(() => {
+      runOnJS(setHeld)(false);
+    });
+
+  const gestures = Gesture.Simultaneous(
+    pinch,
+    hold,
+    Gesture.Race(pan, Gesture.Exclusive(doubleTap, singleTap)),
+  );
 
   const rowStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: translateX.value }],
@@ -344,17 +386,37 @@ export function ImagePage({
               (current?.altText ?? caption) ||
               (total > 1 ? fr.social.photoOf(index + 1, total) : fr.social.photo)
             }
-            accessibilityHint={fr.social.photoHint}>
+            accessibilityHint={currentIsVideo ? fr.social.reelGestureA11y : fr.social.photoHint}>
             <Reanimated.View style={[StyleSheet.absoluteFill, zoomStyle]}>
               <Reanimated.View style={[styles.row, { width: mediaWidth * Math.max(1, total) }, rowStyle]}>
-                {media.map((entry) => (
+                {media.map((entry, slide) => (
                   <View key={entry.assetId} style={{ width: mediaWidth, height: mediaHeight }}>
-                    <Image
-                      source={{ uri: entry.url! }}
-                      style={StyleSheet.absoluteFill}
-                      contentFit="cover"
-                      transition={120}
-                    />
+                    {entry.kind === 'video' ? (
+                      // Une seule vidéo vivante dans l'app : la page visible du
+                      // carrousel, sur la page active du fil. Les autres
+                      // montrent leur poster.
+                      chrome.isActive && slide === index && !chrome.hideOverlays ? (
+                        <CarouselVideo
+                          uri={entry.url!}
+                          posterUrl={entry.posterUrl}
+                          muted={muted}
+                          paused={held}
+                        />
+                      ) : entry.posterUrl ? (
+                        <Image
+                          source={{ uri: entry.posterUrl }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="cover"
+                        />
+                      ) : null
+                    ) : (
+                      <Image
+                        source={{ uri: entry.url! }}
+                        style={StyleSheet.absoluteFill}
+                        contentFit="cover"
+                        transition={120}
+                      />
+                    )}
                     {/* Filtre choisi à la publication : calques par-dessus la photo. */}
                     <MediaFilterOverlay filterKey={post.mediaFilter} />
                   </View>
@@ -371,6 +433,18 @@ export function ImagePage({
                   {fr.social.textPageIndicator(index + 1, total)}
                 </ThemedText>
               </Animated.View>
+            ) : null}
+
+            {currentIsVideo ? (
+              <Pressable
+                onPress={onToggleMuted}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityState={{ selected: muted }}
+                accessibilityLabel={muted ? fr.social.soundOn : fr.social.soundOff}
+                style={({ pressed }) => [styles.soundButton, pressed && styles.pressed]}>
+                <Icon icon={muted ? VolumeX : Volume2} size={14} color={FeedSurface.onMedia} />
+              </Pressable>
             ) : null}
 
             <HeartBurstOverlay burstKey={chrome.burstKey} point={chrome.burstPoint} />
@@ -461,7 +535,70 @@ export function ImagePage({
   );
 }
 
+/**
+ * Vidéo d'un carrousel : lecture en boucle, son selon le fil, poster tant que
+ * la première image n'est pas décodée. Montée seulement pour la page visible
+ * du carrousel sur la page active du fil — une seule `VideoView` vivante dans
+ * l'app, comme `VideoPage` (conflit natif d'expo-video sinon).
+ */
+function CarouselVideo({
+  uri,
+  posterUrl,
+  muted,
+  paused,
+}: {
+  uri: string;
+  posterUrl: string | null;
+  muted: boolean;
+  paused: boolean;
+}) {
+  const player = useVideoPlayer({ uri, useCaching: true }, (instance) => {
+    instance.loop = true;
+    instance.muted = muted;
+    instance.play();
+  });
+  const [firstFrame, setFirstFrame] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
+    player.muted = muted;
+  }, [muted, player]);
+  useEffect(() => {
+    if (paused) {
+      player.pause();
+    } else {
+      player.play();
+    }
+  }, [paused, player]);
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <VideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="cover"
+        nativeControls={false}
+        surfaceType="textureView"
+        pointerEvents="none"
+        onFirstFrameRender={() => setFirstFrame(true)}
+      />
+      {!firstFrame && posterUrl ? (
+        <Image source={{ uri: posterUrl }} style={StyleSheet.absoluteFill} contentFit="cover" />
+      ) : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  soundButton: {
+    position: 'absolute',
+    right: Spacing.two,
+    bottom: Spacing.two,
+    width: 28,
+    height: 28,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
   page: {
     overflow: 'hidden',
     justifyContent: 'center',

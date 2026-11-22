@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { router, Stack } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import * as VideoThumbnails from 'expo-video-thumbnails';
 import { ArrowLeft } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -72,7 +73,13 @@ export default function CreatePreviewScreen() {
   }, [creation]);
 
   const singleVideo = assets.length === 1 && assets[0].kind === 'video' ? assets[0] : null;
-  const images = assets.filter((asset) => asset.kind === 'image');
+  // Carrousel (photos et vidéos mélangées, dans l'ordre choisi). Une seule
+  // vidéo lue à la fois : celle de la page visible, les autres en vignette.
+  const slides = useMemo(
+    () => assets.filter((asset) => asset.kind === 'image' || asset.kind === 'video'),
+    [assets],
+  );
+  const [slideIndex, setSlideIndex] = useState(0);
 
   const waitUntilReady = useCallback(
     async (assetId: string): Promise<void> => {
@@ -184,31 +191,49 @@ export default function CreatePreviewScreen() {
         {/* Aperçu : vidéo unique en boucle, ou carrousel horizontal de photos. */}
         <View style={styles.mediaArea}>
           {singleVideo ? (
-            <PreviewVideo uri={singleVideo.uri} filterKey={filter} />
-          ) : images.length > 0 ? (
+            <PreviewVideo uri={singleVideo.uri} filterKey={filter} muted={false} />
+          ) : slides.length > 0 ? (
             <ScrollView
               horizontal
               pagingEnabled
               showsHorizontalScrollIndicator={false}
               style={styles.flex}
-              contentContainerStyle={{ width: width * images.length }}>
-              {images.map((asset) => (
+              contentContainerStyle={{ width: width * slides.length }}
+              onMomentumScrollEnd={(event) =>
+                setSlideIndex(
+                  Math.min(
+                    slides.length - 1,
+                    Math.max(0, Math.round(event.nativeEvent.contentOffset.x / width)),
+                  ),
+                )
+              }>
+              {slides.map((asset, index) => (
                 <View key={asset.uri} style={{ width, flex: 1 }}>
-                  <Image
-                    source={{ uri: asset.uri }}
-                    style={StyleSheet.absoluteFill}
-                    contentFit="cover"
-                    accessibilityLabel={asset.name}
-                  />
-                  <MediaFilterOverlay filterKey={filter} />
+                  {asset.kind === 'video' && index === slideIndex ? (
+                    <PreviewVideo uri={asset.uri} filterKey={filter} muted />
+                  ) : (
+                    <>
+                      {asset.kind === 'video' ? (
+                        <VideoSlideThumb uri={asset.uri} />
+                      ) : (
+                        <Image
+                          source={{ uri: asset.uri }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="cover"
+                          accessibilityLabel={asset.name}
+                        />
+                      )}
+                      <MediaFilterOverlay filterKey={filter} />
+                    </>
+                  )}
                 </View>
               ))}
             </ScrollView>
           ) : null}
-          {images.length > 1 ? (
+          {slides.length > 1 ? (
             <View style={styles.counterPill} pointerEvents="none">
               <ThemedText style={styles.counterText}>
-                {fr.social.createPagesCount(images.length)}
+                {fr.social.textPageIndicator(slideIndex + 1, slides.length)}
               </ThemedText>
             </View>
           ) : null}
@@ -279,11 +304,45 @@ export default function CreatePreviewScreen() {
   );
 }
 
-/** Lecteur vidéo local pour l'aperçu : boucle, son activé, filtre par-dessus. */
-function PreviewVideo({ uri, filterKey }: { uri: string; filterKey: string | null }) {
+/** Vignette d'une vidéo du carrousel qui n'est pas la page visible. */
+function VideoSlideThumb({ uri }: { uri: string }) {
+  const [thumb, setThumb] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void VideoThumbnails.getThumbnailAsync(uri, { time: 0 })
+      .then((result) => {
+        if (!cancelled) {
+          setThumb(result.uri);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+  return thumb ? (
+    <Image source={{ uri: thumb }} style={StyleSheet.absoluteFill} contentFit="cover" />
+  ) : (
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: MediaSurface.background }]} />
+  );
+}
+
+/**
+ * Lecteur vidéo local pour l'aperçu : boucle, filtre par-dessus. Sans son dans
+ * un carrousel (comme le fil), avec le son pour une vidéo seule.
+ */
+function PreviewVideo({
+  uri,
+  filterKey,
+  muted,
+}: {
+  uri: string;
+  filterKey: string | null;
+  muted: boolean;
+}) {
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
-    instance.muted = false;
+    instance.muted = muted;
     instance.play();
   });
   return (

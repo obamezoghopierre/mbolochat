@@ -454,6 +454,8 @@ export function FeedPager({
                   state={railState}
                   likeScale={likeScale}
                   onDoubleTapLike={doubleTap}
+                  muted={muted}
+                  onToggleMuted={() => setMuted((value) => !value)}
                 />
               ) : (
                 <TextPage
