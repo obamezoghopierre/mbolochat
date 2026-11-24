@@ -54,7 +54,7 @@ export async function loadProfileConnections(
     }
 
     if (!response.ok) {
-      let message = fr.social.followError;
+      let message: string = fr.social.followError;
       try {
         const body = (await response.json()) as { message?: string | string[] };
         if (body.message) {
