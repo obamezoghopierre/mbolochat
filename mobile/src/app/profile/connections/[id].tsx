@@ -13,7 +13,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Radii, Spacing } from '@/constants/theme';
+import { Radii, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fr } from '@/i18n/fr';
 import { ApiError, api } from '@/lib/api';
@@ -135,7 +135,7 @@ export default function ProfileConnectionsScreen() {
           ) : (
             <ThemedText
               type="small"
-              style={{ color: status === 'none' ? theme.onAccent : theme.text, fontWeight: '600' }}>
+              style={{ color: status === 'none' ? theme.onAccent : theme.text }}>
               {label}
             </ThemedText>
           )}
@@ -208,7 +208,7 @@ const styles = StyleSheet.create({
   },
   identity: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: Spacing.three },
   copy: { flex: 1, minWidth: 0, gap: Spacing.half },
-  name: { fontWeight: '600' },
+  name: { ...Type.body },
   followButton: {
     minHeight: Spacing.five,
     minWidth: Spacing.six,
