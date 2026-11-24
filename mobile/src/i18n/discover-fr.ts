@@ -1,4 +1,9 @@
-import type { DiscoverSectionKey } from '@/features/social/discover/discover-api';
+type DiscoverSectionKey =
+  | 'nearbyFriends'
+  | 'popular'
+  | 'successful'
+  | 'trendingHashtags'
+  | 'suggestedAccounts';
 
 export const discoverFr = {
   title: 'Découvrir',
@@ -27,9 +32,12 @@ export const discoverFr = {
   accountVerified: 'Compte vérifié',
   follow: 'Suivre',
   following: 'Abonné',
+  followLoading: 'Suivi…',
   followError: 'Impossible de suivre ce compte. Réessaie.',
   publicationStats: (likes: string, comments: string) => `${likes} J’aime · ${comments} commentaires`,
   uses: (count: string) => `${count} publications`,
+  followers: (count: string) => `${count} abonnés`,
+  openHashtag: 'Ouvrir les publications du hashtag',
   sectionTitles: {
     nearbyFriends: 'Autour de toi',
     popular: 'Populaire sur MboloChat',
