@@ -117,7 +117,6 @@ const PAGE_SPRING = { damping: 30, stiffness: 240, mass: 0.9 } as const;
 
 /** Entrée de carte : fade + léger remontage, discrète sous l'animation de page. */
 const ENTER_DURATION_MS = 220;
-
 /**
  * Page d'une publication sans média, en carte façon Instagram : en-tête
  * auteur (avatar, nom, date, suivi), contenu texte, puis barre d'actions
@@ -169,6 +168,9 @@ export function TextPage({
   // du compositeur. Absente = tailles fixes historiques (24 / 18).
   const manualSize = typeof post.textSize === 'number' ? post.textSize : null;
   const [readerOpen, setReaderOpen] = useState(false);
+  // Page affichée, partagée entre la carte et le lecteur : on rouvre le
+  // lecteur sur la page en cours et la carte reprend où le lecteur s'arrête.
+  const [pageIndex, setPageIndex] = useState(0);
   const { width: windowWidth } = useWindowDimensions();
 
   // Entrée de carte : un fondu léger, seulement la première fois qu'un post
@@ -495,6 +497,8 @@ export function TextPage({
             baseSize={manualSize}
             onPress={handleCardPress}
             interactive={linksEnabled}
+            index={pageIndex}
+            onIndexChange={setPageIndex}
           />
         ) : (
           <Pressable
@@ -665,6 +669,10 @@ export function TextPage({
         body={readerBody}
         textStyle={textStyle}
         textSize={manualSize}
+        pages={isMultiPage ? pages : undefined}
+        initialPage={pageIndex}
+        onPageChange={setPageIndex}
+        interactive={interactive}
         backgroundColor={paletteSet[scheme === 'light' ? 'light' : 'dark'][2]}
         onClose={closeReader}
       />
@@ -691,6 +699,8 @@ function TextPages({
   baseSize = null,
   onPress,
   interactive = false,
+  index,
+  onIndexChange,
 }: {
   pages: string[];
   /** Style propre à chaque page, `null` = défaut du post. */
@@ -709,8 +719,10 @@ function TextPages({
   onPress: () => void;
   /** Hashtags et mentions cliquables (désactivé sous les overlays masqués). */
   interactive?: boolean;
+  /** Page affichée (contrôlée par la carte, partagée avec le lecteur). */
+  index: number;
+  onIndexChange: (index: number) => void;
 }) {
-  const [index, setIndex] = useState(0);
   const tones = useTextPostTones();
   // Une typographie par page : chaque carte peut avoir sa propre police,
   // son alignement et sa taille ; les valeurs absentes retombent sur le
@@ -783,7 +795,7 @@ function TextPages({
         velocity: event.velocityX,
       });
       if (target !== index) {
-        runOnJS(setIndex)(target);
+        runOnJS(onIndexChange)(target);
       }
     });
 
@@ -801,7 +813,7 @@ function TextPages({
     // compilateur la prend pour une valeur React, d'où la règle levée.
     // eslint-disable-next-line react-hooks/immutability
     translateX.value = withSpring(-target * width, PAGE_SPRING);
-    setIndex(target);
+    onIndexChange(target);
   };
 
   // La largeur est mesurée après le premier rendu : on recale la rangée sur
@@ -900,6 +912,7 @@ function TextPages({
       </View>
       {/* Points seuls sous le carrousel (plus de chevron) ; pour le lecteur
           d'écran, c'est un contrôle « ajustable » qui change de page. */}
+
       <View
         style={styles.pageDots}
         accessible
@@ -912,6 +925,8 @@ function TextPages({
         {pages.map((_, dotIndex) => (
           <View
             key={dotIndex}
+            accessible
+            accessibilityLabel={fr.social.textPageDotLabel(dotIndex + 1, pages.length)}
             style={[
               styles.pageDot,
               { backgroundColor: tones.textFaint },
@@ -931,7 +946,7 @@ const styles = StyleSheet.create({
     right: Spacing.two,
     borderRadius: Radii.full,
     paddingHorizontal: Spacing.two,
-    paddingVertical: 2,
+    paddingVertical: Spacing.half,
   },
   pageIndicatorText: { fontWeight: '700', fontVariant: ['tabular-nums'] },
   page: {
@@ -1124,12 +1139,12 @@ const styles = StyleSheet.create({
   pageDots: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: Spacing.one,
+    gap: Spacing.pageDot,
   },
   pageDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: Spacing.pageDot,
+    height: Spacing.pageDot,
+    borderRadius: Radii.dot,
     backgroundColor: FeedSurface.onMediaFaint,
     opacity: 0.5,
   },

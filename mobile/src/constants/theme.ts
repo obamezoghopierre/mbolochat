@@ -90,6 +90,10 @@ export const Spacing = {
   four: 24,
   five: 32,
   six: 64,
+  /** Taille des points de pagination d'un post texte multi-cartes. */
+  pageDot: 6,
+  /** Toucher des boutons «‹›» du lecteur de posts texte multi-cartes. */
+  pageNav: 44,
 } as const;
 
 /** Marges latérales d'écran. */
@@ -108,6 +112,8 @@ export const Radii = {
   lg: 16,
   sheet: 16,
   full: 999,
+  /** Rayon minuscule des points de pagination d'un post texte multi-cartes. */
+  dot: 3,
 } as const;
 
 /** Échelle typographique unique. */
@@ -120,6 +126,8 @@ export const Type = {
   sender: { fontSize: 12, lineHeight: 16 },
   micro: { fontSize: 11, lineHeight: 15 },
   meta: { fontSize: 10, lineHeight: 12 },
+  /** En-tête des boutons «‹›» du lecteur de posts texte multi-cartes. */
+  pageNavLabel: { fontSize: 32, lineHeight: 36, fontWeight: '600' },
 } satisfies Record<string, TextStyle>;
 
 /** Durées courtes : jamais d'animation linéaire. */

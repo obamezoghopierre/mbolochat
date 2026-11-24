@@ -1082,6 +1082,10 @@ export const fr = {
     soundOn: 'Activer le son',
     soundOff: 'Couper le son',
     textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
+    textPagePrevious: 'Page précédente',
+    textPageNext: 'Page suivante',
+    /** Libellé individuel d'un point de pagination (lecteur et carte). */
+    textPageDotLabel: (index: number, total: number) => `Point ${index} sur ${total}`,
     notificationsTitle: 'Aucune notification',
     notificationsBody:
       'Les réactions, les commentaires et les nouveaux abonnés apparaîtront ici.',
