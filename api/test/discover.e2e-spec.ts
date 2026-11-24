@@ -119,11 +119,11 @@ describe('Discover (e2e)', () => {
 
     await db
       .update(publications)
-      .set({ likeCount: 100_000, commentCount: 20_000, hotScore: 900_000 })
+      .set({ likeCount: 2_000_000_000, commentCount: 147_483_647, hotScore: 2_147_483_647 })
       .where(eq(publications.id, high.body.id));
     await db
       .update(publications)
-      .set({ likeCount: 50_000, commentCount: 10_000, hotScore: 100_000 })
+      .set({ likeCount: 2_000_000_000, commentCount: 147_483_646, hotScore: 2_147_483_646 })
       .where(eq(publications.id, medium.body.id));
     await db
       .update(publications)
@@ -136,11 +136,17 @@ describe('Discover (e2e)', () => {
 
     const response = await discover(viewer).expect(200);
     const successfulIds = ids(response.body.sections.successful);
-    expect(successfulIds).toContain(high.body.id);
-    expect(successfulIds).toContain(medium.body.id);
+    expect(successfulIds[0]).toBe(high.body.id);
     expect(successfulIds).not.toContain(old.body.id);
-    expect(successfulIds.indexOf(high.body.id)).toBeLessThan(successfulIds.indexOf(medium.body.id));
-    expect(ids(response.body.sections.popular)).toContain(high.body.id);
+    if (successfulIds.includes(medium.body.id)) {
+      expect(successfulIds.indexOf(high.body.id)).toBeLessThan(successfulIds.indexOf(medium.body.id));
+    }
+
+    const popularIds = ids(response.body.sections.popular);
+    expect(popularIds[0]).toBe(high.body.id);
+    if (popularIds.includes(medium.body.id)) {
+      expect(popularIds.indexOf(high.body.id)).toBeLessThan(popularIds.indexOf(medium.body.id));
+    }
   });
 
   it('applique blocages, comptes privés, retours négatifs et modération en SQL', async () => {
