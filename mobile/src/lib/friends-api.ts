@@ -52,7 +52,7 @@ export async function searchFriends(
     }
 
     if (!response.ok) {
-      let message = messagesSearchFr.error;
+      let message: string = messagesSearchFr.error;
       try {
         const body = (await response.json()) as { message?: string | string[] };
         if (body.message) {
