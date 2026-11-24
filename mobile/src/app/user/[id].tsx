@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ProfileAction, ProfileHeader } from '@/components/profile-view';
+import { ProfileAction, ProfileHeader, ProfileStats } from '@/components/profile-view';
 import { Icon } from '@/components/icon';
 import { useCalls } from '@/features/calls/CallProvider';
 import { followAction, followLabelKey } from '@/features/social/follow/follow-state';
@@ -190,6 +190,11 @@ export default function UserProfileScreen() {
     }
   };
 
+  const openConnections = (kind: 'followers' | 'following') => {
+    if (!profile) return;
+    router.push({ pathname: '/profile/connections/[id]', params: { id: profile.id, kind } });
+  };
+
   return (
     <ThemedView style={styles.container}>
       <Stack.Screen options={{ title: profile?.displayName ?? name ?? 'Profil' }} />
@@ -201,9 +206,7 @@ export default function UserProfileScreen() {
         {profile ? (
           <ProfileHeader
             profile={profile}
-            onPressEdit={
-              profile.isMe ? () => router.push('/profile/edit') : undefined
-            }
+            onPressEdit={profile.isMe ? () => router.push('/profile/edit') : undefined}
             actions={
               profile.isMe ? null : blocked ? (
                 <ProfileAction
@@ -222,13 +225,13 @@ export default function UserProfileScreen() {
                     />
                   ) : null}
                   <ProfileAction
-                    label="Écrire"
+                    label={fr.profile.write}
                     onPress={() => void startConversation()}
                     loading={starting}
                     primary
                   />
                   <ProfileAction
-                    label="Appeler"
+                    label={fr.profile.call}
                     onPress={() => void callUser()}
                     loading={calling}
                   />
@@ -244,11 +247,13 @@ export default function UserProfileScreen() {
         ) : null}
 
         {social ? (
-          <View style={styles.stats} accessibilityRole="summary">
-            <Stat label={fr.social.followers} value={social.followerCount} />
-            <Stat label={fr.social.following} value={social.followingCount} />
-            <Stat label={fr.social.publications} value={social.publicationCount} />
-          </View>
+          <ProfileStats
+            followers={social.followerCount}
+            following={social.followingCount}
+            publications={social.publicationCount}
+            onPressFollowers={() => openConnections('followers')}
+            onPressFollowing={() => openConnections('following')}
+          />
         ) : null}
 
         {social && social.privateAccount && !social.contentVisible && !profile?.isMe ? (
@@ -273,58 +278,17 @@ export default function UserProfileScreen() {
             {error}
           </ThemedText>
         ) : null}
-
       </ScrollView>
     </ThemedView>
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.stat}>
-      <ThemedText style={styles.statValue}>{value}</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        {label}
-      </ThemedText>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  center: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  container: { flex: 1 },
   content: {
     paddingHorizontal: Spacing.three,
     paddingTop: Spacing.three,
     gap: Spacing.four,
-  },
-  section: {
-    gap: Spacing.three,
-  },
-  sectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    lineHeight: 22,
-  },
-  stats: {
-    flexDirection: 'row',
-    gap: Spacing.three,
-  },
-  stat: {
-    flex: 1,
-    alignItems: 'center',
-    gap: Spacing.half,
-  },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 22,
   },
   privateBox: {
     flexDirection: 'row',
