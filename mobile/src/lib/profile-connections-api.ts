@@ -1,5 +1,6 @@
 import { ApiError, refreshAccessToken } from './api';
 import { API_URL } from './config';
+import { fr } from '@/i18n/fr';
 
 export interface ProfileConnection {
   id: string;
@@ -41,19 +42,19 @@ export async function loadProfileConnections(
     try {
       response = await send(token);
     } catch {
-      throw new ApiError(0, 'Impossible de charger la liste. Vérifie ta connexion.');
+      throw new ApiError(0, fr.social.discoverError);
     }
 
     if (response.status === 401) {
       try {
         response = await send(await refreshAccessToken());
       } catch {
-        throw new ApiError(0, 'Impossible de charger la liste. Vérifie ta connexion.');
+        throw new ApiError(0, fr.social.discoverError);
       }
     }
 
     if (!response.ok) {
-      let message = 'Impossible de charger la liste. Réessaie.';
+      let message = fr.social.followError;
       try {
         const body = (await response.json()) as { message?: string | string[] };
         if (body.message) {
