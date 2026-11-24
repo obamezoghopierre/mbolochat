@@ -189,7 +189,7 @@ export default function ProfileConnectionsScreen() {
             <Pressable onPress={() => void loadMore()} style={styles.footer} accessibilityRole="button">
               <ThemedText type="link">{fr.common.retry}</ThemedText>
             </Pressable>
-          ) : null
+          ) : undefined
         }
       />
     </ThemedView>
