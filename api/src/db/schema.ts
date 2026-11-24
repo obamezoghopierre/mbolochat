@@ -1194,6 +1194,12 @@ export const publications = pgTable(
      * modération : c'est ce champ qui affiche « Modifié » dans l'app.
      */
     editedAt: timestamp('edited_at', { withTimezone: true }),
+    /** L'auteur a désactivé les commentaires (Instagram). */
+    commentsDisabled: boolean('comments_disabled').notNull().default(false),
+    /** L'auteur masque le nombre de J'aime aux autres comptes. */
+    hideLikeCount: boolean('hide_like_count').notNull().default(false),
+    /** Épinglée en tête de la grille du profil de l'auteur (3 au plus). */
+    pinnedAt: timestamp('pinned_at', { withTimezone: true }),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     /**
      * Vecteur de recherche plein texte, tenu par PostgreSQL. La colonne n'est

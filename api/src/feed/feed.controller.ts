@@ -48,6 +48,28 @@ export class FeedController {
     );
   }
 
+  /** « Suggestions pour toi » : comptes à suivre (amis d'amis, populaires). */
+  @Get('suggested-accounts')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  async suggested(
+    @CurrentUser() current: JwtPayload,
+    @Query('limit', new DefaultValuePipe(12), ParseIntPipe) limit: number,
+  ) {
+    return this.feed.suggestedAccounts(current.sub, limit);
+  }
+
+  /** Publications d'un compte (grille du profil, épinglées d'abord). */
+  @Get('authored/:userId')
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async authored(
+    @CurrentUser() current: JwtPayload,
+    @Param('userId') userId: string,
+    @Query('limit', new DefaultValuePipe(FEED_DEFAULT_LIMIT), ParseIntPipe) limit: number,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.feed.listAuthored(userId, current.sub, limit, cursor);
+  }
+
   /** Republications d'un compte, pour sa grille de profil. */
   @Get('reposts/:userId')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })

@@ -48,6 +48,8 @@ import { resolveMediaUrl } from '@/lib/media-url';
 import { Image } from 'expo-image';
 import { isVideoPost, primaryMedia } from './pager/feed-media';
 import { useReportPublication } from './use-report-publication';
+import { useAuth } from '@/lib/auth-context';
+import { SuggestedAccountsCard } from './suggested-accounts-card';
 
 /** Onglets du haut : les trois fils, puis « Reels » (vidéos plein écran). */
 type TopTab = FeedTab | 'reels';
@@ -387,6 +389,7 @@ function FeedSurfaceView({
   /** Le plein écran Reels s'ouvre ou se ferme (masque la barre du haut). */
   onReelsOpenChange?: (open: boolean) => void;
 }) {
+  const { token } = useAuth();
   const insets = useSafeAreaInsets();
   // Reels ouverts depuis une vidéo verticale du fil : la vidéo touchée puis
   // les suivantes, page par page.
@@ -436,6 +439,16 @@ function FeedSurfaceView({
 
   // Point de départ des Reels : la vidéo touchée et les vidéos verticales qui
   // la suivent dans le fil. Le fil vidéo dédié prend le relais ensuite.
+  // Toutes les 60 s quand le fil est visible : y a-t-il du nouveau ?
+  const { checkFresh } = feed;
+  useEffect(() => {
+    if (!playbackActive) {
+      return;
+    }
+    const timer = setInterval(() => void checkFresh(), 60_000);
+    return () => clearInterval(timer);
+  }, [checkFresh, playbackActive]);
+
   const reelSeed = useMemo(() => {
     if (!reelsFrom) {
       return [];
@@ -507,7 +520,15 @@ function FeedSurfaceView({
       style={styles.container}
       onLayout={(event) => setScreenHeight(event.nativeEvent.layout.height)}>
       {feed.items.length === 0 ? (
-        <View style={styles.emptyFill}>{renderEmpty(feed, tab)}</View>
+        <View style={styles.emptyFill}>
+          {renderEmpty(feed, tab)}
+          {/* Fil vide (nouveau compte) : des comptes à suivre pour démarrer. */}
+          {feed.status === 'ready' && token ? (
+            <View style={styles.emptySuggestions}>
+              <SuggestedAccountsCard token={token} />
+            </View>
+          ) : null}
+        </View>
       ) : (
         <FeedPager
           mode="flow"
@@ -521,6 +542,8 @@ function FeedSurfaceView({
           onLoadMore={feed.loadMore}
           onRefresh={feed.refresh}
           onOpenReels={(post) => setReelsFrom(post.id)}
+          freshCount={feed.freshCount}
+          onShowFresh={feed.refresh}
           actions={pagerActions}
         />
       )}
@@ -837,6 +860,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  emptySuggestions: { alignSelf: 'stretch', marginTop: Spacing.four },
   emptyFill: {
     flex: 1,
     alignItems: 'center',

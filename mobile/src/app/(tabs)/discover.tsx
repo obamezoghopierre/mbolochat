@@ -1,14 +1,17 @@
 import { Redirect, router, useLocalSearchParams } from 'expo-router';
-import { Compass, Search } from 'lucide-react-native';
+import { Compass, RefreshCw, Search } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   TextInput,
   View,
 } from 'react-native';
+import { useNetworkState } from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Avatar } from '@/components/avatar';
@@ -16,27 +19,31 @@ import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Radii, Spacing, Type } from '@/constants/theme';
+import { DiscoverMetrics, Radii, Spacing, Type } from '@/constants/theme';
+import { DiscoverRails } from '@/features/social/discover/discover-rails';
+import { loadDiscover, type DiscoverResponse } from '@/features/social/discover/discover-api';
 import {
   normalizeSearchQuery,
   totalResults,
 } from '@/features/social/discover/search-model';
 import { useTheme } from '@/hooks/use-theme';
+import { discoverFr } from '@/i18n/discover-fr';
 import { fr } from '@/i18n/fr';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatListTimestamp } from '@/lib/format';
-import type { SearchHashtag, SearchResult } from '@/lib/types';
+import type { FollowState, SearchResult } from '@/lib/types';
 
 /**
- * Découvrir : tendances quand rien n'est saisi, puis recherche unifiée
- * (comptes, publications, hashtags). La saisie est débouncée et la réponse la
- * plus récente gagne, pour éviter qu'une ancienne requête écrase la nouvelle.
+ * Découvrir : sélections personnalisées quand rien n'est saisi, puis recherche
+ * unifiée (comptes, publications, hashtags). La saisie est débouncée et la
+ * réponse la plus récente gagne, pour éviter qu'une ancienne requête écrase la nouvelle.
  */
 export default function DiscoverScreen() {
   const { token, loading } = useAuth();
   const theme = useTheme();
   const insets = useSafeAreaInsets();
+  const network = useNetworkState();
   const params = useLocalSearchParams<{ q?: string }>();
 
   const [query, setQuery] = useState(typeof params.q === 'string' ? params.q : '');
@@ -50,10 +57,15 @@ export default function DiscoverScreen() {
       setQuery(params.q);
     }
   }
-  const [trending, setTrending] = useState<SearchHashtag[]>([]);
+  const [discoverData, setDiscoverData] = useState<DiscoverResponse | null>(null);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [reloadKey, setReloadKey] = useState(0);
+  const [followStates, setFollowStates] = useState<Record<string, FollowState>>({});
+  const [busyFollowIds, setBusyFollowIds] = useState<Set<string>>(new Set());
   const requestId = useRef(0);
+  const searching = normalizeSearchQuery(query) !== '';
+  const offline = network.isConnected === false || network.isInternetReachable === false;
 
   useEffect(() => {
     if (!token) {
@@ -63,11 +75,12 @@ export default function DiscoverScreen() {
     const current = ++requestId.current;
 
     if (normalized === '') {
-      api
-        .trendingHashtags(token)
-        .then((rows) => {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStatus('loading');
+      loadDiscover(token)
+        .then((value) => {
           if (current === requestId.current) {
-            setTrending(rows);
+            setDiscoverData(value);
             setResult(null);
             setStatus('ready');
           }
@@ -98,7 +111,31 @@ export default function DiscoverScreen() {
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [query, token]);
+  }, [query, token, reloadKey]);
+
+  const refresh = () => {
+    setStatus('loading');
+    setReloadKey((value) => value + 1);
+  };
+
+  const followAccount = async (userId: string) => {
+    if (!token || busyFollowIds.has(userId)) {
+      return;
+    }
+    setBusyFollowIds((current) => new Set(current).add(userId));
+    try {
+      const state = await api.followUser(token, userId);
+      setFollowStates((current) => ({ ...current, [userId]: state }));
+    } catch {
+      Alert.alert(discoverFr.followError);
+    } finally {
+      setBusyFollowIds((current) => {
+        const next = new Set(current);
+        next.delete(userId);
+        return next;
+      });
+    }
+  };
 
   if (loading) {
     return <ThemedView style={{ flex: 1 }} />;
@@ -107,18 +144,37 @@ export default function DiscoverScreen() {
     return <Redirect href="/login" />;
   }
 
-  const searching = normalizeSearchQuery(query) !== '';
-
   return (
     <ThemedView style={[styles.screen, { paddingTop: insets.top + Spacing.two }]}>
       <ScrollView
         contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.five }]}
         keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}>
-        <ThemedText style={styles.title}>{fr.tabs.discover}</ThemedText>
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={status === 'loading' && !searching}
+            onRefresh={refresh}
+            tintColor={theme.accent}
+            colors={[theme.accent]}
+          />
+        }>
+        <View style={styles.titleRow}>
+          <ThemedText style={styles.title}>{fr.tabs.discover}</ThemedText>
+          {!searching ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={discoverFr.refresh}
+              accessibilityState={{ disabled: status === 'loading' }}
+              disabled={status === 'loading'}
+              onPress={refresh}
+              style={styles.refreshButton}>
+              <Icon icon={RefreshCw} size={Spacing.four} color={theme.textSecondary} />
+            </Pressable>
+          ) : null}
+        </View>
 
         <View style={[styles.searchBox, { backgroundColor: theme.backgroundSelected }]}>
-          <Icon icon={Search} size={18} color={theme.textSecondary} />
+          <Icon icon={Search} size={Spacing.three} color={theme.textSecondary} />
           <TextInput
             value={query}
             onChangeText={setQuery}
@@ -132,40 +188,49 @@ export default function DiscoverScreen() {
           />
         </View>
 
+        {offline ? (
+          <View style={[styles.offlineBanner, { backgroundColor: theme.backgroundSelected }]}>
+            <ThemedText type="small" themeColor="textSecondary">{discoverFr.offline}</ThemedText>
+          </View>
+        ) : null}
+
         {status === 'loading' ? (
           <View style={styles.centered}>
             <ActivityIndicator color={theme.accent} />
+            {!searching ? <ThemedText type="small" themeColor="textSecondary">{discoverFr.loading}</ThemedText> : null}
           </View>
         ) : null}
 
         {status === 'error' ? (
-          <ThemedText type="small" style={{ color: theme.danger }}>
-            {fr.social.discoverError}
-          </ThemedText>
+          searching ? (
+            <View style={styles.errorBlock}>
+              <ThemedText type="small" style={{ color: theme.danger }}>{fr.social.discoverError}</ThemedText>
+              <Pressable accessibilityRole="button" onPress={refresh} style={styles.retryButton}>
+                <ThemedText type="smallBold" style={{ color: theme.accent }}>{discoverFr.retry}</ThemedText>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.errorBlock}>
+              <EmptyState
+                icon={Compass}
+                title={discoverFr.errorTitle}
+                description={discoverFr.errorBody}
+              />
+              <Pressable accessibilityRole="button" onPress={refresh} style={styles.retryButton}>
+                <ThemedText type="smallBold" style={{ color: theme.accent }}>{discoverFr.retry}</ThemedText>
+              </Pressable>
+            </View>
+          )
         ) : null}
 
-        {status === 'ready' && !searching ? (
-          <View style={styles.section}>
-            <ThemedText style={styles.sectionTitle}>{fr.social.discoverTrendingTitle}</ThemedText>
-            {trending.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary">
-                {fr.social.discoverNoTrending}
-              </ThemedText>
-            ) : (
-              trending.map((tag) => (
-                <Pressable
-                  key={tag.id}
-                  onPress={() => setQuery(tag.tag)}
-                  accessibilityRole="button"
-                  style={styles.trendRow}>
-                  <ThemedText style={styles.trendTag}>#{tag.tag}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {tag.usageCount} {fr.social.discoverUses}
-                  </ThemedText>
-                </Pressable>
-              ))
-            )}
-          </View>
+        {status === 'ready' && !searching && discoverData ? (
+          <DiscoverRails
+            data={discoverData}
+            followStates={followStates}
+            busyFollowIds={busyFollowIds}
+            onFollow={followAccount}
+            onSelectHashtag={setQuery}
+          />
         ) : null}
 
         {status === 'ready' && searching && result ? (
@@ -186,7 +251,7 @@ export default function DiscoverScreen() {
                       onPress={() => router.push(`/user/${user.id}`)}
                       accessibilityRole="button"
                       style={styles.row}>
-                      <Avatar name={user.displayName} uri={user.avatarUrl} size={40} />
+                      <Avatar name={user.displayName} uri={user.avatarUrl} size={Spacing.five} />
                       <View style={styles.rowBody}>
                         <ThemedText style={styles.rowTitle}>
                           {user.displayName}
@@ -258,25 +323,47 @@ const styles = StyleSheet.create({
   content: {
     gap: Spacing.three,
   },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   title: {
     ...Type.screenTitle,
+  },
+  refreshButton: {
+    padding: Spacing.two,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
-    height: 44,
+    height: DiscoverMetrics.searchHeight,
     borderRadius: Radii.full,
   },
   input: {
     flex: 1,
-    fontSize: 15,
+    ...Type.body,
     height: '100%',
+  },
+  offlineBanner: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radii.sm,
   },
   centered: {
     paddingVertical: Spacing.five,
     alignItems: 'center',
+    gap: Spacing.two,
+  },
+  errorBlock: {
+    alignItems: 'center',
+    gap: Spacing.two,
+  },
+  retryButton: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
   },
   section: {
     gap: Spacing.one,

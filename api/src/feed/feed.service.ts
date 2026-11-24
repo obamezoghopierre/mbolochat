@@ -122,6 +122,9 @@ type PublicationRow = {
   } | null;
   mediaFilter: string | null;
   visibility: 'public' | 'followers' | 'private';
+  commentsDisabled: boolean;
+  hideLikeCount: boolean;
+  authorId: string;
   createdAt: Date;
   editedAt: Date | null;
   author: AuthorCard;
@@ -303,6 +306,62 @@ export class FeedService {
    * compte privé → abonnés acceptés, blocage → refus.
    */
   /**
+   * « Suggestions pour toi », comme Instagram : d'abord les comptes suivis
+   * par les comptes que le visiteur suit (amis d'amis), puis les comptes les
+   * plus suivis. Exclut soi-même, les comptes déjà suivis ou demandés, les
+   * blocages dans les deux sens et les comptes supprimés.
+   */
+  async suggestedAccounts(viewerId: string, limit = 12): Promise<
+    Array<{
+      id: string;
+      username: string;
+      displayName: string;
+      avatarUrl: string | null;
+      verified: boolean;
+      followerCount: number;
+      mutualCount: number;
+    }>
+  > {
+    const bounded = Math.min(Math.max(1, limit), 30);
+    const result = await this.db.execute(sql`
+      with mine as (
+        select following_id from follows where follower_id = ${viewerId}
+      ),
+      excluded as (
+        select ${viewerId}::text as id
+        union select following_id from mine
+        union select blocked_id from blocks where blocker_id = ${viewerId}
+        union select blocker_id from blocks where blocked_id = ${viewerId}
+      ),
+      mutual as (
+        select f.following_id as id, count(*)::int as n
+        from follows f
+        where f.follower_id in (select following_id from mine)
+          and f.status = 'accepted'
+        group by f.following_id
+      )
+      select u.id, u.username, u.display_name, u.avatar_url, u.verified,
+             u.follower_count, coalesce(m.n, 0) as mutual_count
+      from users u
+      left join mutual m on m.id = u.id
+      where u.deleted_at is null
+        and u.id not in (select id from excluded)
+      order by coalesce(m.n, 0) desc, u.verified desc, u.follower_count desc, u.created_at desc
+      limit ${bounded}
+    `);
+    const rows = (result as unknown as { rows: Array<Record<string, unknown>> }).rows ?? [];
+    return rows.map((row) => ({
+      id: String(row.id),
+      username: String(row.username),
+      displayName: String(row.display_name),
+      avatarUrl: (row.avatar_url as string | null) ?? null,
+      verified: Boolean(row.verified),
+      followerCount: Number(row.follower_count ?? 0),
+      mutualCount: Number(row.mutual_count ?? 0),
+    }));
+  }
+
+  /**
    * Enregistrements du visiteur, du plus récent au plus ancien, comme l'écran
    * « Enregistrés » d'Instagram. `collectionId` filtre une collection ;
    * absent = tous les enregistrements. Privé : seul le propriétaire y accède.
@@ -374,6 +433,118 @@ export class FeedService {
         rows.length > bounded && last?.savedAt
           ? encodeFeedTimeCursor(last.savedAt, last.id)
           : null,
+    };
+  }
+
+  /**
+   * Publications d'un compte pour la grille de son profil, comme Instagram :
+   * épinglées d'abord (3 au plus), puis les plus récentes. Mêmes règles de
+   * visibilité que le fil (profil privé, blocages, modération).
+   */
+  async listAuthored(
+    userId: string,
+    viewerId: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<FeedPage> {
+    const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
+    const [target] = await this.db
+      .select({ privateAccount: users.privateAccount, deletedAt: users.deletedAt })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!target || target.deletedAt) {
+      throw new NotFoundException('Profil introuvable.');
+    }
+    if (userId !== viewerId) {
+      const [blockedRow] = await this.db
+        .select({ blockerId: blocks.blockerId })
+        .from(blocks)
+        .where(
+          or(
+            and(eq(blocks.blockerId, viewerId), eq(blocks.blockedId, userId)),
+            and(eq(blocks.blockerId, userId), eq(blocks.blockedId, viewerId)),
+          ),
+        )
+        .limit(1);
+      let allowed = !blockedRow;
+      if (allowed && target.privateAccount) {
+        const [follow] = await this.db
+          .select({ followerId: follows.followerId })
+          .from(follows)
+          .where(
+            and(
+              eq(follows.followerId, viewerId),
+              eq(follows.followingId, userId),
+              eq(follows.status, 'accepted'),
+            ),
+          )
+          .limit(1);
+        allowed = Boolean(follow);
+      }
+      if (!allowed) {
+        throw new ForbiddenException('Ce profil est privé.');
+      }
+    }
+
+    const conditions = [eq(publications.authorId, userId), ...this.baseConditions(viewerId)];
+    if (cursor) {
+      const decoded = decodeFeedTimeCursor(cursor);
+      conditions.push(
+        sql`${publications.pinnedAt} is null and (${publications.createdAt}, ${publications.id}) < (${decoded.createdAt.toISOString()}::timestamptz, ${decoded.id})`,
+      );
+    }
+    const rows = await this.db
+      .select({ ...this.feedColumns(viewerId), pinnedAt: publications.pinnedAt })
+      .from(publications)
+      .innerJoin(users, eq(users.id, publications.authorId))
+      .leftJoin(
+        publicationReactions,
+        and(
+          eq(publicationReactions.publicationId, publications.id),
+          eq(publicationReactions.userId, viewerId),
+        ),
+      )
+      .leftJoin(
+        publicationSaves,
+        and(
+          eq(publicationSaves.publicationId, publications.id),
+          eq(publicationSaves.userId, viewerId),
+        ),
+      )
+      .leftJoin(
+        publicationReposts,
+        and(
+          eq(publicationReposts.publicationId, publications.id),
+          eq(publicationReposts.userId, viewerId),
+        ),
+      )
+      .leftJoin(
+        quotedPublications,
+        and(
+          eq(quotedPublications.id, publications.quotedPublicationId),
+          isNull(quotedPublications.deletedAt),
+        ),
+      )
+      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
+      .where(and(...conditions))
+      .orderBy(
+        sql`${publications.pinnedAt} desc nulls last`,
+        desc(publications.createdAt),
+        desc(publications.id),
+      )
+      .limit(bounded + 1);
+
+    const page = rows.slice(0, bounded);
+    const last = page.at(-1);
+    const items = await this.toItems(page, viewerId);
+    const pinnedIds = new Set(page.filter((row) => row.pinnedAt).map((row) => row.id));
+    for (const item of items) {
+      (item as FeedItem & { pinned?: boolean }).pinned = pinnedIds.has(item.id);
+    }
+    return {
+      items,
+      nextCursor:
+        rows.length > bounded && last ? encodeFeedTimeCursor(last.createdAt, last.id) : null,
     };
   }
 
@@ -708,6 +879,9 @@ export class FeedService {
       linkPreview: publications.linkPreview,
       mediaFilter: publications.mediaFilter,
       visibility: publications.visibility,
+      commentsDisabled: publications.commentsDisabled,
+      hideLikeCount: publications.hideLikeCount,
+      authorId: publications.authorId,
       createdAt: publications.createdAt,
       editedAt: publications.editedAt,
       author: {
@@ -851,11 +1025,14 @@ export class FeedService {
       linkPreview: row.linkPreview,
       mediaFilter: row.mediaFilter,
       visibility: row.visibility,
+      commentsDisabled: row.commentsDisabled,
+      hideLikeCount: row.hideLikeCount,
       createdAt: row.createdAt,
       editedAt: row.editedAt ?? null,
       author: { ...row.author } as AuthorCard,
       counters: {
-        likes: row.likeCount,
+        // Nombre masqué par l'auteur : seul l'auteur le voit.
+        likes: row.hideLikeCount && viewerId !== row.authorId ? 0 : row.likeCount,
         comments: row.commentCount,
         reposts: row.repostCount,
         saves: row.saveCount,

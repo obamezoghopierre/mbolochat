@@ -32,6 +32,7 @@ import { TextField, accentColor } from '@/components/ui';
 import { Spacing, Radii } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fr } from '@/i18n/fr';
+import { messagesSearchFr } from '@/i18n/messages-search-fr';
 import { ApiError, api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { useCalls } from '@/features/calls/CallProvider';
@@ -44,13 +45,20 @@ import {
   conversationTitle,
   type ConversationFilter,
 } from '@/lib/format';
+import { friendsWithoutDisplayedDirectChats } from '@/lib/friend-search';
+import { searchFriends, type FriendSearchResult } from '@/lib/friends-api';
 import { connectSocket, onConnection } from '@/lib/socket';
 import { onMissedMessages } from '@/lib/sync';
 import type { ConversationRemovedEvent, ConversationSummary, GroupUpdatedEvent, Message } from '@/lib/types';
 
+const FRIEND_SEARCH_DEBOUNCE_MS = 250;
+
 type ListRow =
   | { key: string; type: 'section'; label: string }
-  | { key: string; type: 'conversation'; conversation: ConversationSummary };
+  | { key: string; type: 'conversation'; conversation: ConversationSummary }
+  | { key: string; type: 'friend'; friend: FriendSearchResult }
+  | { key: string; type: 'searchStatus'; label: string }
+  | { key: string; type: 'searchRetry'; label: string };
 
 /** Épinglées d'abord, puis discussions les plus récentes en tête. */
 function sortConversations(list: ConversationSummary[]): ConversationSummary[] {
@@ -97,6 +105,11 @@ export default function ChatsScreen() {
   const [blockedIds, setBlockedIds] = useState<Set<string>>(() => new Set());
   const [blockTarget, setBlockTarget] = useState<ConversationSummary | null>(null);
   const [query, setQuery] = useState('');
+  const [friendResults, setFriendResults] = useState<FriendSearchResult[]>([]);
+  const [friendSearchLoading, setFriendSearchLoading] = useState(false);
+  const [friendSearchError, setFriendSearchError] = useState<string | null>(null);
+  const [friendSearchAttempt, setFriendSearchAttempt] = useState(0);
+  const [openingFriendId, setOpeningFriendId] = useState<string | null>(null);
   // La liste en cache s'affiche immédiatement ; ce drapeau sert seulement à
   // éviter d'afficher « aucune conversation » avant la première réponse.
   const [ready, setReady] = useState(() => cache.getConversationList() !== null);
@@ -109,6 +122,43 @@ export default function ChatsScreen() {
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    const normalizedQuery = query.trim();
+    if (!token || !normalizedQuery || filter !== 'all') {
+      setFriendResults([]);
+      setFriendSearchLoading(false);
+      setFriendSearchError(null);
+      return;
+    }
+
+    let active = true;
+    setFriendResults([]);
+    setFriendSearchError(null);
+    setFriendSearchLoading(true);
+    const timer = setTimeout(() => {
+      void searchFriends(token, normalizedQuery)
+        .then((results) => {
+          if (active) setFriendResults(results);
+        })
+        .catch((err: unknown) => {
+          if (!active) return;
+          setFriendSearchError(
+            err instanceof ApiError && err.status === 0
+              ? messagesSearchFr.offline
+              : messagesSearchFr.error,
+          );
+        })
+        .finally(() => {
+          if (active) setFriendSearchLoading(false);
+        });
+    }, FRIEND_SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [filter, friendSearchAttempt, query, token]);
 
   const refresh = useCallback(async () => {
     if (!token) {
@@ -247,7 +297,7 @@ export default function ChatsScreen() {
       }
       const name =
         conversation.members.find((member) => member.id === payload.userId)?.displayName ??
-        'Quelqu\u2019un';
+        'Quelqu’un';
       setTypingMap((previous) => ({ ...previous, [payload.conversationId]: { name, text } }));
       const previousTimer = typingTimersRef.current.get(payload.conversationId);
       if (previousTimer) {
@@ -286,7 +336,7 @@ export default function ChatsScreen() {
     };
 
     /**
-     * Un message retiré change l'aperçu de la discussion — et parfois même son
+     * Un message retiré change l’aperçu de la discussion — et parfois même son
      * dernier message. Le plus juste reste de le redemander au serveur.
      */
     const onDeleted = (payload: { conversationId?: string }) => {
@@ -398,6 +448,70 @@ export default function ChatsScreen() {
     });
 
     const rows: ListRow[] = [];
+    if (needle) {
+      if (matching.length > 0) {
+        rows.push({
+          key: 'section-search-conversations',
+          type: 'section',
+          label: messagesSearchFr.conversations,
+        });
+        for (const conversation of matching) {
+          rows.push({ key: conversation.id, type: 'conversation', conversation });
+        }
+      }
+
+      if (filter === 'all') {
+        rows.push({
+          key: 'section-search-friends',
+          type: 'section',
+          label: messagesSearchFr.friends,
+        });
+        if (friendSearchLoading) {
+          rows.push({
+            key: 'friend-search-loading',
+            type: 'searchStatus',
+            label: messagesSearchFr.loadingFriends,
+          });
+        } else if (friendSearchError) {
+          rows.push({
+            key: 'friend-search-error',
+            type: 'searchStatus',
+            label: friendSearchError,
+          });
+          rows.push({
+            key: 'friend-search-retry',
+            type: 'searchRetry',
+            label: messagesSearchFr.retry,
+          });
+        } else {
+          const displayedPeerIds = new Set(
+            matching
+              .filter((conversation) => conversation.type === 'DIRECT')
+              .map((conversation) =>
+                conversation.members.find((member) => member.id !== user?.id)?.id,
+              )
+              .filter((id): id is string => Boolean(id)),
+          );
+          const visibleFriends = friendsWithoutDisplayedDirectChats(
+            friendResults,
+            displayedPeerIds,
+          );
+          if (visibleFriends.length === 0) {
+            rows.push({
+              key: 'friend-search-empty',
+              type: 'searchStatus',
+              label: messagesSearchFr.noFriends,
+            });
+          } else {
+            for (const friend of visibleFriends) {
+              rows.push({ key: `friend:${friend.id}`, type: 'friend', friend });
+            }
+          }
+        }
+      }
+      return rows;
+    }
+
     const pinned = matching.filter((item) => item.pinned);
     if (pinned.length > 0) {
       rows.push({ key: 'section-pinned', type: 'section', label: 'Épinglées' });
@@ -418,7 +532,16 @@ export default function ChatsScreen() {
       rows.push({ key: conversation.id, type: 'conversation', conversation });
     }
     return rows;
-  }, [hiddenConversations, conversations, filter, query, user?.id]);
+  }, [
+    hiddenConversations,
+    conversations,
+    filter,
+    query,
+    user?.id,
+    friendResults,
+    friendSearchLoading,
+    friendSearchError,
+  ]);
 
   const filterOptions = useMemo(
     () => [
@@ -527,12 +650,8 @@ export default function ChatsScreen() {
     [token, user],
   );
 
-  const openConversation = useCallback(
+  const routeToConversation = useCallback(
     (conversation: ConversationSummary) => {
-      if (openRowId) {
-        setOpenRowId(null);
-        return;
-      }
       // Le serveur est la seule autorité : `e2eeSince` décide de l'écran.
       // Une conversation chiffrée sans correspondant identifiable est refusée
       // plutôt que renvoyée vers l'écran en clair.
@@ -547,7 +666,53 @@ export default function ChatsScreen() {
       }
       router.push({ pathname: '/chat/[id]', params: route.params });
     },
-    [router, openRowId, user?.id],
+    [router, user?.id],
+  );
+
+  const openConversation = useCallback(
+    (conversation: ConversationSummary) => {
+      if (openRowId) {
+        setOpenRowId(null);
+        return;
+      }
+      routeToConversation(conversation);
+    },
+    [openRowId, routeToConversation],
+  );
+
+  const openFriendChat = useCallback(
+    async (friend: FriendSearchResult) => {
+      if (!token || !user) return;
+      const existing = conversations.find(
+        (conversation) =>
+          conversation.type === 'DIRECT' &&
+          conversation.members.some((member) => member.id === friend.id) &&
+          conversation.members.some((member) => member.id === user.id),
+      );
+      if (existing) {
+        routeToConversation(existing);
+        return;
+      }
+
+      setOpeningFriendId(friend.id);
+      try {
+        const conversation = await api.createConversation(token, { memberIds: [friend.id] });
+        setConversations((previous) => {
+          const next = sortConversations([
+            conversation,
+            ...previous.filter((item) => item.id !== conversation.id),
+          ]);
+          cache.setConversationList(next);
+          return next;
+        });
+        routeToConversation(conversation);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : messagesSearchFr.openFailed);
+      } finally {
+        setOpeningFriendId(null);
+      }
+    },
+    [conversations, routeToConversation, token, user],
   );
 
   const openConversationActions = useCallback((conversation: ConversationSummary) => {
@@ -563,6 +728,58 @@ export default function ChatsScreen() {
               {item.label.toUpperCase()}
             </ThemedText>
           </ThemedView>
+        );
+      }
+      if (item.type === 'searchStatus') {
+        return (
+          <ThemedView style={styles.searchStatus}>
+            <ThemedText type="small" themeColor="textSecondary">
+              {item.label}
+            </ThemedText>
+          </ThemedView>
+        );
+      }
+      if (item.type === 'searchRetry') {
+        return (
+          <Pressable
+            style={styles.searchRetry}
+            onPress={() => setFriendSearchAttempt((attempt) => attempt + 1)}
+            accessibilityRole="button"
+            accessibilityLabel={item.label}>
+            <ThemedText type="smallBold" themeColor="accent">
+              {item.label}
+            </ThemedText>
+          </Pressable>
+        );
+      }
+      if (item.type === 'friend') {
+        const opening = openingFriendId === item.friend.id;
+        return (
+          <Pressable
+            style={({ pressed }) => [styles.searchFriendRow, pressed && styles.pressed]}
+            onPress={() => void openFriendChat(item.friend)}
+            disabled={openingFriendId !== null}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.friend.displayName}, @${item.friend.username}`}>
+            <Avatar
+              name={item.friend.displayName}
+              uri={item.friend.avatarUrl}
+              gender={item.friend.gender}
+            />
+            <View style={styles.searchFriendIdentity}>
+              <ThemedText type="smallBold" numberOfLines={1}>
+                {item.friend.displayName}
+              </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                @{item.friend.username}
+              </ThemedText>
+            </View>
+            {opening ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {messagesSearchFr.opening}
+              </ThemedText>
+            ) : null}
+          </Pressable>
         );
       }
       const conversation = item.conversation;
@@ -642,7 +859,9 @@ export default function ChatsScreen() {
       markConversationRead,
       openConversation,
       openConversationActions,
+      openFriendChat,
       openRowId,
+      openingFriendId,
       typingMap,
       user?.id,
     ],
@@ -664,8 +883,8 @@ export default function ChatsScreen() {
                 : filter === 'groups'
                   ? 'Aucun groupe pour le moment.'
                   : filter === 'hidden'
-                  ? 'Aucune discussion masquée.'
-                  : 'Aucune conversation pour le moment.\nAppuie sur + pour commencer.'}
+                    ? 'Aucune discussion masquée.'
+                    : 'Aucune conversation pour le moment.\nAppuie sur + pour commencer.'}
           </ThemedText>
         </ThemedView>
       ) : undefined,
@@ -870,7 +1089,7 @@ export default function ChatsScreen() {
         <ThemedView style={styles.searchWrapper}>
           <TextField
             style={styles.search}
-            placeholder="Rechercher une discussion"
+            placeholder={messagesSearchFr.placeholder}
             autoCorrect={false}
             value={query}
             onChangeText={setQuery}
@@ -998,7 +1217,6 @@ export default function ChatsScreen() {
           }
           onClose={() => setLeaveTarget(null)}
         />
-
       </SafeAreaView>
     </ThemedView>
   );
@@ -1065,6 +1283,26 @@ const styles = StyleSheet.create({
   sectionLabel: {
     letterSpacing: 0.8,
     fontSize: 12,
+  },
+  searchFriendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  searchFriendIdentity: {
+    flex: 1,
+    gap: Spacing.half,
+  },
+  searchStatus: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
+  searchRetry: {
+    alignSelf: 'flex-start',
+    marginHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
   },
   separator: {
     height: StyleSheet.hairlineWidth,

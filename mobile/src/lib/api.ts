@@ -179,6 +179,18 @@ export interface GifResult {
   title: string;
 }
 
+/** Compte proposé dans « Suggestions pour toi ». */
+export interface SuggestedAccount {
+  id: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  verified: boolean;
+  followerCount: number;
+  /** Nombre de tes abonnements qui suivent ce compte. */
+  mutualCount: number;
+}
+
 export const api = {
   register(body: {
     firstName: string;
@@ -248,6 +260,8 @@ export const api = {
       textSize?: number;
       /** Lieu facultatif du post texte (≤ 100 caractères). */
       location?: string;
+      commentsDisabled?: boolean;
+      hideLikeCount?: boolean;
       /** Filtre visuel d'une publication média (clé de `MEDIA_FILTERS`). */
       mediaFilter?: string;
     },
@@ -266,6 +280,8 @@ export const api = {
       caption?: string;
       /** Médias gardés, dans le nouvel ordre (retirer / réordonner seulement). */
       mediaAssetIds?: string[];
+      commentsDisabled?: boolean;
+      hideLikeCount?: boolean;
       textPages?: string[];
       /** Style par page, aligné sur `textPages` (ou pages existantes). */
       textPageStyles?: ({ background?: string; color?: string; font?: string; align?: string; size?: number } | null)[];
@@ -503,6 +519,19 @@ export const api = {
     });
   },
 
+  /** « Suggestions pour toi » : comptes à suivre. */
+  suggestedAccounts(token: string, limit = 12) {
+    return request<SuggestedAccount[]>(`/feed/suggested-accounts?limit=${limit}`, { token });
+  },
+
+  /** Épingle / désépingle une publication en tête de son profil. */
+  pinPublication(token: string, publicationId: string, pinned: boolean) {
+    return request<FeedPost>(`/publications/${publicationId}/pin`, {
+      method: pinned ? 'POST' : 'DELETE',
+      token,
+    });
+  },
+
   /** Recherche unifiée : comptes, publications et hashtags. */
   search(token: string, query: string, type: 'all' | 'users' | 'publications' | 'hashtags' = 'all') {
     const params = new URLSearchParams({ q: query, type, limit: '10' });
@@ -691,6 +720,12 @@ export const api = {
       `/saved/${publicationId}/collection`,
       { method: 'PUT', token, body: { collectionId } },
     );
+  },
+
+  /** Publications d'un compte (grille du profil, épinglées d'abord). */
+  userPublications(token: string, userId: string, cursor?: string) {
+    const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+    return request<FeedPage>(`/feed/authored/${userId}${query}`, { token });
   },
 
   /** Republications d'un compte (grille de profil), paginé par curseur. */

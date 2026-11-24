@@ -1,14 +1,23 @@
 name: ci
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
   pull_request:
     branches: [master]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   api:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: api
@@ -37,13 +46,23 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: api/package-lock.json
-      - run: sudo apt-get update
-      - run: sudo apt-get install -y ffmpeg
-      - run: npm ci
-      - run: npm run test:e2e
+      - name: Installer ffmpeg pour les tests média
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Installer les dépendances
+        run: npm ci
+      - name: Lint API (informatif pendant la résorption de la dette)
+        continue-on-error: true
+        run: npm run lint
+      - name: Vérifier les types API
+        run: npx tsc --noEmit
+      - name: Tests unitaires API
+        run: npm test
+      - name: Tests e2e API
+        run: npm run test:e2e
 
   mobile:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: mobile
@@ -54,5 +73,14 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: mobile/package-lock.json
-      - run: npm ci
-      - run: npx tsc --noEmit
+      - name: Installer les dépendances
+        run: npm ci
+      - name: Vérifier les types mobile
+        run: npx tsc --noEmit
+      - name: Tests unitaires mobile
+        run: npm test
+      - name: Contrôler les assets et emoji
+        run: node --test tests/*.test.mjs
+      - name: Lint mobile (informatif pendant la résorption de la dette)
+        continue-on-error: true
+        run: npx expo lint

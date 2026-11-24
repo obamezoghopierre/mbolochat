@@ -1161,6 +1161,23 @@ export function CommentsSheet({
       ) : null}
 
 
+      {current.commentsDisabled && !isPublicationAuthor ? (
+        /* L'auteur a coupé les commentaires : pas de barre de saisie. */
+        <View
+          style={[
+            styles.composerShell,
+            styles.commentsOff,
+            {
+              borderTopColor: theme.border,
+              backgroundColor: theme.backgroundElement,
+              paddingBottom: Math.max(insets.bottom, COMPOSER_SYSTEM_BAR_FALLBACK),
+            },
+          ]}>
+          <ThemedText type="small" themeColor="textSecondary">
+            {fr.social.commentsDisabledNotice}
+          </ThemedText>
+        </View>
+      ) : (
       <View
         style={[
           styles.composerShell,
@@ -1290,6 +1307,8 @@ export function CommentsSheet({
           </ThemedText>
         ) : null}
       </View>
+      )}
+
       {exprOpen ? (
         /* Panneau d'expressions : rangée d'emojis puis stickers — la pilule
            de saisie reste épurée, sans icône 😊. */
@@ -1575,6 +1594,7 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.two,
   },
   composerAction: { justifyContent: 'center', padding: Spacing.one },
+  commentsOff: { alignItems: 'center', paddingTop: Spacing.three },
   pillAction: { height: 40, paddingHorizontal: Spacing.one + 2, justifyContent: 'center' },
   trailing: { minWidth: 36, height: 40, alignItems: 'center', justifyContent: 'center' },
   publish: { fontWeight: '700', fontSize: 15 },

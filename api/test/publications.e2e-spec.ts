@@ -405,6 +405,65 @@ describe('Publications et interactions (e2e)', () => {
     }).expect(400);
   });
 
+  describe('options de l’auteur', () => {
+    it('désactive les commentaires, masque les J’aime et épingle 3 posts au plus', async () => {
+      const alice = await register('Optionnelle');
+      const bob = await register('Spectateur');
+      const post = await publish(alice, { caption: 'Réglages' }).expect(201);
+      const id = post.body.id;
+
+      await request(app.getHttpServer())
+        .post(`/publications/${id}/like`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .send({ kind: 'like' })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .patch(`/publications/${id}`)
+        .set('Authorization', `Bearer ${alice.token}`)
+        .send({ commentsDisabled: true, hideLikeCount: true })
+        .expect(200);
+
+      // Commentaire refusé pour les autres, permis à l'auteur.
+      await request(app.getHttpServer())
+        .post(`/publications/${id}/comments`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .send({ body: 'Coucou', clientId: `c-${Date.now()}` })
+        .expect(403);
+
+      // Nombre de J'aime masqué pour les autres, visible pour l'auteur.
+      expect((await see(bob, id).expect(200)).body.counters.likes).toBe(0);
+      expect((await see(alice, id).expect(200)).body.counters.likes).toBe(1);
+
+      const extra = [];
+      for (let n = 0; n < 3; n += 1) {
+        extra.push((await publish(alice, { caption: `Épingle ${n}` }).expect(201)).body.id);
+      }
+      for (const pid of extra) {
+        await request(app.getHttpServer())
+          .post(`/publications/${pid}/pin`)
+          .set('Authorization', `Bearer ${alice.token}`)
+          .expect(201);
+      }
+      await request(app.getHttpServer())
+        .post(`/publications/${id}/pin`)
+        .set('Authorization', `Bearer ${alice.token}`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`/publications/${id}/pin`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .expect(403);
+
+      const grid = await request(app.getHttpServer())
+        .get(`/feed/authored/${alice.id}`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .expect(200);
+      const firstThree = grid.body.items.slice(0, 3).map((item: { id: string }) => item.id);
+      expect(new Set(firstThree)).toEqual(new Set(extra));
+      expect(grid.body.items[0].pinned).toBe(true);
+    });
+  });
+
   describe('modifier une publication après coup', () => {
     const edit = (actor: { token: string }, id: string, body: Record<string, unknown>) =>
       request(app.getHttpServer())

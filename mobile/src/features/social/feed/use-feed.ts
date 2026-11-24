@@ -200,8 +200,31 @@ export function useFeed(
 
   const refresh = useCallback(() => {
     setRefreshing(true);
+    setFreshCount(0);
     void load({ reset: true });
   }, [load]);
+
+  /**
+   * « Nouvelles publications », comme Instagram : relit discrètement la
+   * première page et compte ce qui n'est pas encore affiché. Rien n'est
+   * inséré sous les yeux de la personne ; le bouton invite à remonter.
+   */
+  const [freshCount, setFreshCount] = useState(0);
+  const checkFresh = useCallback(async () => {
+    if (!token || format || status !== 'ready' || inFlight.current) {
+      return;
+    }
+    try {
+      const page = await api.feed(token, tab, undefined);
+      setItems((current) => {
+        const known = new Set(current.map((post) => post.id));
+        setFreshCount(page.items.filter((post) => !known.has(post.id)).length);
+        return current;
+      });
+    } catch {
+      // Silencieux : ce n'est qu'une invitation.
+    }
+  }, [format, status, tab, token]);
 
   const loadMore = useCallback(() => {
     if (cursor && status === 'ready' && !loadingMore) {
@@ -400,6 +423,8 @@ export function useFeed(
     hasMore: cursor !== null,
     refresh,
     loadMore,
+    freshCount,
+    checkFresh,
     toggleLike,
     setReaction,
     dismiss,

@@ -4,6 +4,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import * as VideoThumbnails from 'expo-video-thumbnails';
 import { ArrowLeft } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LocationField } from '@/features/social/create/location-field';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -61,6 +62,10 @@ export default function CreatePreviewScreen() {
   const assets = useMemo(() => creation?.assets ?? [], [creation]);
   const [filter, setFilter] = useState<string | null>(creation?.filter ?? null);
   const [caption, setCaption] = useState('');
+  const [location, setLocation] = useState('');
+  // Paramètres avancés, comme Instagram.
+  const [commentsDisabled, setCommentsDisabled] = useState(false);
+  const [hideLikeCount, setHideLikeCount] = useState(false);
   const [visibility, setVisibility] = useState<SocialVisibility>('public');
   const [publishing, setPublishing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
@@ -142,6 +147,9 @@ export default function CreatePreviewScreen() {
         assetIds,
         visibility,
         mediaFilter: filter ?? undefined,
+        ...(location.trim() ? { location: location.trim() } : {}),
+        ...(commentsDisabled ? { commentsDisabled: true } : {}),
+        ...(hideLikeCount ? { hideLikeCount: true } : {}),
       });
       invalidateFeedCache(token);
       setProgress(null);
@@ -153,7 +161,7 @@ export default function CreatePreviewScreen() {
       setProgress(null);
       setError(fr.social.createPublishError);
     }
-  }, [assets, caption, filter, publishing, token, visibility, waitUntilReady]);
+  }, [assets, caption, commentsDisabled, filter, hideLikeCount, location, publishing, token, visibility, waitUntilReady]);
 
   if (!creation) {
     return <View style={styles.screen} />;
@@ -285,6 +293,37 @@ export default function CreatePreviewScreen() {
             style={[styles.captionInput, { color: FeedSurface.onMedia }]}
             accessibilityLabel={fr.social.createCaptionLabel}
           />
+
+          {/* Lieu, comme Instagram : saisie, suggestions ou position. */}
+          <LocationField
+            token={token}
+            value={location}
+            onChange={setLocation}
+            disabled={publishing}
+            onError={setError}
+          />
+
+          {/* Paramètres avancés : J'aime masqués, commentaires désactivés. */}
+          <View style={styles.optionsRow}>
+            {[
+              { key: 'likes', label: fr.social.hideLikeCount, on: hideLikeCount, set: setHideLikeCount },
+              { key: 'comments', label: fr.social.turnOffComments, on: commentsDisabled, set: setCommentsDisabled },
+            ].map((option) => (
+              <Pressable
+                key={option.key}
+                onPress={() => option.set(!option.on)}
+                disabled={publishing}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: option.on }}
+                style={[styles.visibilityChip, option.on && styles.visibilityChipActive]}>
+                <ThemedText
+                  style={[Type.caption, { color: option.on ? FeedSurface.onMedia : FeedSurface.onMediaSoft }]}>
+                  {option.on ? '✓ ' : ''}
+                  {option.label}
+                </ThemedText>
+              </Pressable>
+            ))}
+          </View>
 
           <View style={styles.visibilityRow}>
             {VISIBILITIES.map((option) => {
@@ -431,6 +470,7 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   visibilityRow: { flexDirection: 'row', gap: Spacing.two },
+  optionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.two },
   visibilityChip: {
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one,

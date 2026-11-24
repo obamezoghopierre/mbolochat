@@ -113,6 +113,7 @@ export default function ProfileScreen() {
           <Icon icon={ChevronRight} size={18} color={theme.textSecondary} />
         </Pressable>
 
+        {profile ? <RepostsSection userId={profile.id} token={token} source="authored" /> : null}
         {profile ? <RepostsSection userId={profile.id} token={token} /> : null}
 
         {error ? (

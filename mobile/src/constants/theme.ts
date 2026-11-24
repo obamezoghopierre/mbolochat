@@ -207,7 +207,7 @@ export const FeedSurface = {
 
 /** Mesures du feed plein écran : rail d'actions, avatar, pastille. */
 export const FeedMetrics = {
-  /** Icônes du rail d'action : taille généreuse (assez grandes pour être tactile). */
+  /** Icônes du rail d'action : taille généreuse (assez grandes pour être tactiles). */
   actionIcon: 30,
   actionGap: Spacing.threeHalf,
   /** Largeur réservée à droite pour ne pas passer sous le rail. */
@@ -226,10 +226,19 @@ export const FeedMetrics = {
   pill: 26,
 } as const;
 
+/** Mesures des rails de l'écran Découvrir. */
+export const DiscoverMetrics = {
+  publicationCardWidth: 232,
+  publicationMediaHeight: 142,
+  accountCardWidth: 188,
+  accountAvatar: 48,
+  searchHeight: 44,
+} as const;
+
 /**
  * Publication texte présentée comme une vidéo : fond dégradé animé façon
- * « text post ». Le feed reste sombre quel que soit le thème ; ces
- * teintes vivantes donnent au post une présence visuelle sans image distante.
+ * « text post ». Le feed reste sombre ; ces teintes donnent au post une présence
+ * visuelle sans image distante.
  */
 export const FeedTextPost = {
   /**
@@ -246,110 +255,32 @@ export const FeedTextPost = {
    * côté API. Chaque fond a un rendu `dark` et un rendu `light`.
    */
   backgrounds: {
-    dark: {
-      dark: ['#1B1B24', '#101018', '#07070B'],
-      light: ['#E9EAF3', '#D8DAE8', '#C6C9DE'],
-    },
-    violet: {
-      dark: ['#241059', '#3B1B6E', '#101A3C'],
-      light: ['#E2D4F7', '#CFAEF0', '#B98AE2'],
-    },
-    sunset: {
-      dark: ['#3D1230', '#7A2E5C', '#2B1055'],
-      light: ['#F6D3DF', '#F0AEC6', '#E48BAE'],
-    },
-    ocean: {
-      dark: ['#0B2545', '#134074', '#081C33'],
-      light: ['#C9DFF6', '#A2C6EC', '#7FA9DC'],
-    },
-    forest: {
-      dark: ['#0E2B1F', '#1D5C40', '#0A1F2E'],
-      light: ['#CBE5D4', '#A0D1B0', '#7CB98F'],
-    },
-    sand: {
-      dark: ['#3A2A14', '#8A5A24', '#241A3D'],
-      light: ['#F2DFB9', '#E2C58E', '#CBAF6C'],
-    },
-    rose: {
-      dark: ['#33101F', '#6E1E3F', '#1E0B26'],
-      light: ['#F7D3DE', '#F0AEC4', '#E08CA8'],
-    },
-    mint: {
-      dark: ['#0B2B22', '#1E5C46', '#0A1F2E'],
-      light: ['#C8ECD9', '#9BD9B8', '#74C39B'],
-    },
-    sky: {
-      dark: ['#0A2240', '#155A8A', '#081A30'],
-      light: ['#C4E2F8', '#93C8F0', '#63A8DE'],
-    },
-    lime: {
-      dark: ['#1E2B0B', '#4C6B1E', '#141F0A'],
-      light: ['#E4F0B9', '#D2E68C', '#B8D465'],
-    },
-    peach: {
-      dark: ['#33180E', '#7A3B1E', '#241019'],
-      light: ['#F9DCC3', '#F2BE97', '#E8A06E'],
-    },
-    orchid: {
-      dark: ['#241040', '#4E2A78', '#140B26'],
-      light: ['#E4D3F8', '#CBAEEC', '#AC84DC'],
-    },
-    coral: {
-      dark: ['#33120E', '#8A3A24', '#241021'],
-      light: ['#F8D9CE', '#F2B49B', '#E08E6E'],
-    },
-    aqua: {
-      dark: ['#0A2E33', '#14606B', '#081F2E'],
-      light: ['#C4ECEC', '#93DCDC', '#63C2C4'],
-    },
-    butter: {
-      dark: ['#33270B', '#7A5E1E', '#241A0B'],
-      light: ['#F7EDB9', '#F0DC85', '#E2C65E'],
-    },
-    lilac: {
-      dark: ['#241040', '#5C3A86', '#160B2B'],
-      light: ['#E7D9F9', '#D3B9F0', '#B795E0'],
-    },
-    wine: {
-      dark: ['#2E0B1E', '#6B1E3E', '#1A0B24'],
-      light: ['#F3D3DF', '#E5AEC4', '#CE84A4'],
-    },
-    slate: {
-      dark: ['#101820', '#2A3A4C', '#0B1018'],
-      light: ['#D4DEE9', '#B3C2D4', '#93A9C0'],
-    },
-    sage: {
-      dark: ['#14251B', '#3D5C42', '#0F1B2E'],
-      light: ['#D9E8D5', '#B9D6B4', '#95C08D'],
-    },
-    cocoa: {
-      dark: ['#241610', '#5C3B24', '#170F14'],
-      light: ['#E8D9C8', '#D4B894', '#B89468'],
-    },
-    yellow: {
-      dark: ['#4A3408', '#8F6B12', '#2E2006'],
-      light: ['#FFF3B0', '#FFE066', '#F5C518'],
-    },
-    gold: {
-      dark: ['#3D2408', '#7A5216', '#241505'],
-      light: ['#F7E7B8', '#EFCF7E', '#D9A94E'],
-    },
-    orange: {
-      dark: ['#3D1E08', '#8A4216', '#241004'],
-      light: ['#FFD9B8', '#FFB877', '#F08A3C'],
-    },
-    red: {
-      dark: ['#3D0B0B', '#8A1E1E', '#260707'],
-      light: ['#FFD0D0', '#FF9E9E', '#F07070'],
-    },
-    magenta: {
-      dark: ['#33082E', '#7A1E6B', '#20071C'],
-      light: ['#F5C8F0', '#EE9FE0', '#D96BC8'],
-    },
-    teal: {
-      dark: ['#0B2B2B', '#14605A', '#081F1F'],
-      light: ['#C2ECEA', '#8FD8D4', '#5CC2BE'],
-    },
+    dark: { dark: ['#1B1B24', '#101018', '#07070B'], light: ['#E9EAF3', '#D8DAE8', '#C6C9DE'] },
+    violet: { dark: ['#241059', '#3B1B6E', '#101A3C'], light: ['#E2D4F7', '#CFAEF0', '#B98AE2'] },
+    sunset: { dark: ['#3D1230', '#7A2E5C', '#2B1055'], light: ['#F6D3DF', '#F0AEC6', '#E48BAE'] },
+    ocean: { dark: ['#0B2545', '#134074', '#081C33'], light: ['#C9DFF6', '#A2C6EC', '#7FA9DC'] },
+    forest: { dark: ['#0E2B1F', '#1D5C40', '#0A1F2E'], light: ['#CBE5D4', '#A0D1B0', '#7CB98F'] },
+    sand: { dark: ['#3A2A14', '#8A5A24', '#241A3D'], light: ['#F2DFB9', '#E2C58E', '#CBAF6C'] },
+    rose: { dark: ['#33101F', '#6E1E3F', '#1E0B26'], light: ['#F7D3DE', '#F0AEC4', '#E08CA8'] },
+    mint: { dark: ['#0B2B22', '#1E5C46', '#0A1F2E'], light: ['#C8ECD9', '#9BD9B8', '#74C39B'] },
+    sky: { dark: ['#0A2240', '#155A8A', '#081A30'], light: ['#C4E2F8', '#93C8F0', '#63A8DE'] },
+    lime: { dark: ['#1E2B0B', '#4C6B1E', '#141F0A'], light: ['#E4F0B9', '#D2E68C', '#B8D465'] },
+    peach: { dark: ['#33180E', '#7A3B1E', '#241019'], light: ['#F9DCC3', '#F2BE97', '#E8A06E'] },
+    orchid: { dark: ['#241040', '#4E2A78', '#140B26'], light: ['#E4D3F8', '#CBAEEC', '#AC84DC'] },
+    coral: { dark: ['#33120E', '#8A3A24', '#241021'], light: ['#F8D9CE', '#F2B49B', '#E08E6E'] },
+    aqua: { dark: ['#0A2E33', '#14606B', '#081F2E'], light: ['#C4ECEC', '#93DCDC', '#63C2C4'] },
+    butter: { dark: ['#33270B', '#7A5E1E', '#241A0B'], light: ['#F7EDB9', '#F0DC85', '#E2C65E'] },
+    lilac: { dark: ['#241040', '#5C3A86', '#160B2B'], light: ['#E7D9F9', '#D3B9F0', '#B795E0'] },
+    wine: { dark: ['#2E0B1E', '#6B1E3E', '#1A0B24'], light: ['#F3D3DF', '#E5AEC4', '#CE84A4'] },
+    slate: { dark: ['#101820', '#2A3A4C', '#0B1018'], light: ['#D4DEE9', '#B3C2D4', '#93A9C0'] },
+    sage: { dark: ['#14251B', '#3D5C42', '#0F1B2E'], light: ['#D9E8D5', '#B9D6B4', '#95C08D'] },
+    cocoa: { dark: ['#241610', '#5C3B24', '#170F14'], light: ['#E8D9C8', '#D4B894', '#B89468'] },
+    yellow: { dark: ['#4A3408', '#8F6B12', '#2E2006'], light: ['#FFF3B0', '#FFE066', '#F5C518'] },
+    gold: { dark: ['#3D2408', '#7A5216', '#241505'], light: ['#F7E7B8', '#EFCF7E', '#D9A94E'] },
+    orange: { dark: ['#3D1E08', '#8A4216', '#241004'], light: ['#FFD9B8', '#FFB877', '#F08A3C'] },
+    red: { dark: ['#3D0B0B', '#8A1E1E', '#260707'], light: ['#FFD0D0', '#FF9E9E', '#F07070'] },
+    magenta: { dark: ['#33082E', '#7A1E6B', '#20071C'], light: ['#F5C8F0', '#EE9FE0', '#D96BC8'] },
+    teal: { dark: ['#0B2B2B', '#14605A', '#081F1F'], light: ['#C2ECEA', '#8FD8D4', '#5CC2BE'] },
   } as const satisfies Record<
     string,
     { dark: readonly [string, string, string]; light: readonly [string, string, string] }
@@ -364,36 +295,16 @@ export const FeedTextPost = {
    */
   tones: {
     dark: {
-      text: '#FFFFFF',
-      textSoft: 'rgba(255,255,255,0.86)',
-      textFaint: 'rgba(255,255,255,0.62)',
-      card: 'rgba(10,10,14,0.45)',
-      cardBorder: 'rgba(255,255,255,0.18)',
-      badge: 'rgba(255,255,255,0.16)',
-      accent: '#3C87F7',
-      action: '#FFFC00',
-      glass: 'rgba(255,255,255,0.16)',
-      verified: '#5AA9FF',
-      follow: '#FFFC00',
-      onFollow: '#000000',
-      /** Fond neutre de la page autour du visuel (format Instagram). */
-      surface: '#000000',
+      text: '#FFFFFF', textSoft: 'rgba(255,255,255,0.86)', textFaint: 'rgba(255,255,255,0.62)',
+      card: 'rgba(10,10,14,0.45)', cardBorder: 'rgba(255,255,255,0.18)', badge: 'rgba(255,255,255,0.16)',
+      accent: '#3C87F7', action: '#FFFC00', glass: 'rgba(255,255,255,0.16)', verified: '#5AA9FF',
+      follow: '#FFFC00', onFollow: '#000000', surface: '#000000',
     },
     light: {
-      text: '#0B0F14',
-      textSoft: '#3D4756',
-      textFaint: '#6B7684',
-      card: 'rgba(255,255,255,0.6)',
-      cardBorder: 'rgba(11,15,20,0.10)',
-      badge: 'rgba(11,15,20,0.08)',
-      accent: '#2F6FDB',
-      action: '#EAB308',
-      glass: 'rgba(11,15,20,0.07)',
-      verified: '#2563EB',
-      follow: '#FFFC00',
-      onFollow: '#000000',
-      /** Fond neutre de la page autour du visuel (format Instagram). */
-      surface: '#FFFFFF',
+      text: '#0B0F14', textSoft: '#3D4756', textFaint: '#6B7684', card: 'rgba(255,255,255,0.6)',
+      cardBorder: 'rgba(11,15,20,0.10)', badge: 'rgba(11,15,20,0.08)', accent: '#2F6FDB',
+      action: '#EAB308', glass: 'rgba(11,15,20,0.07)', verified: '#2563EB', follow: '#FFFC00',
+      onFollow: '#000000', surface: '#FFFFFF',
     },
   } as const,
   /** Carte de texte translucide sombre (utilisée par le compositeur, toujours sombre). */
@@ -407,53 +318,29 @@ export const FeedTextPost = {
 
 /** Surfaces sombres translucides de la caméra et de l’éditeur média. */
 export const MediaSurface = {
-  background: '#080A0D',
-  onSurface: '#FFFFFF',
-  onSurfaceSoft: 'rgba(255,255,255,0.76)',
-  overlay: 'rgba(8,10,13,0.52)',
-  glass: 'rgba(255,255,255,0.14)',
-  glassStrong: 'rgba(255,255,255,0.22)',
-  border: 'rgba(255,255,255,0.22)',
-  recording: '#FF453A',
+  background: '#080A0D', onSurface: '#FFFFFF', onSurfaceSoft: 'rgba(255,255,255,0.76)',
+  overlay: 'rgba(8,10,13,0.52)', glass: 'rgba(255,255,255,0.14)',
+  glassStrong: 'rgba(255,255,255,0.22)', border: 'rgba(255,255,255,0.22)', recording: '#FF453A',
 } as const;
 
 /**
  * Écran d'appel (1:1 et groupe) : surface bleutée sombre, indépendante du thème
- * clair/sombre de l'application. Les valeurs n'existent qu'ici.
+ * clair/sombre de l'application.
  */
 export const CallSurface = {
-  background: '#1E40AF',
-  onSurface: '#FFFFFF',
-  onSurfaceSoft: 'rgba(255,255,255,0.78)',
-  onSurfaceFaint: 'rgba(255,255,255,0.9)',
-  onSurfaceDisabled: 'rgba(255,255,255,0.35)',
-  glass: 'rgba(255,255,255,0.16)',
-  glassStrong: 'rgba(255,255,255,0.30)',
-  card: 'rgba(0,0,0,0.32)',
-  scrimTop: 'rgba(0,0,0,0.22)',
-  scrimBottom: 'rgba(0,0,0,0.24)',
-  toast: 'rgba(0,0,0,0.55)',
-  ring: 'rgba(255,255,255,0.30)',
-  hangup: '#FF3B30',
-  accept: '#0BC167',
-  warn: '#FFD166',
+  background: '#1E40AF', onSurface: '#FFFFFF', onSurfaceSoft: 'rgba(255,255,255,0.78)',
+  onSurfaceFaint: 'rgba(255,255,255,0.9)', onSurfaceDisabled: 'rgba(255,255,255,0.35)',
+  glass: 'rgba(255,255,255,0.16)', glassStrong: 'rgba(255,255,255,0.30)',
+  card: 'rgba(0,0,0,0.32)', scrimTop: 'rgba(0,0,0,0.22)', scrimBottom: 'rgba(0,0,0,0.24)',
+  toast: 'rgba(0,0,0,0.55)', ring: 'rgba(255,255,255,0.30)', hangup: '#FF3B30',
+  accept: '#0BC167', warn: '#FFD166',
 } as const;
 
 /** Mesures propres à l'écran d'appel (boutons ronds, avatar, voiles). */
 export const CallMetrics = {
-  button: 76,
-  buttonSmall: 64,
-  buttonMedium: 68,
-  hangup: 44,
-  cardIcon: 36,
-  avatar: 176,
-  avatarSmall: 72,
-  avatarCard: 40,
-  cardHeight: 56,
-  scrimTop: 140,
-  scrimBottom: 170,
-  pip: { width: 108, height: 144 },
-  tileGap: Spacing.three,
+  button: 76, buttonSmall: 64, buttonMedium: 68, hangup: 44, cardIcon: 36,
+  avatar: 176, avatarSmall: 72, avatarCard: 40, cardHeight: 56,
+  scrimTop: 140, scrimBottom: 170, pip: { width: 108, height: 144 }, tileGap: Spacing.three,
 } as const;
 
 /** Hauteur utile de la barre d'onglets, hors inset système. */
@@ -466,16 +353,8 @@ export const TabBarHeight = 58;
  * doit rester lisible dans les deux thèmes, avec un contraste constant.
  */
 export const TabBarSurface = {
-  /** Fond opaque hors du fil. */
-  opaque: '#121212',
-  /** Fond transparent sur le fil : la vidéo reste visible dessous. */
-  transparent: 'rgba(18,18,18,0)',
-  /** Onglet inactif : blanc à 60 % sur le fond sombre. */
-  inactive: 'rgba(255,255,255,0.6)',
-  /** Onglet actif : cyan de la marque. */
-  active: '#00E5FF',
-  /** Filet supérieur, visible seulement quand la barre est opaque. */
-  border: 'rgba(255,255,255,0.08)',
+  opaque: '#121212', transparent: 'rgba(18,18,18,0)', inactive: 'rgba(255,255,255,0.6)',
+  active: '#00E5FF', border: 'rgba(255,255,255,0.08)',
 } as const;
 
 /**
