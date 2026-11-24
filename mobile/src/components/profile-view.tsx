@@ -118,7 +118,6 @@ export function ProfileStats({
 }
 
 function Stat({ label, value, onPress }: { label: string; value: number; onPress?: () => void }) {
-  const theme = useTheme();
   const content = (
     <>
       <ThemedText style={styles.statValue}>{value}</ThemedText>
@@ -217,7 +216,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  actionLabel: { ...Type.caption, fontWeight: '600' },
+  actionLabel: { ...Type.caption },
   avatarOverlay: {
     position: 'absolute',
     top: 0,
