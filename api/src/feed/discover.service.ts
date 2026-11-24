@@ -132,7 +132,7 @@ export class DiscoverService {
 
     const suggestedAccounts = this.feed.suggestedAccounts(viewerId, DISCOVER_SUGGESTION_LIMIT);
 
-    const [nearby, popularItems, successfulItems, hashtags, accounts] = await Promise.all([
+    const [nearby, popularItems, successfulItems, hashtagItems, accounts] = await Promise.all([
       nearbyFriends,
       popular,
       successful,
@@ -146,7 +146,7 @@ export class DiscoverService {
         nearbyFriends: nearby,
         popular: popularItems,
         successful: successfulItems,
-        trendingHashtags: hashtags,
+        trendingHashtags: hashtagItems,
         suggestedAccounts: accounts,
       },
     };
