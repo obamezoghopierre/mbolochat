@@ -421,6 +421,13 @@
       "when": 1795370187382,
       "tag": "0059_publication_author_options",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1795591640690,
+      "tag": "0060_feed_comment_consistency",
+      "breakpoints": true
     }
   ]
 }

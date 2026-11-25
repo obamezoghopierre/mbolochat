@@ -1,6 +1,5 @@
-import { Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
+import { ChevronLeft, Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
-import { ChevronLeft } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -480,7 +479,9 @@ function FeedSurfaceView({
     toggleSave: feed.toggleSave,
     toggleRepost: feed.toggleRepost,
     follow: feed.follow,
+    unfollow: feed.unfollow,
     remove: feed.remove,
+    replacePost: feed.replacePost,
     // Réouverture du compositeur texte en mode édition.
     edit: (post: FeedPost) =>
       router.push(
@@ -584,7 +585,7 @@ function FeedSurfaceView({
               opacity: noticeOpacity,
               top: topInset + Spacing.six,
               backgroundColor:
-                feed.notice.tone === 'error' ? 'rgba(180,28,40,0.94)' : 'rgba(20,22,26,0.92)',
+                feed.notice.tone === 'error' ? FeedSurface.noticeError : FeedSurface.noticeInfo,
             },
           ]}>
           <ThemedText style={styles.noticeText}>{feed.notice.message}</ThemedText>
@@ -628,6 +629,12 @@ function ReelsTabView({
   const videos = useFeed('for-you', { format: 'video', deferNetwork });
   const report = useReportPublication(videos.notifyError);
   const items = useMemo(() => videos.items.filter(isVideoPost), [videos.items]);
+  const loadMoreVideos = videos.loadMore;
+  useEffect(() => {
+    if (items.length === 0 && videos.status === 'ready' && videos.hasMore && !videos.loadingMore) {
+      loadMoreVideos();
+    }
+  }, [items.length, videos.hasMore, videos.loadingMore, videos.status, loadMoreVideos]);
   const actions: FeedPagerActions = {
     toggleLike: videos.toggleLike,
     setReaction: videos.setReaction,
@@ -636,7 +643,9 @@ function ReelsTabView({
     toggleSave: videos.toggleSave,
     toggleRepost: videos.toggleRepost,
     follow: videos.follow,
+    unfollow: videos.unfollow,
     remove: videos.remove,
+    replacePost: videos.replacePost,
     edit: (post) => router.push(`/post/edit/${post.id}`),
     report: (post) => report.open(post),
     onOpenComments,
@@ -659,16 +668,26 @@ function ReelsTabView({
           actions={actions}
         />
       ) : (
-        <View style={styles.emptyFill}>
-          {videos.status === 'loading' ? (
-            <ActivityIndicator color={FeedSurface.onMedia} />
-          ) : (
-            <ThemedText style={[styles.centeredText, OnMediaShadow]}>
-              {fr.social.reelsEmpty}
-            </ThemedText>
-          )}
-        </View>
+        <View style={styles.emptyFill}>{renderReelsEmpty(videos)}</View>
       )}
+      {items.length > 0 && videos.loadingMore ? (
+        <View style={[styles.footer, { bottom: TabBarHeight + insets.bottom + Spacing.five }]}>
+          <ActivityIndicator color={FeedSurface.onMedia} />
+        </View>
+      ) : null}
+      {items.length > 0 && videos.status === 'error' ? (
+        <Pressable
+          onPress={videos.loadMore}
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.retry,
+            styles.reelsRetry,
+            { bottom: TabBarHeight + insets.bottom + Spacing.five },
+            pressed && styles.pressed,
+          ]}>
+          <ThemedText style={styles.retryText}>{fr.social.feedRetry}</ThemedText>
+        </Pressable>
+      ) : null}
       {report.sheet}
     </View>
   );
@@ -710,6 +729,12 @@ function ReelsLayer({
     const more = videos.items.filter((post) => isVideoPost(post) && !taken.has(post.id));
     return [...head, ...more];
   }, [homeById, seedIds, videos.items]);
+  const loadMoreVideos = videos.loadMore;
+  useEffect(() => {
+    if (items.length === 0 && videos.status === 'ready' && videos.hasMore && !videos.loadingMore) {
+      loadMoreVideos();
+    }
+  }, [items.length, videos.hasMore, videos.loadingMore, videos.status, loadMoreVideos]);
 
   // Une action part vers le fil qui détient la publication : le fil d'accueil
   // pour la séquence de départ, le fil vidéo pour la suite.
@@ -728,7 +753,10 @@ function ReelsLayer({
       toggleRepost: (post) =>
         home(post) ? homeActions.toggleRepost(post) : videos.toggleRepost(post),
       follow: (post) => (home(post) ? homeActions.follow(post) : videos.follow(post)),
+      unfollow: (post) => (home(post) ? homeActions.unfollow(post) : videos.unfollow(post)),
       remove: (post) => (home(post) ? homeActions.remove(post) : videos.remove(post)),
+      replacePost: (post) =>
+        home(post) ? homeActions.replacePost(post) : videos.replacePost(post),
       onOpenComments,
     };
   }, [homeActions, homeById, onOpenComments, videos]);
@@ -749,6 +777,27 @@ function ReelsLayer({
         onRefresh={() => undefined}
         actions={actions}
       />
+      {items.length === 0 ? (
+        <View style={[styles.emptyFill, styles.reelsEmpty]}>{renderReelsEmpty(videos)}</View>
+      ) : null}
+      {items.length > 0 && videos.loadingMore ? (
+        <View style={[styles.footer, { bottom: barInset + Spacing.five }]}>
+          <ActivityIndicator color={FeedSurface.onMedia} />
+        </View>
+      ) : null}
+      {items.length > 0 && videos.status === 'error' ? (
+        <Pressable
+          onPress={videos.loadMore}
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.retry,
+            styles.reelsRetry,
+            { bottom: barInset + Spacing.five },
+            pressed && styles.pressed,
+          ]}>
+          <ThemedText style={styles.retryText}>{fr.social.feedRetry}</ThemedText>
+        </Pressable>
+      ) : null}
       {hideOverlays ? null : (
         <Pressable
           onPress={onClose}
@@ -785,6 +834,42 @@ function prefetchFirstMedia(post: FeedPost): Promise<void> {
     ),
     new Promise<void>((resolve) => setTimeout(resolve, FIRST_MEDIA_TIMEOUT_MS)),
   ]);
+}
+
+function renderReelsEmpty(feed: ReturnType<typeof useFeed>) {
+  if (feed.status === 'loading' || feed.loadingMore) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator color={FeedSurface.onMedia} />
+        <ThemedText style={[styles.centeredText, OnMediaShadow]}>
+          {fr.social.feedLoading}
+        </ThemedText>
+      </View>
+    );
+  }
+  if (feed.status === 'error' || feed.notice?.tone === 'error') {
+    return (
+      <View style={styles.centered}>
+        <ThemedText style={[styles.centeredTitle, OnMediaShadow]}>
+          {fr.social.feedErrorTitle}
+        </ThemedText>
+        <ThemedText style={[styles.centeredText, OnMediaShadow]}>
+          {fr.social.feedErrorBody}
+        </ThemedText>
+        <Pressable
+          onPress={feed.status === 'error' ? feed.retry : feed.loadMore}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.retry, pressed && styles.pressed]}>
+          <ThemedText style={styles.retryText}>{fr.social.feedRetry}</ThemedText>
+        </Pressable>
+      </View>
+    );
+  }
+  return (
+    <ThemedText style={[styles.centeredText, OnMediaShadow]}>
+      {fr.social.reelsEmpty}
+    </ThemedText>
+  );
 }
 
 function renderEmpty(
@@ -1005,6 +1090,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 320,
   },
+  reelsRetry: {
+    position: 'absolute',
+    alignSelf: 'center',
+  },
+  reelsEmpty: {
+    backgroundColor: FeedSurface.background,
+  },
   retry: {
     marginTop: Spacing.two,
     paddingHorizontal: Spacing.four,
@@ -1015,7 +1107,7 @@ const styles = StyleSheet.create({
   retryText: {
     ...Type.caption,
     fontWeight: '700',
-    color: '#000000',
+    color: FeedSurface.onFollow,
   },
   pressed: {
     opacity: 0.7,

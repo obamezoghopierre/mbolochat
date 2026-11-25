@@ -32,7 +32,6 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Image,
-  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -85,7 +84,11 @@ export interface FeedPagerActions {
   toggleSave: (post: FeedPost) => Promise<void>;
   toggleRepost: (post: FeedPost) => Promise<void>;
   follow: (post: FeedPost) => Promise<void>;
+  /** Annule l'abonnement ou la demande en attente. */
+  unfollow: (post: FeedPost) => Promise<boolean>;
   remove: (post: FeedPost) => Promise<void>;
+  /** Remplace une publication par la version autoritaire renvoyée par l'API. */
+  replacePost: (post: FeedPost) => void;
   /** Ouvre le compositeur en mode édition (posts texte uniquement). */
   edit: (post: FeedPost) => void;
   report: (post: FeedPost) => void;
@@ -324,7 +327,8 @@ export function FeedPager({
       }
       const next = !post[option];
       try {
-        await api.updatePublication(token, post.id, { [option]: next });
+        const updated = await api.updatePublication(token, post.id, { [option]: next });
+        actions.replacePost(updated);
         showToast(
           option === 'commentsDisabled'
             ? next
@@ -347,7 +351,8 @@ export function FeedPager({
         return;
       }
       try {
-        await api.pinPublication(token, post.id, !post.pinned);
+        const updated = await api.pinPublication(token, post.id, !post.pinned);
+        actions.replacePost(updated);
         showToast(post.pinned ? fr.social.unpinnedToast : fr.social.pinnedToast);
       } catch (cause) {
         actions.notifyError(cause instanceof Error ? cause.message : fr.social.shareError);
@@ -356,20 +361,15 @@ export function FeedPager({
     [actions, showToast, token],
   );
 
-  /** « Ne plus suivre » depuis le menu ⋯ (l'état du fil se met à jour au retour). */
+  /** « Ne plus suivre » depuis le menu ⋯. */
   const unfollowAuthor = useCallback(
     async (post: FeedPost) => {
-      if (!token) {
-        return;
-      }
-      try {
-        await api.unfollowUser(token, post.author.id);
+      const removed = await actions.unfollow(post);
+      if (removed) {
         showToast(fr.social.unfollowedToast(post.author.displayName));
-      } catch {
-        actions.notifyError(fr.social.shareError);
       }
     },
-    [actions, showToast, token],
+    [actions, showToast],
   );
 
   const openProfile = useCallback((post: FeedPost) => {
@@ -391,14 +391,19 @@ export function FeedPager({
     async (post: FeedPost) => {
       const caption = (post.caption ?? '').trim();
       const title = caption.length > 0 ? caption : `Publication de ${post.author.displayName}`;
-      trackShare(post);
       try {
-        await Share.share({
+        const result = await Share.share({
           message: `${title}\n\n${postShareLink(post.id)}`,
           title,
         });
-      } catch {
-        actions.notifyError(fr.social.shareError);
+        if (result.action === Share.sharedAction) {
+          trackShare(post);
+        }
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : '';
+        if (!/cancel|dismiss|did not share/i.test(message)) {
+          actions.notifyError(fr.social.shareError);
+        }
       }
     },
     [actions, trackShare],
@@ -442,6 +447,31 @@ export function FeedPager({
     () => setRepostTarget(null),
     // eslint-disable-next-line react-hooks/refs
     repostWithUndo,
+  );
+
+  const menuActions = useMemo<SheetAction[]>(
+    // Le constructeur est pur ; ses callbacks ne lisent des refs qu'au tap.
+    // eslint-disable-next-line react-hooks/refs
+    () =>
+      menuTarget
+        ? postMenuActions(menuTarget, {
+            own: menuTarget.author.id === user?.id,
+            save: () => void actions.toggleSave(menuTarget),
+            copyLink: () => void copyLink(menuTarget),
+            share: () => setShareTarget(menuTarget),
+            qr: () => setQrTarget(menuTarget),
+            profile: () => openProfile(menuTarget),
+            unfollow: () => void unfollowAuthor(menuTarget),
+            about: () => setAboutTarget(menuTarget.author.id),
+            toggleComments: () => void setAuthorOption(menuTarget, 'commentsDisabled'),
+            toggleLikes: () => void setAuthorOption(menuTarget, 'hideLikeCount'),
+            togglePin: () => void togglePin(menuTarget),
+            rest: moderationActions(menuTarget, actions, user?.id ?? null, () =>
+              setMenuTarget(null),
+            ),
+          })
+        : [],
+    [actions, copyLink, menuTarget, openProfile, setAuthorOption, togglePin, unfollowAuthor, user?.id],
   );
 
   if (height <= 0) {
@@ -520,7 +550,7 @@ export function FeedPager({
             progressViewOffset={flow ? insets.top + FLOW_TOP_BAR : undefined}
             tintColor={FeedSurface.onMedia}
             colors={[FeedSurface.onMedia]}
-            progressBackgroundColor="rgba(0,0,0,0.6)"
+            progressBackgroundColor={FeedSurface.refreshTrack}
           />
         }
         renderItem={({ item, index }) => {
@@ -674,7 +704,7 @@ export function FeedPager({
                     <PostInfoBlock
                       post={item}
                       following={item.viewer.followingAuthor}
-                      followState="idle"
+                      followState={item.viewer.followRequestPending ? 'pending' : 'idle'}
                       showCaption={item.format !== 'text'}
                       railHasAuthor
                       onFollow={() => void actions.follow(item)}
@@ -866,20 +896,7 @@ export function FeedPager({
       <ActionSheet
         visible={menuTarget !== null}
         title={menuTarget ? fr.social.postOptionsTitle(menuTarget.author.displayName) : undefined}
-        actions={menuTarget ? postMenuActions(menuTarget, {
-          own: menuTarget.author.id === user?.id,
-          save: () => void actions.toggleSave(menuTarget),
-          copyLink: () => void copyLink(menuTarget),
-          share: () => setShareTarget(menuTarget),
-          qr: () => setQrTarget(menuTarget),
-          profile: () => openProfile(menuTarget),
-          unfollow: () => void unfollowAuthor(menuTarget),
-          about: () => setAboutTarget(menuTarget.author.id),
-          toggleComments: () => void setAuthorOption(menuTarget, 'commentsDisabled'),
-          toggleLikes: () => void setAuthorOption(menuTarget, 'hideLikeCount'),
-          togglePin: () => void togglePin(menuTarget),
-          rest: moderationActions(menuTarget, actions, user?.id ?? null, () => setMenuTarget(null)),
-        }) : []}
+        actions={menuActions}
         onClose={() => setMenuTarget(null)}
       />
 
@@ -1272,7 +1289,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
-  freshText: { color: '#000000', fontWeight: '700' },
+  freshText: { color: FeedSurface.onFollow, fontWeight: '700' },
   toastRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -32,16 +32,96 @@ interface CachedFeed {
 }
 
 const feedCache = new Map<string, CachedFeed>();
+type FeedChange = (items: FeedPost[]) => FeedPost[];
+const feedChangeListeners = new Set<(token: string, change: FeedChange) => void>();
+const feedInvalidationListeners = new Set<(token: string) => void>();
+const feedOperationVersions = new Map<string, number>();
+const feedRooms = new Map<
+  string,
+  { socket: ReturnType<typeof connectSocket>; subscribers: number }
+>();
+
+function retainFeedRoom(token: string, publicationId: string): () => void {
+  const key = `${token}:${publicationId}`;
+  const existing = feedRooms.get(key);
+  if (existing) {
+    existing.subscribers += 1;
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      existing.subscribers -= 1;
+      if (existing.subscribers === 0) {
+        feedRooms.delete(key);
+      }
+    };
+  }
+
+  const socket = connectSocket(token);
+  const join = () => {
+    if (socket.connected) {
+      socket.emit('feed:join', { publicationId });
+    }
+  };
+  feedRooms.set(key, { socket, subscribers: 1 });
+  socket.on('connect', join);
+  join();
+
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    feedRooms.delete(key);
+    socket.off('connect', join);
+    if (socket.connected) {
+      socket.emit('feed:leave', { publicationId });
+    }
+  };
+}
+
+function emitFeedChange(token: string, change: FeedChange): void {
+  for (const [key, entry] of feedCache) {
+    if (key.startsWith(`${token}:`)) {
+      feedCache.set(key, { ...entry, items: change(entry.items) });
+    }
+  }
+  for (const listener of feedChangeListeners) {
+    listener(token, change);
+  }
+}
+
+function beginFeedOperation(key: string): number {
+  const version = (feedOperationVersions.get(key) ?? 0) + 1;
+  feedOperationVersions.set(key, version);
+  return version;
+}
+
+function isCurrentFeedOperation(key: string, version: number): boolean {
+  return feedOperationVersions.get(key) === version;
+}
+
+function finishFeedOperation(key: string, version: number): void {
+  if (isCurrentFeedOperation(key, version)) {
+    feedOperationVersions.delete(key);
+  }
+}
 
 /**
- * Oublie les fils mis en cache d'une session : appelé après une action qui
- * crée du contenu (citation) pour que le prochain affichage recharge.
+ * Oublie les fils mis en cache d'une session et demande leur rechargement aux
+ * onglets encore montés (création, édition ou citation).
  */
 export function invalidateFeedCache(token: string): void {
   for (const key of [...feedCache.keys()]) {
     if (key.startsWith(`${token}:`)) {
       feedCache.delete(key);
     }
+  }
+  for (const listener of feedInvalidationListeners) {
+    listener(token);
   }
 }
 
@@ -82,13 +162,76 @@ export function useFeed(
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [notice, setNotice] = useState<FeedNotice | null>(null);
+  const [freshCount, setFreshCount] = useState(0);
+  const [cacheVersion, setCacheVersion] = useState(0);
   const inFlight = useRef(false);
+  const reloadRequested = useRef(false);
+  const loadRef = useRef<((options: { reset: boolean }) => Promise<void>) | null>(null);
+  const itemsRef = useRef(items);
+  const roomReleases = useRef(new Map<string, () => void>());
+  const loadedAtRef = useRef(cached?.loadedAt ?? snapshot?.savedAt ?? 0);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    const handleInvalidation = (invalidatedToken: string) => {
+      if (invalidatedToken === token) {
+        setCacheVersion((version) => version + 1);
+      }
+    };
+    const handleChange = (changedToken: string, change: FeedChange) => {
+      if (changedToken === token) {
+        setItems((current) => change(current));
+      }
+    };
+    feedInvalidationListeners.add(handleInvalidation);
+    feedChangeListeners.add(handleChange);
+    return () => {
+      feedInvalidationListeners.delete(handleInvalidation);
+      feedChangeListeners.delete(handleChange);
+    };
+  }, [token]);
+
+  useEffect(() => {
+    const releases = roomReleases.current;
+    return () => {
+      for (const release of releases.values()) {
+        release();
+      }
+      releases.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!token) {
+      for (const release of roomReleases.current.values()) {
+        release();
+      }
+      roomReleases.current.clear();
+      return;
+    }
+    const wanted = new Set(items.map((post) => `${token}:${post.id}`));
+    for (const [key, release] of roomReleases.current) {
+      if (!wanted.has(key)) {
+        release();
+        roomReleases.current.delete(key);
+      }
+    }
+    for (const post of items) {
+      const key = `${token}:${post.id}`;
+      if (!roomReleases.current.has(key)) {
+        roomReleases.current.set(key, retainFeedRoom(token, post.id));
+      }
+    }
+  }, [items, token]);
 
   // Toute mutation (chargement, pagination, action optimiste) est conservée
   // pour que le retour sur l'onglet soit immédiat, sans requête réseau.
   useEffect(() => {
     if (key && status === 'ready') {
-      feedCache.set(key, { items, cursor, status, loadedAt: Date.now() });
+      feedCache.set(key, { items, cursor, status, loadedAt: loadedAtRef.current });
     }
   }, [cursor, items, key, status]);
 
@@ -98,7 +241,13 @@ export function useFeed(
 
   const load = useCallback(
     async (options: { reset: boolean }) => {
-      if (!token || inFlight.current) {
+      if (!token) {
+        return;
+      }
+      if (inFlight.current) {
+        if (options.reset) {
+          reloadRequested.current = true;
+        }
         return;
       }
       inFlight.current = true;
@@ -112,6 +261,7 @@ export function useFeed(
           options.reset ? undefined : (cursor ?? undefined),
           format,
         );
+        loadedAtRef.current = Date.now();
         setItems((current) => {
           if (!options.reset) {
             return mergeFeedPage(current, page).items;
@@ -145,10 +295,18 @@ export function useFeed(
         inFlight.current = false;
         setLoadingMore(false);
         setRefreshing(false);
+        if (reloadRequested.current) {
+          reloadRequested.current = false;
+          queueMicrotask(() => void loadRef.current?.({ reset: true }));
+        }
       }
     },
     [cursor, format, tab, token, userId],
   );
+
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   // Un onglet déjà visité garde sa liste : on ne requête que s'il n'y a rien
   // en cache, ou si le cache a périmé. Le pull-to-refresh force le rechargement.
@@ -166,12 +324,11 @@ export function useFeed(
       void load({ reset: true });
     }
     // `load` change avec le curseur : la relancer à chaque page bouclerait.
-  }, [tab, token, deferNetwork, format]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, token, deferNetwork, format, cacheVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Compteurs temps réel : le serveur diffuse `publication:stats` à chaque
-  // mutation (commentaire, réaction, save, repost, partage, vue). On recale
-  // les compteurs des publications déjà affichées — les valeurs serveur
-  // remplacent l'estimation optimiste locale.
+  // Compteurs temps réel des publications rejointes après contrôle de
+  // visibilité. L'auteur reçoit les valeurs brutes, les autres zéro si le
+  // nombre de J'aime est masqué ; la réponse serveur remplace l'estimation.
   useEffect(() => {
     if (!token) {
       return;
@@ -184,7 +341,7 @@ export function useFeed(
       if (!payload?.publicationId || !payload.counters) {
         return;
       }
-      setItems((current) =>
+      emitFeedChange(token, (current) =>
         current.map((post) =>
           post.id === payload.publicationId
             ? { ...post, counters: { ...post.counters, ...payload.counters } }
@@ -209,18 +366,14 @@ export function useFeed(
    * première page et compte ce qui n'est pas encore affiché. Rien n'est
    * inséré sous les yeux de la personne ; le bouton invite à remonter.
    */
-  const [freshCount, setFreshCount] = useState(0);
   const checkFresh = useCallback(async () => {
     if (!token || format || status !== 'ready' || inFlight.current) {
       return;
     }
     try {
       const page = await api.feed(token, tab, undefined);
-      setItems((current) => {
-        const known = new Set(current.map((post) => post.id));
-        setFreshCount(page.items.filter((post) => !known.has(post.id)).length);
-        return current;
-      });
+      const known = new Set(itemsRef.current.map((post) => post.id));
+      setFreshCount(page.items.filter((post) => !known.has(post.id)).length);
     } catch {
       // Silencieux : ce n'est qu'une invitation.
     }
@@ -232,24 +385,43 @@ export function useFeed(
     }
   }, [cursor, load, loadingMore, status]);
 
+  const replacePost = useCallback(
+    (post: FeedPost) => {
+      if (!token) {
+        return;
+      }
+      emitFeedChange(token, (current) =>
+        current.map((entry) => (entry.id === post.id ? post : entry)),
+      );
+    },
+    [token],
+  );
+
   const toggleLike = useCallback(
     async (post: FeedPost) => {
       if (!token) {
         return;
       }
-      const removing = post.viewer.reaction !== null;
-      setItems((current) => applyReaction(current, post.id, removing ? null : 'like'));
+      const previousReaction = post.viewer.reaction;
+      const nextReaction = previousReaction === null ? 'like' : null;
+      const operationKey = `${token}:${post.id}:reaction`;
+      const version = beginFeedOperation(operationKey);
+      emitFeedChange(token, (current) => applyReaction(current, post.id, nextReaction));
       try {
-        if (removing) {
+        if (nextReaction === null) {
           await api.removeReaction(token, post.id);
         } else {
-          await api.reactToPublication(token, post.id, 'like');
+          await api.reactToPublication(token, post.id, nextReaction);
         }
       } catch {
-        // Le serveur fait foi : on rend l'état d'avant l'optimisme, pour cette
-        // publication seulement — une page chargée entre-temps reste en place.
-        setItems((current) => restorePost(current, post));
+        if (isCurrentFeedOperation(operationKey, version)) {
+          emitFeedChange(token, (current) =>
+            restoreReaction(current, post.id, previousReaction),
+          );
+        }
         notifyError('Réaction non enregistrée. Vérifie ta connexion.');
+      } finally {
+        finishFeedOperation(operationKey, version);
       }
     },
     [notifyError, token],
@@ -264,7 +436,10 @@ export function useFeed(
       if (!token || post.viewer.reaction === kind) {
         return;
       }
-      setItems((current) => applyReaction(current, post.id, kind));
+      const previousReaction = post.viewer.reaction;
+      const operationKey = `${token}:${post.id}:reaction`;
+      const version = beginFeedOperation(operationKey);
+      emitFeedChange(token, (current) => applyReaction(current, post.id, kind));
       try {
         if (kind === null) {
           await api.removeReaction(token, post.id);
@@ -272,8 +447,14 @@ export function useFeed(
           await api.reactToPublication(token, post.id, kind);
         }
       } catch {
-        setItems((current) => restorePost(current, post));
+        if (isCurrentFeedOperation(operationKey, version)) {
+          emitFeedChange(token, (current) =>
+            restoreReaction(current, post.id, previousReaction),
+          );
+        }
         notifyError('Réaction non enregistrée. Vérifie ta connexion.');
+      } finally {
+        finishFeedOperation(operationKey, version);
       }
     },
     [notifyError, token],
@@ -285,17 +466,17 @@ export function useFeed(
       if (!token) {
         return;
       }
-      const previous = items;
-      setItems((current) => current.filter((entry) => entry.id !== post.id));
+      const index = itemsRef.current.findIndex((entry) => entry.id === post.id);
+      emitFeedChange(token, (current) => current.filter((entry) => entry.id !== post.id));
       try {
         await api.notInterested(token, post.id);
         setNotice({ message: fr.social.notInterestedDone, tone: 'info' });
       } catch {
-        setItems((current) => restoreItems(current, previous));
+        emitFeedChange(token, (current) => restorePublication(current, post, index));
         notifyError('Action impossible. Réessaie.');
       }
     },
-    [items, notifyError, token],
+    [notifyError, token],
   );
 
   /** Masque toutes les publications d'un auteur, avec retour arrière. */
@@ -304,17 +485,26 @@ export function useFeed(
       if (!token) {
         return;
       }
-      const previous = items;
-      setItems((current) => current.filter((entry) => entry.author.id !== post.author.id));
+      const removed = itemsRef.current
+        .map((entry, index) => ({ entry, index }))
+        .filter(({ entry }) => entry.author.id === post.author.id);
+      emitFeedChange(token, (current) =>
+        current.filter((entry) => entry.author.id !== post.author.id),
+      );
       try {
         await api.muteAuthor(token, post.author.id);
         setNotice({ message: fr.social.muteAuthorDone, tone: 'info' });
       } catch {
-        setItems((current) => restoreItems(current, previous));
+        emitFeedChange(token, (current) =>
+          removed.reduce(
+            (result, { entry, index }) => restorePublication(result, entry, index),
+            current,
+          ),
+        );
         notifyError('Action impossible. Réessaie.');
       }
     },
-    [items, notifyError, token],
+    [notifyError, token],
   );
 
   const toggleSaveAction = useCallback(
@@ -322,25 +512,32 @@ export function useFeed(
       if (!token) {
         return;
       }
-      const next = toggleSave(items, post.id);
-      setItems(next.items);
+      const previousSaved = post.viewer.saved === true;
+      const saved = !previousSaved;
+      const operationKey = `${token}:${post.id}:save`;
+      const version = beginFeedOperation(operationKey);
+      emitFeedChange(token, (current) => toggleSave(current, post.id).items);
       try {
-        if (next.saved) {
+        if (saved) {
           await api.savePublication(token, post.id);
         } else {
           await api.unsavePublication(token, post.id);
         }
-        // L'enregistrement a son propre bandeau dans le fil (« Enregistré ·
-        // Collection ») : seul le retrait est confirmé ici.
-        if (!next.saved) {
+        if (!saved) {
           setNotice({ message: 'Enregistrement retiré', tone: 'info' });
         }
       } catch {
-        setItems((current) => restorePost(current, post));
+        if (isCurrentFeedOperation(operationKey, version)) {
+          emitFeedChange(token, (current) =>
+            restoreViewerFlag(current, post.id, 'saved', previousSaved, 'saves'),
+          );
+        }
         notifyError('Enregistrement impossible. Vérifie ta connexion.');
+      } finally {
+        finishFeedOperation(operationKey, version);
       }
     },
-    [items, notifyError, token],
+    [notifyError, token],
   );
 
   const toggleRepostAction = useCallback(
@@ -348,24 +545,33 @@ export function useFeed(
       if (!token) {
         return;
       }
-      const next = toggleRepost(items, post.id);
-      setItems(next.items);
+      const previousReposted = post.viewer.reposted === true;
+      const reposted = !previousReposted;
+      const operationKey = `${token}:${post.id}:repost`;
+      const version = beginFeedOperation(operationKey);
+      emitFeedChange(token, (current) => toggleRepost(current, post.id).items);
       try {
-        if (next.reposted) {
+        if (reposted) {
           await api.repostPublication(token, post.id);
         } else {
           await api.unrepostPublication(token, post.id);
         }
         setNotice({
-          message: next.reposted ? fr.social.repostDone : fr.social.unrepostDone,
+          message: reposted ? fr.social.repostDone : fr.social.unrepostDone,
           tone: 'info',
         });
       } catch {
-        setItems((current) => restorePost(current, post));
+        if (isCurrentFeedOperation(operationKey, version)) {
+          emitFeedChange(token, (current) =>
+            restoreViewerFlag(current, post.id, 'reposted', previousReposted, 'reposts'),
+          );
+        }
         notifyError('Republication impossible. Vérifie ta connexion.');
+      } finally {
+        finishFeedOperation(operationKey, version);
       }
     },
-    [items, notifyError, token],
+    [notifyError, token],
   );
 
   const follow = useCallback(
@@ -373,16 +579,62 @@ export function useFeed(
       if (!token) {
         return;
       }
-      setItems((current) => markFollowing(current, post.author.id));
+      const previous = {
+        following: post.viewer.followingAuthor,
+        pending: post.viewer.followRequestPending === true,
+      };
+      const operationKey = `${token}:${post.author.id}:follow`;
+      const version = beginFeedOperation(operationKey);
+      emitFeedChange(token, (current) => markFollowState(current, post.author.id, true, false));
       try {
         const result = await api.followUser(token, post.author.id);
-        if (result.status !== 'accepted') {
-          setItems((current) => markFollowing(current, post.author.id, false));
+        const accepted = result.status === 'accepted';
+        const pending = result.status === 'pending';
+        emitFeedChange(token, (current) =>
+          markFollowState(current, post.author.id, accepted, pending),
+        );
+        if (pending) {
           setNotice({ message: 'Demande d’abonnement envoyée', tone: 'info' });
         }
       } catch {
-        setItems((current) => markFollowing(current, post.author.id, post.viewer.followingAuthor));
+        if (isCurrentFeedOperation(operationKey, version)) {
+          emitFeedChange(token, (current) =>
+            markFollowState(current, post.author.id, previous.following, previous.pending),
+          );
+        }
         notifyError('Abonnement impossible. Réessaie.');
+      } finally {
+        finishFeedOperation(operationKey, version);
+      }
+    },
+    [notifyError, token],
+  );
+
+  const unfollow = useCallback(
+    async (post: FeedPost): Promise<boolean> => {
+      if (!token) {
+        return false;
+      }
+      const previous = {
+        following: post.viewer.followingAuthor,
+        pending: post.viewer.followRequestPending === true,
+      };
+      const operationKey = `${token}:${post.author.id}:follow`;
+      const version = beginFeedOperation(operationKey);
+      emitFeedChange(token, (current) => markFollowState(current, post.author.id, false, false));
+      try {
+        await api.unfollowUser(token, post.author.id);
+        return true;
+      } catch {
+        if (isCurrentFeedOperation(operationKey, version)) {
+          emitFeedChange(token, (current) =>
+            markFollowState(current, post.author.id, previous.following, previous.pending),
+          );
+        }
+        notifyError('Abonnement impossible. Réessaie.');
+        return false;
+      } finally {
+        finishFeedOperation(operationKey, version);
       }
     },
     [notifyError, token],
@@ -393,25 +645,17 @@ export function useFeed(
       if (!token) {
         return;
       }
-      const index = items.findIndex((entry) => entry.id === post.id);
-      setItems((current) => current.filter((entry) => entry.id !== post.id));
+      const index = itemsRef.current.findIndex((entry) => entry.id === post.id);
+      emitFeedChange(token, (current) => current.filter((entry) => entry.id !== post.id));
       try {
         await api.deletePublication(token, post.id);
         setNotice({ message: 'Publication supprimée', tone: 'info' });
       } catch {
-        // Réinsertion à sa place d'origine, sans écraser les autres pages.
-        setItems((current) => {
-          if (current.some((entry) => entry.id === post.id)) {
-            return current;
-          }
-          const next = [...current];
-          next.splice(Math.max(0, Math.min(index, next.length)), 0, post);
-          return next;
-        });
+        emitFeedChange(token, (current) => restorePublication(current, post, index));
         notifyError('Suppression impossible.');
       }
     },
-    [items, notifyError, token],
+    [notifyError, token],
   );
 
   return {
@@ -432,44 +676,91 @@ export function useFeed(
     toggleSave: toggleSaveAction,
     toggleRepost: toggleRepostAction,
     follow,
+    unfollow,
     remove,
+    replacePost,
     notifyError,
     dismissNotice: () => setNotice(null),
     retry: () => void load({ reset: true }),
   };
 }
 
-/**
- * Réinsère les publications retirées par une action optimiste, à leur place
- * d'origine, sans écraser ce qui a été chargé entre-temps.
- */
-function restoreItems(items: FeedPost[], previous: FeedPost[]): FeedPost[] {
-  const present = new Set(items.map((post) => post.id));
+function restorePublication(items: FeedPost[], post: FeedPost, index: number): FeedPost[] {
+  if (items.some((entry) => entry.id === post.id)) {
+    return items;
+  }
   const result = [...items];
-  previous.forEach((post, index) => {
-    if (!present.has(post.id)) {
-      result.splice(Math.min(index, result.length), 0, post);
-    }
-  });
+  result.splice(Math.max(0, Math.min(index, result.length)), 0, post);
   return result;
 }
 
-/**
- * Rend l'état d'avant l'optimisme pour **une** publication.
- *
- * L'ancienne version restaurait le tableau entier capturé avant l'appel : une
- * page chargée entre-temps, ou une autre action réussie sur une autre
- * publication, disparaissait au passage.
- */
-function restorePost(items: FeedPost[], previous: FeedPost): FeedPost[] {
-  return items.map((post) => (post.id === previous.id ? previous : post));
+function restoreReaction(
+  items: FeedPost[],
+  publicationId: string,
+  previousReaction: SocialReaction | null,
+): FeedPost[] {
+  return items.map((post) => {
+    if (post.id !== publicationId) {
+      return post;
+    }
+    const currentReaction = post.viewer.reaction;
+    let likes = post.counters.likes;
+    if (currentReaction === null && previousReaction !== null) {
+      likes += 1;
+    } else if (currentReaction !== null && previousReaction === null) {
+      likes = Math.max(0, likes - 1);
+    }
+    return {
+      ...post,
+      counters: { ...post.counters, likes },
+      viewer: { ...post.viewer, reaction: previousReaction },
+    };
+  });
+}
+
+function restoreViewerFlag(
+  items: FeedPost[],
+  publicationId: string,
+  field: 'saved' | 'reposted',
+  previousValue: boolean,
+  counter: 'saves' | 'reposts',
+): FeedPost[] {
+  return items.map((post) => {
+    if (post.id !== publicationId) {
+      return post;
+    }
+    const currentValue = post.viewer[field] === true;
+    let count = post.counters[counter];
+    if (!currentValue && previousValue) {
+      count += 1;
+    } else if (currentValue && !previousValue) {
+      count = Math.max(0, count - 1);
+    }
+    return {
+      ...post,
+      counters: { ...post.counters, [counter]: count },
+      viewer: { ...post.viewer, [field]: previousValue },
+    };
+  });
 }
 
 /** Applique l'abonnement à toutes les publications du même auteur. */
-function markFollowing(items: FeedPost[], authorId: string, value = true): FeedPost[] {
+function markFollowState(
+  items: FeedPost[],
+  authorId: string,
+  following: boolean,
+  pending: boolean,
+): FeedPost[] {
   return items.map((post) =>
     post.author.id === authorId
-      ? { ...post, viewer: { ...post.viewer, followingAuthor: value } }
+      ? {
+          ...post,
+          viewer: {
+            ...post.viewer,
+            followingAuthor: following,
+            followRequestPending: pending,
+          },
+        }
       : post,
   );
 }

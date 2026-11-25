@@ -7,7 +7,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
 import { DRIZZLE, type Database } from '../src/db/db.module.js';
-import { publications, users } from '../src/db/schema.js';
+import {
+  commentSessions,
+  feedSessions,
+  publications,
+  publicationViews,
+  users,
+} from '../src/db/schema.js';
 import { RankingService } from '../src/ranking/ranking.service.js';
 
 /**
@@ -21,9 +27,13 @@ describe('Feed (e2e)', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
     db = app.get<Database>(DRIZZLE);
     await migrate(db, { migrationsFolder: 'drizzle' });
@@ -46,7 +56,10 @@ describe('Feed (e2e)', () => {
         gender: 'FEMALE',
       })
       .expect(201);
-    return { ...response.body.user, token: response.body.accessToken as string };
+    return {
+      ...response.body.user,
+      token: response.body.accessToken as string,
+    };
   };
 
   const publish = async (
@@ -65,25 +78,36 @@ describe('Feed (e2e)', () => {
     return response.body;
   };
 
-  const feed = (actor: { token: string }, query: Record<string, unknown> = {}) =>
+  const feed = (
+    actor: { token: string },
+    query: Record<string, unknown> = {},
+  ) =>
     request(app.getHttpServer())
       .get('/feed')
       .query(query)
       .set('Authorization', `Bearer ${actor.token}`);
 
-  const reposts = (actor: { token: string }, userId: string, query: Record<string, unknown> = {}) =>
+  const reposts = (
+    actor: { token: string },
+    userId: string,
+    query: Record<string, unknown> = {},
+  ) =>
     request(app.getHttpServer())
       .get(`/feed/reposts/${userId}`)
       .query(query)
       .set('Authorization', `Bearer ${actor.token}`);
 
-  const ids = (body: { items: Array<{ id: string }> }) => body.items.map((item) => item.id);
+  const ids = (body: { items: Array<{ id: string }> }) =>
+    body.items.map((item) => item.id);
 
   const setCity = (userId: string, city: string | null) =>
     db.update(users).set({ city }).where(eq(users.id, userId));
 
   const setHotScore = (publicationId: string, hotScore: number) =>
-    db.update(publications).set({ hotScore }).where(eq(publications.id, publicationId));
+    db
+      .update(publications)
+      .set({ hotScore })
+      .where(eq(publications.id, publicationId));
 
   it('n’expose publiquement que ce qui est public, plus son propre contenu', async () => {
     const alice = await register('Autrice');
@@ -103,7 +127,9 @@ describe('Feed (e2e)', () => {
 
     // L'auteur voit ses trois publications dans son propre fil.
     const own = ids((await feed(alice, { tab: 'local' }).expect(200)).body);
-    expect(own).toEqual(expect.arrayContaining([publicPost.id, followersPost.id, privatePost.id]));
+    expect(own).toEqual(
+      expect.arrayContaining([publicPost.id, followersPost.id, privatePost.id]),
+    );
   });
 
   it('ouvre les publications « followers » à l’abonné accepté', async () => {
@@ -120,9 +146,9 @@ describe('Feed (e2e)', () => {
 
     const seen = ids((await feed(fan, { tab: 'local' }).expect(200)).body);
     expect(seen).toContain(post.id);
-    const item = (await feed(fan, { tab: 'local' }).expect(200)).body.items.find(
-      (entry: { id: string }) => entry.id === post.id,
-    );
+    const item = (
+      await feed(fan, { tab: 'local' }).expect(200)
+    ).body.items.find((entry: { id: string }) => entry.id === post.id);
     expect(item.viewer.followingAuthor).toBe(true);
   });
 
@@ -182,7 +208,9 @@ describe('Feed (e2e)', () => {
       .set('Authorization', `Bearer ${viewer.token}`)
       .expect(201);
 
-    const following = ids((await feed(viewer, { tab: 'following' }).expect(200)).body);
+    const following = ids(
+      (await feed(viewer, { tab: 'following' }).expect(200)).body,
+    );
     expect(following).toContain(seenPost.id);
     expect(following).not.toContain(hiddenPost.id);
   });
@@ -192,7 +220,10 @@ describe('Feed (e2e)', () => {
     const elsewhere = await register('Lointaine');
     const viewer = await register('Locale');
     const city = `Ville-${suffix}`;
-    await Promise.all([setCity(neighbour.id, city), setCity(elsewhere.id, 'Ailleurs')]);
+    await Promise.all([
+      setCity(neighbour.id, city),
+      setCity(elsewhere.id, 'Ailleurs'),
+    ]);
 
     const nearbyPost = await publish(neighbour);
     const farPost = await publish(elsewhere);
@@ -237,6 +268,38 @@ describe('Feed (e2e)', () => {
     await feed(viewer, { tab: 'local', cursor: 'pas-un-curseur' }).expect(400);
   });
 
+  it('refuse un curseur de fil réutilisé dans un autre format, onglet ou ville', async () => {
+    const author = await register('Contexte');
+    const viewer = await register('ContexteLecteur');
+    const city = `Contexte-${suffix}`;
+    await Promise.all([setCity(author.id, city), setCity(viewer.id, city)]);
+    await publish(author);
+    await publish(author);
+
+    const page = await feed(viewer, {
+      tab: 'local',
+      format: 'text',
+      limit: 1,
+    }).expect(200);
+    expect(page.body.nextCursor).toEqual(expect.any(String));
+    await feed(viewer, {
+      tab: 'local',
+      format: 'video',
+      cursor: page.body.nextCursor,
+    }).expect(400);
+    await feed(viewer, {
+      tab: 'for-you',
+      format: 'text',
+      cursor: page.body.nextCursor,
+    }).expect(400);
+    await setCity(viewer.id, `Autre-${suffix}`);
+    await feed(viewer, {
+      tab: 'local',
+      format: 'text',
+      cursor: page.body.nextCursor,
+    }).expect(400);
+  });
+
   it('expose la réaction du visiteur et fait monter le score d’un post liké', async () => {
     const author = await register('Aimee');
     const viewer = await register('Reactif');
@@ -256,8 +319,12 @@ describe('Feed (e2e)', () => {
       .expect(201);
 
     const page = (await feed(viewer, { tab: 'local' }).expect(200)).body;
-    const likedItem = page.items.find((item: { id: string }) => item.id === liked.id);
-    const untouchedItem = page.items.find((item: { id: string }) => item.id === untouched.id);
+    const likedItem = page.items.find(
+      (item: { id: string }) => item.id === liked.id,
+    );
+    const untouchedItem = page.items.find(
+      (item: { id: string }) => item.id === untouched.id,
+    );
     expect(likedItem.viewer.reaction).toBe('love');
     expect(untouchedItem.viewer.reaction).toBeNull();
 
@@ -270,7 +337,9 @@ describe('Feed (e2e)', () => {
       .from(publications)
       .where(eq(publications.id, untouched.id));
     expect(likedRow.hotScore).toBeGreaterThan(untouchedRow.hotScore);
-    expect(ids(page).indexOf(liked.id)).toBeLessThan(ids(page).indexOf(untouched.id));
+    expect(ids(page).indexOf(liked.id)).toBeLessThan(
+      ids(page).indexOf(untouched.id),
+    );
   });
 
   it('rejette un onglet inconnu et exige un jeton', async () => {
@@ -285,7 +354,9 @@ describe('Feed (e2e)', () => {
     await setCity(author.id, city);
     await publish(author);
     const body = (await feed(author, { tab: 'local' }).expect(200)).body;
-    const item = body.items.find((entry: { author: { id: string } }) => entry.author.id === author.id);
+    const item = body.items.find(
+      (entry: { author: { id: string } }) => entry.author.id === author.id,
+    );
     expect(item.author).toEqual({
       id: author.id,
       username: author.username,
@@ -305,7 +376,10 @@ describe('Feed (e2e)', () => {
 
     // Même une publication `public` ne sort pas d'un compte privé : le profil
     // est fermé, le contenu doit l'être aussi (canViewProfile l'exige).
-    await db.update(users).set({ privateAccount: true }).where(eq(users.id, author.id));
+    await db
+      .update(users)
+      .set({ privateAccount: true })
+      .where(eq(users.id, author.id));
     const hidden = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
     expect(hidden).not.toContain(post.id);
     // Le détail doit être fermé aussi : le fil masquait mais l'URL directe
@@ -322,14 +396,18 @@ describe('Feed (e2e)', () => {
       .set('Authorization', `Bearer ${viewer.token}`)
       .expect(201);
     expect(request1.body.status).toBe('pending');
-    expect(ids((await feed(viewer, { tab: 'local' }).expect(200)).body)).not.toContain(post.id);
+    expect(
+      ids((await feed(viewer, { tab: 'local' }).expect(200)).body),
+    ).not.toContain(post.id);
 
     // Une fois la demande acceptée, la publication apparaît dans le fil.
     await request(app.getHttpServer())
       .post(`/users/me/follow-requests/${viewer.id}/accept`)
       .set('Authorization', `Bearer ${author.token}`)
       .expect(201);
-    const visible = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
+    const visible = ids(
+      (await feed(viewer, { tab: 'local' }).expect(200)).body,
+    );
     expect(visible).toContain(post.id);
   });
 
@@ -351,8 +429,12 @@ describe('Feed (e2e)', () => {
         expect(ids(response.body)).not.toContain(other.id);
       });
 
-    const texts = await feed(viewer, { tab: 'local', format: 'text' }).expect(200);
-    expect(ids(texts.body)).toEqual(expect.arrayContaining([textPost.id, other.id]));
+    const texts = await feed(viewer, { tab: 'local', format: 'text' }).expect(
+      200,
+    );
+    expect(ids(texts.body)).toEqual(
+      expect.arrayContaining([textPost.id, other.id]),
+    );
     await feed(viewer, { tab: 'local', format: 'gif' }).expect(400);
   });
 
@@ -375,21 +457,39 @@ describe('Feed (e2e)', () => {
         .send(body);
 
     const first = await view(viewer, { watchedMs: 1200 }).expect(201);
-    expect(first.body).toMatchObject({ viewCount: 1, watchMs: 1200, completed: false, firstView: true });
+    expect(first.body).toMatchObject({
+      viewCount: 1,
+      watchMs: 1200,
+      completed: false,
+      firstView: true,
+    });
 
     // Rejouer ne crée pas de vue supplémentaire, et le temps ne redescend pas.
     const replay = await view(viewer, { watchedMs: 800 }).expect(201);
-    expect(replay.body).toMatchObject({ viewCount: 1, watchMs: 1200, firstView: false });
+    expect(replay.body).toMatchObject({
+      viewCount: 1,
+      watchMs: 1200,
+      firstView: false,
+    });
 
-    const longer = await view(viewer, { watchedMs: 5000, completed: true }).expect(201);
-    expect(longer.body).toMatchObject({ viewCount: 1, watchMs: 5000, completed: true });
+    const longer = await view(viewer, {
+      watchedMs: 5000,
+      completed: true,
+    }).expect(201);
+    expect(longer.body).toMatchObject({
+      viewCount: 1,
+      watchMs: 5000,
+      completed: true,
+    });
 
     const other = await view(second, { watchedMs: 900 }).expect(201);
     expect(other.body.viewCount).toBe(2);
 
     // Le compteur du fil suit les vues uniques.
     const page = (await feed(viewer, { tab: 'local' }).expect(200)).body;
-    const item = page.items.find((entry: { id: string }) => entry.id === post.id);
+    const item = page.items.find(
+      (entry: { id: string }) => entry.id === post.id,
+    );
     expect(item.counters.views).toBe(2);
 
     await view(viewer, { watchedMs: -10 }).expect(400);
@@ -421,6 +521,72 @@ describe('Feed (e2e)', () => {
       .from(publications)
       .where(eq(publications.id, post.id));
     expect(again.hotScore).toBe(row.hotScore);
+  });
+
+  it('recalcule aussi une publication ancienne dont le score est périmé', async () => {
+    const ranking = app.get(RankingService);
+    const author = await register('RankingAncien');
+    const post = await publish(author);
+    await db
+      .update(publications)
+      .set({
+        createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        hotScore: 0,
+      })
+      .where(eq(publications.id, post.id));
+
+    await ranking.recomputeHotScores({ batchSize: 10_000 });
+    const [row] = await db
+      .select({ hotScore: publications.hotScore })
+      .from(publications)
+      .where(eq(publications.id, post.id));
+    expect(row.hotScore).toBeGreaterThan(0);
+  });
+
+  it('purge les sessions de fil et de commentaires expirées', async () => {
+    const ranking = app.get(RankingService);
+    const author = await register('Purge');
+    const viewer = await register('PurgeLecteur');
+    const post = await publish(author);
+    const comment = await request(app.getHttpServer())
+      .post(`/publications/${post.id}/comments`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .send({ body: 'Session', clientId: `purge-comment-${suffix}` })
+      .expect(201);
+    const expired = new Date(Date.now() - 60_000);
+    const [feedSession] = await db
+      .insert(feedSessions)
+      .values({
+        userId: viewer.id,
+        tab: 'for-you',
+        publicationIds: [post.id],
+        expiresAt: expired,
+      })
+      .returning({ id: feedSessions.id });
+    const [commentSession] = await db
+      .insert(commentSessions)
+      .values({
+        userId: viewer.id,
+        publicationId: post.id,
+        commentIds: [comment.body.id],
+        expiresAt: expired,
+      })
+      .returning({ id: commentSessions.id });
+
+    expect(await ranking.pruneExpiredSessions()).toMatchObject({
+      feedSessions: expect.any(Number),
+      commentSessions: expect.any(Number),
+    });
+    const [remainingFeed] = await db
+      .select()
+      .from(feedSessions)
+      .where(eq(feedSessions.id, feedSession.id));
+    const [remainingComment] = await db
+      .select()
+      .from(commentSessions)
+      .where(eq(commentSessions.id, commentSession.id));
+    expect(remainingFeed).toBeUndefined();
+    expect(remainingComment).toBeUndefined();
   });
 
   it('garde l’ordre d’une session stable malgré une interaction', async () => {
@@ -472,7 +638,9 @@ describe('Feed (e2e)', () => {
     // Score élevé : la publication entre à coup sûr dans les 200 candidates.
     await setHotScore(post.id, 2_000_000_000);
 
-    expect(ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body)).toContain(post.id);
+    expect(
+      ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body),
+    ).toContain(post.id);
 
     await request(app.getHttpServer())
       .post(`/publications/${post.id}/view`)
@@ -481,9 +649,41 @@ describe('Feed (e2e)', () => {
       .expect(201);
 
     // « Pour toi » avance : le contenu vu récemment est écarté.
-    expect(ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body)).not.toContain(post.id);
+    expect(
+      ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body),
+    ).not.toContain(post.id);
     // Local reste un fil de proximité : le contenu y demeure.
-    expect(ids((await feed(viewer, { tab: 'local' }).expect(200)).body)).toContain(post.id);
+    expect(
+      ids((await feed(viewer, { tab: 'local' }).expect(200)).body),
+    ).toContain(post.id);
+  });
+
+  it('rafraîchit la date de vue lors d’une nouvelle consultation', async () => {
+    const author = await register('Revu');
+    const viewer = await register('Revisiteur');
+    const post = await publish(author);
+    await setHotScore(post.id, 2_000_000_000);
+    await request(app.getHttpServer())
+      .post(`/publications/${post.id}/view`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .send({ watchedMs: 500 })
+      .expect(201);
+    await db
+      .update(publicationViews)
+      .set({ viewedAt: new Date(Date.now() - 24 * 60 * 60 * 1000) })
+      .where(eq(publicationViews.publicationId, post.id));
+    expect(
+      ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body),
+    ).toContain(post.id);
+
+    await request(app.getHttpServer())
+      .post(`/publications/${post.id}/view`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .send({ watchedMs: 700 })
+      .expect(201);
+    expect(
+      ids((await feed(viewer, { tab: 'for-you' }).expect(200)).body),
+    ).not.toContain(post.id);
   });
 
   it('applique « pas intéressé » et le masquage d’un auteur', async () => {
@@ -502,7 +702,9 @@ describe('Feed (e2e)', () => {
       .set('Authorization', `Bearer ${viewer.token}`)
       .send({ targetType: 'publication', targetId: first.id })
       .expect(201);
-    const afterHide = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
+    const afterHide = ids(
+      (await feed(viewer, { tab: 'local' }).expect(200)).body,
+    );
     expect(afterHide).not.toContain(first.id);
     expect(afterHide).toContain(second.id);
 
@@ -511,7 +713,9 @@ describe('Feed (e2e)', () => {
       .delete(`/feedback/publication/${first.id}`)
       .set('Authorization', `Bearer ${viewer.token}`)
       .expect(200);
-    expect(ids((await feed(viewer, { tab: 'local' }).expect(200)).body)).toContain(first.id);
+    expect(
+      ids((await feed(viewer, { tab: 'local' }).expect(200)).body),
+    ).toContain(first.id);
 
     // Auteur masqué : plus rien de lui, même ses autres publications.
     await request(app.getHttpServer())
@@ -519,7 +723,9 @@ describe('Feed (e2e)', () => {
       .set('Authorization', `Bearer ${viewer.token}`)
       .send({ targetType: 'author', targetId: author.id })
       .expect(201);
-    const afterMute = ids((await feed(viewer, { tab: 'local' }).expect(200)).body);
+    const afterMute = ids(
+      (await feed(viewer, { tab: 'local' }).expect(200)).body,
+    );
     expect(afterMute).not.toContain(first.id);
     expect(afterMute).not.toContain(second.id);
 
@@ -543,7 +749,9 @@ describe('Feed (e2e)', () => {
       .set('Authorization', `Bearer ${viewer.token}`)
       .expect(201);
 
-    const following = ids((await feed(viewer, { tab: 'following' }).expect(200)).body);
+    const following = ids(
+      (await feed(viewer, { tab: 'following' }).expect(200)).body,
+    );
     const newerIndex = following.indexOf(newer.id);
     const olderIndex = following.indexOf(older.id);
     expect(newerIndex).toBeGreaterThanOrEqual(0);
@@ -569,7 +777,9 @@ describe('Feed (e2e)', () => {
       .expect(201);
 
     const page = (await feed(viewer, { tab: 'following' }).expect(200)).body;
-    const item = page.items.find((entry: { id: string }) => entry.id === post.id);
+    const item = page.items.find(
+      (entry: { id: string }) => entry.id === post.id,
+    );
     expect(item).toBeDefined();
     expect(item.repostedBy?.id).toBe(relaye.id);
     expect(item.repostedBy?.displayName).toBe(relaye.displayName);
@@ -581,7 +791,9 @@ describe('Feed (e2e)', () => {
       .set('Authorization', `Bearer ${viewer.token}`)
       .expect(201);
     const after = (await feed(viewer, { tab: 'following' }).expect(200)).body;
-    const direct = after.items.find((entry: { id: string }) => entry.id === post.id);
+    const direct = after.items.find(
+      (entry: { id: string }) => entry.id === post.id,
+    );
     expect(direct).toBeDefined();
     expect(direct.repostedBy ?? null).toBeNull();
   });
@@ -613,7 +825,10 @@ describe('Feed (e2e)', () => {
     expect(page2.body.items[0].id).not.toBe(page1.body.items[0].id);
 
     // Profil privé : fermé à un étranger, ouvert à soi-même.
-    await db.update(users).set({ privateAccount: true }).where(eq(users.id, relaye.id));
+    await db
+      .update(users)
+      .set({ privateAccount: true })
+      .where(eq(users.id, relaye.id));
     await reposts(viewer, relaye.id).expect(403);
     const own = await reposts(relaye, relaye.id).expect(200);
     expect(own.body.items.length).toBeGreaterThanOrEqual(2);
@@ -635,10 +850,12 @@ describe('Feed (e2e)', () => {
     expect(second).toEqual(first);
     expect(first).toEqual([post.id]);
     expect(
-      (await db
-        .select({ hotScore: publications.hotScore })
-        .from(publications)
-        .where(and(eq(publications.id, post.id))))[0].hotScore,
+      (
+        await db
+          .select({ hotScore: publications.hotScore })
+          .from(publications)
+          .where(and(eq(publications.id, post.id)))
+      )[0].hotScore,
     ).toBe(42);
   });
 

@@ -27,8 +27,12 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
   const worker = app.get(MediaWorkerService);
   const ranking = app.get(RankingService);
-  const intervalMs = Number(config.get<string>('MEDIA_WORKER_INTERVAL_MS') ?? 2000);
-  const rankingIntervalMs = Number(config.get<string>('RANKING_INTERVAL_MS') ?? 60_000);
+  const intervalMs = Number(
+    config.get<string>('MEDIA_WORKER_INTERVAL_MS') ?? 2000,
+  );
+  const rankingIntervalMs = Number(
+    config.get<string>('RANKING_INTERVAL_MS') ?? 60_000,
+  );
 
   let running = true;
   const stop = () => {
@@ -60,12 +64,22 @@ async function bootstrap(): Promise<void> {
         if (updated > 0) {
           logger.log(`Classement : ${updated} scores recalculés.`);
         }
-        const pruned = await ranking.pruneExpiredFeedSessions();
-        if (pruned > 0) {
-          logger.log(`Sessions de fil : ${pruned} expirées supprimées.`);
+      } catch (error) {
+        logger.error(
+          `Recalcul du classement interrompu : ${(error as Error).message}`,
+        );
+      }
+      try {
+        const pruned = await ranking.pruneExpiredSessions();
+        if (pruned.feedSessions + pruned.commentSessions > 0) {
+          logger.log(
+            `Sessions expirées supprimées : ${pruned.feedSessions} de fil, ${pruned.commentSessions} de commentaires.`,
+          );
         }
       } catch (error) {
-        logger.error(`Recalcul du classement interrompu : ${(error as Error).message}`);
+        logger.error(
+          `Purge des sessions interrompue : ${(error as Error).message}`,
+        );
       }
     }
 

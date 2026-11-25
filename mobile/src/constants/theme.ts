@@ -195,6 +195,15 @@ export const FeedSurface = {
   /** Cœur rempli : le jaune de la marque, partout dans le fil. */
   like: '#FFFC00',
   follow: '#FFFC00',
+  /** Texte noir sur les boutons jaunes du feed. */
+  onFollow: '#000000',
+  /** Fond des notifications temporaires posées sur le feed. */
+  noticeInfo: 'rgba(20,22,26,0.92)',
+  noticeError: 'rgba(180,28,40,0.94)',
+  /** Piste du tirer-pour-actualiser sur le média sombre. */
+  refreshTrack: 'rgba(0,0,0,0.6)',
+  /** Badge de compte vérifié, lisible sur le média sombre. */
+  verified: '#5AA9FF',
   /** Enregistrement actif : même jaune que le cœur et « Suivre ». */
   save: '#FFFC00',
   /** Republication active : même jaune que le cœur, le suivi et l'enregistrement. */
@@ -207,6 +216,14 @@ export const FeedSurface = {
 
 /** Mesures du feed plein écran : rail d'actions, avatar, pastille. */
 export const FeedMetrics = {
+  /** Zone tactile minimale recommandée pour les contrôles du feed. */
+  touchTarget: 44,
+  /** Avatar de l'auteur dans le bloc infos Reels. */
+  authorAvatar: 32,
+  /** Disque de la ligne « son original ». */
+  soundDisc: 19,
+  /** Carte de suggestion dans le fil libre. */
+  suggestedCardWidth: 150,
   /** Icônes du rail d'action : taille généreuse (assez grandes pour être tactiles). */
   actionIcon: 30,
   actionGap: Spacing.threeHalf,

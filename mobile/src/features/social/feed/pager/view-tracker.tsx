@@ -41,31 +41,31 @@ export function FeedViewTracker({
   }, [token, durationMs]);
 
   useEffect(() => {
-    if (active) {
-      if (startedAt.current === null) {
-        startedAt.current = Date.now();
+    if (!active) {
+      return;
+    }
+    startedAt.current = Date.now();
+    return () => {
+      const started = startedAt.current;
+      if (started === null) {
+        return;
       }
-      return;
-    }
-    const started = startedAt.current;
-    if (started === null) {
-      return;
-    }
-    startedAt.current = null;
-    watchedMs.current += Math.max(0, Date.now() - started);
-    const total = Math.round(watchedMs.current);
-    const current = latest.current;
-    if (total < MIN_TRACKED_WATCH_MS || !current.token) {
-      return;
-    }
-    watchedMs.current = 0;
-    const duration = current.durationMs;
-    void api
-      .recordView(current.token, publicationId, {
-        watchedMs: total,
-        completed: duration !== null && total >= duration * COMPLETION_RATIO,
-      })
-      .catch(() => undefined);
+      startedAt.current = null;
+      watchedMs.current += Math.max(0, Date.now() - started);
+      const total = Math.round(watchedMs.current);
+      const current = latest.current;
+      if (total < MIN_TRACKED_WATCH_MS || !current.token) {
+        return;
+      }
+      watchedMs.current = 0;
+      const duration = current.durationMs;
+      void api
+        .recordView(current.token, publicationId, {
+          watchedMs: total,
+          completed: duration !== null && total >= duration * COMPLETION_RATIO,
+        })
+        .catch(() => undefined);
+    };
   }, [active, publicationId]);
 
   return null;

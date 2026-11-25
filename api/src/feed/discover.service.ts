@@ -1,9 +1,14 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, desc, eq, ne, sql, type SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { hashtags, publications, users } from '../db/schema.js';
-import { loadPublicationMedia, type MediaAccess, type PublicationMediaView } from '../publications/publication-media.js';
+import {
+  loadPublicationMedia,
+  type MediaAccess,
+  type PublicationMediaView,
+} from '../publications/publication-media.js';
 import { ObjectStorageService } from '../social-media/object-storage.service.js';
 import { visiblePublicationConditions } from '../social/publication-visibility.js';
 import { isPubliclyCacheable } from '../users/visibility.js';
@@ -12,6 +17,9 @@ import { FeedService } from './feed.service.js';
 export const DISCOVER_PUBLICATION_LIMIT = 12;
 export const DISCOVER_HASHTAG_LIMIT = 10;
 export const DISCOVER_SUGGESTION_LIMIT = 8;
+
+const quotedPublications = alias(publications, 'quoted_publications');
+const quotedAuthors = alias(users, 'quoted_authors');
 export const DISCOVER_SUCCESS_WINDOW_DAYS = 7;
 
 export interface DiscoverAuthor {
@@ -102,7 +110,11 @@ export class DiscoverService {
     const popular = this.listPublications(
       viewerId,
       [],
-      [desc(publications.hotScore), desc(publications.createdAt), desc(publications.id)],
+      [
+        desc(publications.hotScore),
+        desc(publications.createdAt),
+        desc(publications.id),
+      ],
     );
 
     const successful = this.listPublications(
@@ -127,18 +139,26 @@ export class DiscoverService {
         trendScore: hashtags.trendScore,
       })
       .from(hashtags)
-      .orderBy(desc(hashtags.trendScore), desc(hashtags.usageCount), asc(hashtags.tag))
+      .orderBy(
+        desc(hashtags.trendScore),
+        desc(hashtags.usageCount),
+        asc(hashtags.tag),
+      )
       .limit(DISCOVER_HASHTAG_LIMIT);
 
-    const suggestedAccounts = this.feed.suggestedAccounts(viewerId, DISCOVER_SUGGESTION_LIMIT);
+    const suggestedAccounts = this.feed.suggestedAccounts(
+      viewerId,
+      DISCOVER_SUGGESTION_LIMIT,
+    );
 
-    const [nearby, popularItems, successfulItems, hashtagItems, accounts] = await Promise.all([
-      nearbyFriends,
-      popular,
-      successful,
-      trendingHashtags,
-      suggestedAccounts,
-    ]);
+    const [nearby, popularItems, successfulItems, hashtagItems, accounts] =
+      await Promise.all([
+        nearbyFriends,
+        popular,
+        successful,
+        trendingHashtags,
+        suggestedAccounts,
+      ]);
 
     return {
       cityKnown: Boolean(viewer.city),
@@ -157,6 +177,13 @@ export class DiscoverService {
     extraConditions: SQL[],
     ordering: SQL[],
   ): Promise<DiscoverPublication[]> {
+    const quotedVisibility = and(
+      ...visiblePublicationConditions(
+        viewerId,
+        quotedPublications,
+        quotedAuthors,
+      ),
+    );
     const rows = await this.db
       .select({
         id: publications.id,
@@ -175,6 +202,10 @@ export class DiscoverService {
           verified: users.verified,
         },
         authorPrivateAccount: users.privateAccount,
+        quotedId: publications.quotedPublicationId,
+        quotedVisibleId: sql<
+          string | null
+        >`case when (${quotedVisibility}) then ${quotedPublications.id} else null end`,
         likeCount: publications.likeCount,
         hideLikeCount: publications.hideLikeCount,
         commentCount: publications.commentCount,
@@ -183,6 +214,14 @@ export class DiscoverService {
       })
       .from(publications)
       .innerJoin(users, eq(users.id, publications.authorId))
+      .leftJoin(
+        quotedPublications,
+        eq(quotedPublications.id, publications.quotedPublicationId),
+      )
+      .leftJoin(
+        quotedAuthors,
+        eq(quotedAuthors.id, quotedPublications.authorId),
+      )
       .where(
         and(
           ...visiblePublicationConditions(viewerId),
@@ -197,9 +236,13 @@ export class DiscoverService {
       return [];
     }
 
+    const readableRows = rows.filter(
+      (row) => !row.quotedId || row.quotedVisibleId,
+    );
     const accessById = new Map<string, MediaAccess>(
-      rows.map((row) => [
+      readableRows.map((row) => [
         row.id,
+        !row.quotedId &&
         isPubliclyCacheable({
           visibility: row.visibility,
           moderationStatus: row.moderationStatus,
@@ -212,7 +255,7 @@ export class DiscoverService {
     );
     const mediaById = await loadPublicationMedia(
       this.db,
-      rows.map((row) => row.id),
+      readableRows.map((row) => row.id),
       this.storage.isConfigured() ? this.storage : null,
       (publicationId) => accessById.get(publicationId) ?? 'signed',
     );
@@ -224,9 +267,13 @@ export class DiscoverService {
       caption: row.caption,
       createdAt: row.createdAt,
       author: row.author,
-      media: mediaById.get(row.id) ?? [],
+      media:
+        row.quotedId && !row.quotedVisibleId
+          ? []
+          : (mediaById.get(row.id) ?? []),
       counters: {
-        likes: row.hideLikeCount && row.authorId !== viewerId ? 0 : row.likeCount,
+        likes:
+          row.hideLikeCount && row.authorId !== viewerId ? 0 : row.likeCount,
         comments: row.commentCount,
         reposts: row.repostCount,
         views: row.viewCount,

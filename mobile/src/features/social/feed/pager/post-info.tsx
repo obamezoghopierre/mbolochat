@@ -6,7 +6,7 @@ import { Animated, Pressable, StyleSheet, View } from 'react-native';
 import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
+import { FeedMetrics, FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { formatCompactCount } from '@/lib/format';
 import { resolveMediaUrl } from '@/lib/media-url';
@@ -19,9 +19,7 @@ import type { FeedPost } from '@/lib/types';
 const CAPTION_PREVIEW = 80;
 
 /** Avatar de l'auteur, posé sur la vidéo. */
-const AUTHOR_AVATAR = 32;
-/** Bleu du badge vérifié, lisible sur la vidéo. */
-const VERIFIED = '#5AA9FF';
+const AUTHOR_AVATAR = FeedMetrics.authorAvatar;
 
 /** Rotation d'un tour du disque « son original ». */
 const DISC_PERIOD_MS = 3200;
@@ -88,7 +86,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
             {post.author.displayName}
           </ThemedText>
           {post.author.verified ? (
-            <Icon icon={BadgeCheck} size={15} color={VERIFIED} strokeWidth={2.4} />
+            <Icon icon={BadgeCheck} size={15} color={FeedSurface.verified} strokeWidth={2.4} />
           ) : null}
         </Pressable>
         {following || railHasAuthor ? null : followState === 'pending' ? (
@@ -98,7 +96,7 @@ export const PostInfoBlock = memo(function PostInfoBlock({
         ) : (
           <Pressable
             onPress={onFollow}
-            hitSlop={8}
+            hitSlop={Spacing.four}
             accessibilityRole="button"
             accessibilityLabel={`Suivre ${post.author.displayName}`}
             style={({ pressed }) => [styles.followOutline, pressed && styles.pressed]}>
@@ -143,7 +141,11 @@ export const PostInfoBlock = memo(function PostInfoBlock({
       ) : null}
 
       {caption.length > 0 && showCaption ? (
-        <Pressable onPress={toggleCaption} accessibilityRole="button">
+        <Pressable
+          onPress={toggleCaption}
+          accessibilityRole="button"
+          accessibilityLabel={isLong ? (expanded ? fr.social.seeLess : fr.social.seeMore) : undefined}
+          accessibilityState={{ expanded }}>
           <ThemedText style={[feedText.caption, OnMediaShadow]}>
             {renderTokens(shown, [feedText.caption, styles.token])}
             {isLong ? (
@@ -243,8 +245,8 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   disc: {
-    width: 19,
-    height: 19,
+    width: FeedMetrics.soundDisc,
+    height: FeedMetrics.soundDisc,
     borderRadius: Radii.full,
     alignItems: 'center',
     justifyContent: 'center',

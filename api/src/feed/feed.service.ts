@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -21,12 +21,18 @@ import {
   users,
   type TextPageStyle,
 } from '../db/schema.js';
-import { loadPublicationMedia, type MediaAccess } from '../publications/publication-media.js';
+import {
+  loadPublicationMedia,
+  type MediaAccess,
+} from '../publications/publication-media.js';
 import { ObjectStorageService } from '../social-media/object-storage.service.js';
 import { loadLikedByFollowed } from '../social/liked-by.js';
 import { visiblePublicationConditions } from '../social/publication-visibility.js';
 import { isPubliclyCacheable } from '../users/visibility.js';
-import type { AuthorCard, PublicationView } from '../publications/publications.service.js';
+import type {
+  AuthorCard,
+  PublicationView,
+} from '../publications/publications.service.js';
 import {
   buildSessionOrder,
   decodeFeedTimeCursor,
@@ -82,7 +88,10 @@ export function encodeFeedCursor(hotScore: number, id: string): string {
   return Buffer.from(`${hotScore}|${id}`, 'utf8').toString('base64url');
 }
 
-export function decodeFeedCursor(cursor: string): { hotScore: number; id: string } {
+export function decodeFeedCursor(cursor: string): {
+  hotScore: number;
+  id: string;
+} {
   const raw = Buffer.from(cursor, 'base64url').toString('utf8');
   const separator = raw.lastIndexOf('|');
   const hotScore = Number(raw.slice(0, separator));
@@ -96,6 +105,21 @@ export function decodeFeedCursor(cursor: string): { hotScore: number; id: string
 /** Publication citée et son auteur, jointes pour l'attribution « a republié ». */
 const quotedPublications = alias(publications, 'quoted_publications');
 const quotedAuthors = alias(users, 'quoted_authors');
+
+/** Jointure d'identifiant ; l'autorisation est réévaluée dans quotedVisibleId. */
+const quotedPublicationIdJoin = () =>
+  eq(quotedPublications.id, publications.quotedPublicationId);
+
+function quotedPublicationVisibility(viewerId: string) {
+  return and(
+    ...visiblePublicationConditions(
+      viewerId,
+      quotedPublications,
+      quotedAuthors,
+    ),
+  );
+}
+
 /** Republication portée par le profil listé (`/feed/reposts/:userId`). */
 const profileReposts = alias(publicationReposts, 'profile_reposts');
 
@@ -140,7 +164,10 @@ type PublicationRow = {
   saved: string | null;
   reposted: string | null;
   repostedAt?: Date | null;
+  /** Référence persistée, même si l'originale n'est plus visible. */
   quotedId: string | null;
+  /** Id de la jointure autorisée ; `null` quand la citation doit être masquée. */
+  quotedVisibleId: string | null;
   quotedCaption: string | null;
   quotedAuthorUsername: string | null;
   quotedAuthorDisplayName: string | null;
@@ -278,13 +305,17 @@ export class FeedService {
 
     const pageRows = rows.slice(0, limit);
     const reposterByPublication = new Map(
-      pageRows.filter((row) => row.reposter_id).map((row) => [row.publication_id, row.reposter_id!]),
+      pageRows
+        .filter((row) => row.reposter_id)
+        .map((row) => [row.publication_id, row.reposter_id!]),
     );
     const items = await this.hydrate(
       pageRows.map((row) => row.publication_id),
       viewerId,
     );
-    const reposters = await this.authorCards([...reposterByPublication.values()]);
+    const reposters = await this.authorCards([
+      ...reposterByPublication.values(),
+    ]);
     for (const item of items) {
       const reposterId = reposterByPublication.get(item.id);
       item.repostedBy = reposterId ? (reposters.get(reposterId) ?? null) : null;
@@ -311,7 +342,10 @@ export class FeedService {
    * plus suivis. Exclut soi-même, les comptes déjà suivis ou demandés, les
    * blocages dans les deux sens et les comptes supprimés.
    */
-  async suggestedAccounts(viewerId: string, limit = 12): Promise<
+  async suggestedAccounts(
+    viewerId: string,
+    limit = 12,
+  ): Promise<
     Array<{
       id: string;
       username: string;
@@ -349,7 +383,9 @@ export class FeedService {
       order by coalesce(m.n, 0) desc, u.verified desc, u.follower_count desc, u.created_at desc
       limit ${bounded}
     `);
-    const rows = (result as unknown as { rows: Array<Record<string, unknown>> }).rows ?? [];
+    const rows =
+      (result as unknown as { rows: Array<Record<string, unknown>> }).rows ??
+      [];
     return rows.map((row) => ({
       id: String(row.id),
       username: String(row.username),
@@ -377,7 +413,12 @@ export class FeedService {
       const [owned] = await this.db
         .select({ id: saveCollections.id })
         .from(saveCollections)
-        .where(and(eq(saveCollections.id, collectionId), eq(saveCollections.userId, viewerId)));
+        .where(
+          and(
+            eq(saveCollections.id, collectionId),
+            eq(saveCollections.userId, viewerId),
+          ),
+        );
       if (!owned) {
         throw new NotFoundException('Collection introuvable.');
       }
@@ -385,7 +426,9 @@ export class FeedService {
     const conditions = [
       eq(publicationSaves.userId, viewerId),
       ...visiblePublicationConditions(viewerId),
-      ...(collectionId ? [eq(publicationSaves.collectionId, collectionId)] : []),
+      ...(collectionId
+        ? [eq(publicationSaves.collectionId, collectionId)]
+        : []),
     ];
     if (cursor) {
       const decoded = decodeFeedTimeCursor(cursor);
@@ -394,9 +437,15 @@ export class FeedService {
       );
     }
     const rows = await this.db
-      .select({ ...this.feedColumns(viewerId), savedAt: publicationSaves.createdAt })
+      .select({
+        ...this.feedColumns(viewerId),
+        savedAt: publicationSaves.createdAt,
+      })
       .from(publicationSaves)
-      .innerJoin(publications, eq(publications.id, publicationSaves.publicationId))
+      .innerJoin(
+        publications,
+        eq(publications.id, publicationSaves.publicationId),
+      )
       .innerJoin(users, eq(users.id, publications.authorId))
       .leftJoin(
         publicationReactions,
@@ -412,14 +461,11 @@ export class FeedService {
           eq(publicationReposts.userId, viewerId),
         ),
       )
+      .leftJoin(quotedPublications, quotedPublicationIdJoin())
       .leftJoin(
-        quotedPublications,
-        and(
-          eq(quotedPublications.id, publications.quotedPublicationId),
-          isNull(quotedPublications.deletedAt),
-        ),
+        quotedAuthors,
+        eq(quotedAuthors.id, quotedPublications.authorId),
       )
-      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
       .where(and(...conditions))
       .orderBy(desc(publicationSaves.createdAt), desc(publications.id))
       .limit(bounded + 1);
@@ -449,7 +495,10 @@ export class FeedService {
   ): Promise<FeedPage> {
     const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
     const [target] = await this.db
-      .select({ privateAccount: users.privateAccount, deletedAt: users.deletedAt })
+      .select({
+        privateAccount: users.privateAccount,
+        deletedAt: users.deletedAt,
+      })
       .from(users)
       .where(eq(users.id, userId));
     if (!target || target.deletedAt) {
@@ -486,7 +535,10 @@ export class FeedService {
       }
     }
 
-    const conditions = [eq(publications.authorId, userId), ...this.baseConditions(viewerId)];
+    const conditions = [
+      eq(publications.authorId, userId),
+      ...this.baseConditions(viewerId),
+    ];
     if (cursor) {
       const decoded = decodeFeedTimeCursor(cursor);
       conditions.push(
@@ -494,7 +546,10 @@ export class FeedService {
       );
     }
     const rows = await this.db
-      .select({ ...this.feedColumns(viewerId), pinnedAt: publications.pinnedAt })
+      .select({
+        ...this.feedColumns(viewerId),
+        pinnedAt: publications.pinnedAt,
+      })
       .from(publications)
       .innerJoin(users, eq(users.id, publications.authorId))
       .leftJoin(
@@ -518,14 +573,11 @@ export class FeedService {
           eq(publicationReposts.userId, viewerId),
         ),
       )
+      .leftJoin(quotedPublications, quotedPublicationIdJoin())
       .leftJoin(
-        quotedPublications,
-        and(
-          eq(quotedPublications.id, publications.quotedPublicationId),
-          isNull(quotedPublications.deletedAt),
-        ),
+        quotedAuthors,
+        eq(quotedAuthors.id, quotedPublications.authorId),
       )
-      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
       .where(and(...conditions))
       .orderBy(
         sql`${publications.pinnedAt} desc nulls last`,
@@ -537,14 +589,18 @@ export class FeedService {
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
     const items = await this.toItems(page, viewerId);
-    const pinnedIds = new Set(page.filter((row) => row.pinnedAt).map((row) => row.id));
+    const pinnedIds = new Set(
+      page.filter((row) => row.pinnedAt).map((row) => row.id),
+    );
     for (const item of items) {
       (item as FeedItem & { pinned?: boolean }).pinned = pinnedIds.has(item.id);
     }
     return {
       items,
       nextCursor:
-        rows.length > bounded && last ? encodeFeedTimeCursor(last.createdAt, last.id) : null,
+        rows.length > bounded && last
+          ? encodeFeedTimeCursor(last.createdAt, last.id)
+          : null,
     };
   }
 
@@ -556,7 +612,10 @@ export class FeedService {
   ): Promise<FeedPage> {
     const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
     const [target] = await this.db
-      .select({ privateAccount: users.privateAccount, deletedAt: users.deletedAt })
+      .select({
+        privateAccount: users.privateAccount,
+        deletedAt: users.deletedAt,
+      })
       .from(users)
       .where(eq(users.id, userId));
     if (!target || target.deletedAt) {
@@ -610,7 +669,10 @@ export class FeedService {
         repostedAt: profileReposts.createdAt,
       })
       .from(profileReposts)
-      .innerJoin(publications, eq(publications.id, profileReposts.publicationId))
+      .innerJoin(
+        publications,
+        eq(publications.id, profileReposts.publicationId),
+      )
       .innerJoin(users, eq(users.id, publications.authorId))
       .leftJoin(
         publicationReactions,
@@ -633,14 +695,11 @@ export class FeedService {
           eq(publicationReposts.userId, viewerId),
         ),
       )
+      .leftJoin(quotedPublications, quotedPublicationIdJoin())
       .leftJoin(
-        quotedPublications,
-        and(
-          eq(quotedPublications.id, publications.quotedPublicationId),
-          isNull(quotedPublications.deletedAt),
-        ),
+        quotedAuthors,
+        eq(quotedAuthors.id, quotedPublications.authorId),
       )
-      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
       .where(and(...conditions))
       .orderBy(desc(profileReposts.createdAt), desc(publications.id))
       .limit(bounded + 1);
@@ -706,9 +765,29 @@ export class FeedService {
       const [session] = await this.db
         .select()
         .from(feedSessions)
-        .where(and(eq(feedSessions.id, sessionId), eq(feedSessions.userId, viewerId)));
+        .where(
+          and(
+            eq(feedSessions.id, sessionId),
+            eq(feedSessions.userId, viewerId),
+          ),
+        );
       if (!session || session.expiresAt.getTime() <= Date.now()) {
-        throw new BadRequestException('Session de fil expirée. Recharge le fil.');
+        throw new BadRequestException(
+          'Session de fil expirée. Recharge le fil.',
+        );
+      }
+      const sessionCity = tab === 'local' ? (city ?? null) : null;
+      if (
+        session.tab !== tab ||
+        session.format !== (format ?? null) ||
+        session.city !== sessionCity
+      ) {
+        throw new BadRequestException(
+          'Curseur incompatible avec le fil demandé.',
+        );
+      }
+      if (offset > session.publicationIds.length) {
+        throw new BadRequestException('Curseur de fil invalide.');
       }
       // Une publication écartée (« Pas intéressé », supprimée, retirée par la
       // modération) entre deux pages est filtrée à l'hydratation : on complète
@@ -716,10 +795,23 @@ export class FeedService {
       // pleine, plutôt que de laisser un trou.
       let cursorOffset = offset;
       let items: FeedItem[] = [];
-      while (items.length < limit && cursorOffset < session.publicationIds.length) {
-        const chunk = session.publicationIds.slice(cursorOffset, cursorOffset + limit);
+      while (
+        items.length < limit &&
+        cursorOffset < session.publicationIds.length
+      ) {
+        const chunk = session.publicationIds.slice(
+          cursorOffset,
+          cursorOffset + limit,
+        );
         cursorOffset += chunk.length;
-        items = [...items, ...(await this.hydrate(chunk, viewerId))];
+        items = [
+          ...items,
+          ...(await this.hydrate(chunk, viewerId, {
+            tab,
+            format,
+            city: sessionCity,
+          })),
+        ];
       }
       return {
         items: items.slice(0, limit),
@@ -767,12 +859,7 @@ export class FeedService {
       .select({ id: publications.id, authorId: publications.authorId })
       .from(publications)
       .innerJoin(users, eq(users.id, publications.authorId))
-      .where(
-        and(
-          ...conditions,
-          sql`not (${this.followsAuthor(viewerId)})`,
-        ),
-      )
+      .where(and(...conditions, sql`not (${this.followsAuthor(viewerId)})`))
       // Exploration déterministe : l'ordre dépend de la session, pas du hasard
       // de `random()`, sinon deux lectures de la même page divergeraient.
       .orderBy(sql`md5(${publications.id} || ${seed})`)
@@ -791,6 +878,8 @@ export class FeedService {
       .values({
         userId: viewerId,
         tab,
+        format: format ?? null,
+        city: tab === 'local' ? (city ?? null) : null,
         publicationIds: order,
         expiresAt: new Date(Date.now() + FEED_SESSION_TTL_MS),
       })
@@ -798,7 +887,11 @@ export class FeedService {
 
     const pageIds = order.slice(0, limit);
     return {
-      items: await this.hydrate(pageIds, viewerId),
+      items: await this.hydrate(pageIds, viewerId, {
+        tab,
+        format,
+        city: tab === 'local' ? (city ?? null) : null,
+      }),
       nextCursor:
         order.length > limit && session
           ? encodeSessionCursor(session.id, limit)
@@ -807,9 +900,24 @@ export class FeedService {
   }
 
   /** Charge les publications d'une page dans l'ordre demandé. */
-  private async hydrate(ids: string[], viewerId: string): Promise<FeedItem[]> {
+  private async hydrate(
+    ids: string[],
+    viewerId: string,
+    scope?: {
+      tab: Exclude<FeedTab, 'following'>;
+      format?: FeedFormat;
+      city: string | null;
+    },
+  ): Promise<FeedItem[]> {
     if (ids.length === 0) {
       return [];
+    }
+    const conditions = [...this.baseConditions(viewerId)];
+    if (scope?.format) {
+      conditions.push(eq(publications.format, scope.format));
+    }
+    if (scope?.tab === 'local') {
+      conditions.push(eq(users.city, scope.city!));
     }
     const rows = await this.db
       .select(this.feedColumns(viewerId))
@@ -836,20 +944,17 @@ export class FeedService {
           eq(publicationReposts.userId, viewerId),
         ),
       )
+      .leftJoin(quotedPublications, quotedPublicationIdJoin())
       .leftJoin(
-        quotedPublications,
-        and(
-          eq(quotedPublications.id, publications.quotedPublicationId),
-          isNull(quotedPublications.deletedAt),
-        ),
+        quotedAuthors,
+        eq(quotedAuthors.id, quotedPublications.authorId),
       )
-      .leftJoin(quotedAuthors, eq(quotedAuthors.id, quotedPublications.authorId))
       .where(
         and(
           inArray(publications.id, ids),
           // Une publication retirée ou supprimée entre deux pages disparaît,
           // même si son identifiant était figé dans la session.
-          ...this.baseConditions(viewerId),
+          ...conditions,
         ),
       );
 
@@ -903,6 +1008,9 @@ export class FeedService {
       saved: publicationSaves.userId,
       reposted: publicationReposts.userId,
       quotedId: publications.quotedPublicationId,
+      quotedVisibleId: sql<
+        string | null
+      >`case when (${quotedPublicationVisibility(viewerId)}) then ${quotedPublications.id} else null end`,
       quotedCaption: quotedPublications.caption,
       quotedAuthorUsername: quotedAuthors.username,
       quotedAuthorDisplayName: quotedAuthors.displayName,
@@ -911,7 +1019,10 @@ export class FeedService {
 
   /** Conditions d'autorisation communes à tous les onglets. */
   private baseConditions(viewerId: string) {
-    return [...visiblePublicationConditions(viewerId), this.feedbackCondition(viewerId)];
+    return [
+      ...visiblePublicationConditions(viewerId),
+      this.feedbackCondition(viewerId),
+    ];
   }
 
   /**
@@ -972,15 +1083,23 @@ export class FeedService {
   }
 
   /** Hydrate les URLs de médias et rend les éléments de fil. */
-  private async toItems(rows: PublicationRow[], viewerId: string): Promise<FeedItem[]> {
+  private async toItems(
+    rows: PublicationRow[],
+    viewerId: string,
+  ): Promise<FeedItem[]> {
     if (rows.length === 0) {
       return [];
     }
-    // Niveau de diffusion des médias, décidé ici : le CDN public n'est utilisé
-    // que pour un contenu réellement public, tout le reste est signé.
+    // Une citation copie les assets de son originale. Si celle-ci n'est plus
+    // visible, ni son attribution ni ses médias ne sont renvoyés. Sinon ses
+    // médias restent signés : leur lecture doit pouvoir être révoquée ensuite.
+    const readableRows = rows.filter(
+      (row) => !row.quotedId || row.quotedVisibleId,
+    );
     const access = new Map<string, MediaAccess>(
-      rows.map((row) => [
+      readableRows.map((row) => [
         row.id,
+        !row.quotedId &&
         isPubliclyCacheable({
           visibility: row.visibility,
           // Le fil exclut déjà `flagged` et `removed` : ce qui passe est
@@ -996,20 +1115,27 @@ export class FeedService {
     const [media, likers] = await Promise.all([
       loadPublicationMedia(
         this.db,
-        rows.map((row) => row.id),
+        readableRows.map((row) => row.id),
         this.storage.isConfigured() ? this.storage : null,
         (publicationId) => access.get(publicationId) ?? 'signed',
       ),
       loadLikedByFollowed(
         this.db,
-        rows.filter((row) => row.likeCount > 0).map((row) => row.id),
+        rows
+          .filter(
+            (row) =>
+              row.likeCount > 0 &&
+              (!row.hideLikeCount || viewerId === row.authorId),
+          )
+          .map((row) => row.id),
         viewerId,
       ),
     ]);
 
     return rows.map((row) => ({
       id: row.id,
-      media: media.get(row.id) ?? [],
+      media:
+        row.quotedId && !row.quotedVisibleId ? [] : (media.get(row.id) ?? []),
       kind: row.kind,
       format: row.format,
       caption: row.caption,
@@ -1032,7 +1158,8 @@ export class FeedService {
       author: { ...row.author } as AuthorCard,
       counters: {
         // Nombre masqué par l'auteur : seul l'auteur le voit.
-        likes: row.hideLikeCount && viewerId !== row.authorId ? 0 : row.likeCount,
+        likes:
+          row.hideLikeCount && viewerId !== row.authorId ? 0 : row.likeCount,
         comments: row.commentCount,
         reposts: row.repostCount,
         saves: row.saveCount,
@@ -1046,9 +1173,9 @@ export class FeedService {
         followingAuthor: Boolean(row.followingAuthor),
       },
       quoted:
-        row.quotedId && row.quotedAuthorDisplayName !== null
+        row.quotedVisibleId && row.quotedAuthorDisplayName !== null
           ? {
-              id: row.quotedId,
+              id: row.quotedVisibleId,
               authorUsername: row.quotedAuthorUsername ?? '',
               authorDisplayName: row.quotedAuthorDisplayName,
               caption: row.quotedCaption,

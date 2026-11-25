@@ -11,26 +11,36 @@ import {
   type RankedCandidate,
 } from './feed-ranking.js';
 
-const item = (id: string, authorId = `author-${id}`): RankedCandidate => ({ id, authorId });
+const item = (id: string, authorId = `author-${id}`): RankedCandidate => ({
+  id,
+  authorId,
+});
 
 describe('interleaveExploration', () => {
   it('insère une publication d’exploration tous les N éléments', () => {
     const ranked = ['1', '2', '3', '4', '5', '6'].map((id) => item(id));
     const exploration = ['x1', 'x2'].map((id) => item(id));
-    const merged = interleaveExploration(ranked, exploration, 3).map((entry) => entry.id);
+    const merged = interleaveExploration(ranked, exploration, 3).map(
+      (entry) => entry.id,
+    );
     expect(merged).toEqual(['1', '2', '3', 'x1', '4', '5', '6', 'x2']);
   });
 
   it('ne duplique jamais une publication déjà classée', () => {
     const ranked = [item('a'), item('b')];
     const exploration = [item('a'), item('c')];
-    const merged = interleaveExploration(ranked, exploration, 1).map((entry) => entry.id);
+    const merged = interleaveExploration(ranked, exploration, 1).map(
+      (entry) => entry.id,
+    );
     expect(merged).toEqual(['a', 'c', 'b']);
   });
 
   it('rend le classement inchangé sans réserve d’exploration', () => {
     const ranked = [item('a'), item('b')];
-    expect(interleaveExploration(ranked, []).map((entry) => entry.id)).toEqual(['a', 'b']);
+    expect(interleaveExploration(ranked, []).map((entry) => entry.id)).toEqual([
+      'a',
+      'b',
+    ]);
   });
 
   it('ajoute le reste de la réserve à la fin', () => {
@@ -65,19 +75,35 @@ describe('diversifyAuthors', () => {
 
   it('laisse l’ordre intact quand les auteurs alternent', () => {
     const items = [item('1', 'a'), item('2', 'b'), item('3', 'a')];
-    expect(diversifyAuthors(items, 2).map((entry) => entry.id)).toEqual(['1', '2', '3']);
+    expect(diversifyAuthors(items, 2).map((entry) => entry.id)).toEqual([
+      '1',
+      '2',
+      '3',
+    ]);
   });
 });
 
 describe('buildSessionOrder', () => {
   it('est déterministe pour les mêmes entrées', () => {
-    const ranked = [item('1', 'a'), item('2', 'a'), item('3', 'a'), item('4', 'b')];
+    const ranked = [
+      item('1', 'a'),
+      item('2', 'a'),
+      item('3', 'a'),
+      item('4', 'b'),
+    ];
     const exploration = [item('x', 'z')];
-    expect(buildSessionOrder(ranked, exploration)).toEqual(buildSessionOrder(ranked, exploration));
+    expect(buildSessionOrder(ranked, exploration)).toEqual(
+      buildSessionOrder(ranked, exploration),
+    );
   });
 
   it('contient chaque publication une seule fois', () => {
-    const ranked = [item('1', 'a'), item('2', 'a'), item('3', 'a'), item('4', 'b')];
+    const ranked = [
+      item('1', 'a'),
+      item('2', 'a'),
+      item('3', 'a'),
+      item('4', 'b'),
+    ];
     const exploration = [item('2', 'a'), item('x', 'z')];
     const order = buildSessionOrder(ranked, exploration);
     expect(new Set(order).size).toBe(order.length);
@@ -88,7 +114,10 @@ describe('buildSessionOrder', () => {
 describe('curseurs', () => {
   it('fait un aller-retour sur le curseur de session', () => {
     const cursor = encodeSessionCursor('session-1', 42);
-    expect(decodeSessionCursor(cursor)).toEqual({ sessionId: 'session-1', offset: 42 });
+    expect(decodeSessionCursor(cursor)).toEqual({
+      sessionId: 'session-1',
+      offset: 42,
+    });
   });
 
   it('refuse un curseur de session invalide', () => {
@@ -96,6 +125,11 @@ describe('curseurs', () => {
     expect(() => decodeSessionCursor('pas-un-curseur')).toThrow();
     expect(() => decodeSessionCursor(encodeSessionCursor('s', -1))).toThrow();
     expect(() => decodeSessionCursor(encodeSessionCursor('', 0))).toThrow();
+    expect(() =>
+      decodeSessionCursor(
+        encodeSessionCursor('s', Number.MAX_SAFE_INTEGER + 1),
+      ),
+    ).toThrow();
   });
 
   it('fait un aller-retour sur le curseur chronologique', () => {

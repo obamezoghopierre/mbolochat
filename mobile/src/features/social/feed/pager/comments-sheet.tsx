@@ -12,7 +12,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef } 
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 import {
   ActivityIndicator,
-  Dimensions,
   Keyboard,
   LayoutAnimation,
   Platform,
@@ -22,6 +21,7 @@ import {
   StyleSheet,
   TextInput,
   UIManager,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -107,7 +107,7 @@ export function CommentsSheet({
   const theme = useTheme();
   const { scheme } = useThemePreference();
   const insets = useSafeAreaInsets();
-  const screenHeight = useMemo(() => Dimensions.get('window').height, []);
+  const { height: screenHeight } = useWindowDimensions();
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const [current, setCurrent] = useState<FeedPost>(post);
@@ -117,6 +117,8 @@ export function CommentsSheet({
   const [error, setError] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const locallyCreatedIds = useRef(new Set<string>());
   const [replyTo, setReplyTo] = useState<PublicationComment | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -294,6 +296,7 @@ export function CommentsSheet({
       stickerRef?: string;
     }) => {
       const { parentId } = input;
+      sendingRef.current = true;
       setSending(true);
       try {
         const created = await api.addComment(token as string, current.id, {
@@ -304,6 +307,7 @@ export function CommentsSheet({
           voiceMediaAssetId: input.voiceMediaAssetId,
           stickerRef: input.stickerRef,
         });
+        locallyCreatedIds.current.add(created.id);
         const replay =
           comments.some((item) => item.id === created.id) ||
           pinned.some((item) => item.id === created.id);
@@ -341,6 +345,7 @@ export function CommentsSheet({
       } catch {
         setNotice(fr.social.commentError);
       } finally {
+        sendingRef.current = false;
         setSending(false);
       }
     },
@@ -627,6 +632,12 @@ export function CommentsSheet({
   /** Commentaire créé ailleurs : insertion selon le tri, pilule si scrollé. */
   const handleLiveCreated = useCallback(
     (view: PublicationComment) => {
+      if (locallyCreatedIds.current.has(view.id)) {
+        return;
+      }
+      if (view.author.id === user?.id && sendingRef.current) {
+        return;
+      }
       const known = [...liveRef.current.comments, ...liveRef.current.pinned].some(
         (item) => item.id === view.id,
       );
@@ -659,7 +670,7 @@ export function CommentsSheet({
       }));
     },
     // `scrollY` est une SharedValue stable : `.value` est lu au moment de l'événement.
-    [scrollY, sort],
+    [scrollY, sort, user?.id],
   );
 
   /** Score, réactions, épinglage ou compteur modifiés ailleurs. */

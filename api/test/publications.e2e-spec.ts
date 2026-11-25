@@ -2,12 +2,21 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { io, type Socket } from 'socket.io-client';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { AddressInfo } from 'node:net';
 
 import { AppModule } from '../src/app.module.js';
 import { DRIZZLE, type Database } from '../src/db/db.module.js';
-import { comments, publications, userSocialSettings, users } from '../src/db/schema.js';
+import {
+  commentDislikes,
+  commentLikes,
+  comments,
+  publications,
+  userSocialSettings,
+  users,
+} from '../src/db/schema.js';
 
 /**
  * Publications et interactions sur vraie base : idempotence des créations,
@@ -20,9 +29,13 @@ describe('Publications et interactions (e2e)', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
     db = app.get<Database>(DRIZZLE);
     await migrate(db, { migrationsFolder: 'drizzle' });
@@ -45,7 +58,10 @@ describe('Publications et interactions (e2e)', () => {
         gender: 'FEMALE',
       })
       .expect(201);
-    return { ...response.body.user, token: response.body.accessToken as string };
+    return {
+      ...response.body.user,
+      token: response.body.accessToken as string,
+    };
   };
 
   const publish = (
@@ -98,7 +114,10 @@ describe('Publications et interactions (e2e)', () => {
   };
 
   const publicationRow = async (id: string) => {
-    const [row] = await db.select().from(publications).where(eq(publications.id, id));
+    const [row] = await db
+      .select()
+      .from(publications)
+      .where(eq(publications.id, id));
     return row;
   };
 
@@ -127,7 +146,11 @@ describe('Publications et interactions (e2e)', () => {
       shares: 0,
       views: 0,
     });
-    expect(body.viewer).toEqual({ reaction: null, saved: false, reposted: false });
+    expect(body.viewer).toEqual({
+      reaction: null,
+      saved: false,
+      reposted: false,
+    });
     expect(await counters(alice.id)).toEqual({
       publications: 1,
       reels: 0,
@@ -168,7 +191,13 @@ describe('Publications et interactions (e2e)', () => {
     const response = await publish(alice, {
       textPages: ['Page une', 'Page deux', 'Page trois'],
       textPageStyles: [
-        { background: 'ocean', color: 'white', font: 'elegant', align: 'center', size: 40 },
+        {
+          background: 'ocean',
+          color: 'white',
+          font: 'elegant',
+          align: 'center',
+          size: 40,
+        },
         {},
         { color: 'mint', font: 'typewriter', align: 'right', size: 20 },
       ],
@@ -178,7 +207,13 @@ describe('Publications et interactions (e2e)', () => {
     expect(body.pages).toEqual(['Page une', 'Page deux', 'Page trois']);
     // Le style reste appairé à son index, `null` = rendu par défaut.
     expect(body.pageStyles).toEqual([
-      { background: 'ocean', color: 'white', font: 'elegant', align: 'center', size: 40 },
+      {
+        background: 'ocean',
+        color: 'white',
+        font: 'elegant',
+        align: 'center',
+        size: 40,
+      },
       null,
       { color: 'mint', font: 'typewriter', align: 'right', size: 20 },
     ]);
@@ -246,7 +281,10 @@ describe('Publications et interactions (e2e)', () => {
     const single = await request(app.getHttpServer())
       .patch(`/publications/${id}`)
       .set('Authorization', `Bearer ${alice.token}`)
-      .send({ textPages: ['Page unique'], textPageStyles: [{ background: 'red' }] })
+      .send({
+        textPages: ['Page unique'],
+        textPageStyles: [{ background: 'red' }],
+      })
       .expect(200);
     expect(single.body.pages).toBeNull();
     expect(single.body.pageStyles).toBeNull();
@@ -280,7 +318,9 @@ describe('Publications et interactions (e2e)', () => {
     expect(detail.body.textTitle).toBe('Mon titre');
 
     // Un titre trop long est refusé par le DTO.
-    await publish(alice, { caption: 'x', textTitle: 't'.repeat(201) }).expect(400);
+    await publish(alice, { caption: 'x', textTitle: 't'.repeat(201) }).expect(
+      400,
+    );
 
     // Une clé inconnue est refusée par le DTO.
     await publish(alice, { caption: 'x', textFont: 'comic-sans' }).expect(400);
@@ -304,7 +344,11 @@ describe('Publications et interactions (e2e)', () => {
     const updated = await request(app.getHttpServer())
       .patch(`/publications/${id}`)
       .set('Authorization', `Bearer ${alice.token}`)
-      .send({ caption: 'Légende corrigée', textTitle: '  Nouveau titre  ', textFont: 'caps' })
+      .send({
+        caption: 'Légende corrigée',
+        textTitle: '  Nouveau titre  ',
+        textFont: 'caps',
+      })
       .expect(200);
 
     expect(updated.body.caption).toBe('Légende corrigée');
@@ -377,7 +421,9 @@ describe('Publications et interactions (e2e)', () => {
     await patch({ textBackground: 'arc-en-ciel' }).expect(400);
     await patch({ textTitle: 't'.repeat(201) }).expect(400);
     await patch({ textPages: ['ok', 'x'.repeat(2001)] }).expect(400);
-    await patch({ textPages: Array.from({ length: 11 }, (_, i) => `p${i}`) }).expect(400);
+    await patch({
+      textPages: Array.from({ length: 11 }, (_, i) => `p${i}`),
+    }).expect(400);
     await patch({ textSize: 10 }).expect(400);
     await patch({ textSize: 65 }).expect(400);
     await patch({ textSize: 1.5 }).expect(400);
@@ -387,10 +433,14 @@ describe('Publications et interactions (e2e)', () => {
     // `textColor: null` est accepté : retour à la couleur du thème.
     await patch({ textColor: null }).expect(200);
     // Taille et lieu acceptés puis effaçables.
-    const sized = await patch({ textSize: 42, location: '  Paris  ' }).expect(200);
+    const sized = await patch({ textSize: 42, location: '  Paris  ' }).expect(
+      200,
+    );
     expect(sized.body.textSize).toBe(42);
     expect(sized.body.location).toBe('Paris');
-    const clearedSize = await patch({ textSize: null, location: null }).expect(200);
+    const clearedSize = await patch({ textSize: null, location: null }).expect(
+      200,
+    );
     expect(clearedSize.body.textSize).toBeNull();
     expect(clearedSize.body.location).toBeNull();
   });
@@ -433,11 +483,26 @@ describe('Publications et interactions (e2e)', () => {
 
       // Nombre de J'aime masqué pour les autres, visible pour l'auteur.
       expect((await see(bob, id).expect(200)).body.counters.likes).toBe(0);
+      expect((await see(bob, id).expect(200)).body.likedBy).toBeNull();
       expect((await see(alice, id).expect(200)).body.counters.likes).toBe(1);
+      const hiddenReplay = await request(app.getHttpServer())
+        .post(`/publications/${id}/like`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .send({ kind: 'like' })
+        .expect(201);
+      expect(hiddenReplay.body.likeCount).toBe(0);
+      const hiddenRemoval = await request(app.getHttpServer())
+        .delete(`/publications/${id}/like`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .expect(200);
+      expect(hiddenRemoval.body.likeCount).toBe(0);
 
       const extra = [];
       for (let n = 0; n < 3; n += 1) {
-        extra.push((await publish(alice, { caption: `Épingle ${n}` }).expect(201)).body.id);
+        extra.push(
+          (await publish(alice, { caption: `Épingle ${n}` }).expect(201)).body
+            .id,
+        );
       }
       for (const pid of extra) {
         await request(app.getHttpServer())
@@ -458,20 +523,29 @@ describe('Publications et interactions (e2e)', () => {
         .get(`/feed/authored/${alice.id}`)
         .set('Authorization', `Bearer ${bob.token}`)
         .expect(200);
-      const firstThree = grid.body.items.slice(0, 3).map((item: { id: string }) => item.id);
+      const firstThree = grid.body.items
+        .slice(0, 3)
+        .map((item: { id: string }) => item.id);
       expect(new Set(firstThree)).toEqual(new Set(extra));
       expect(grid.body.items[0].pinned).toBe(true);
     });
   });
 
   describe('modifier une publication après coup', () => {
-    const edit = (actor: { token: string }, id: string, body: Record<string, unknown>) =>
+    const edit = (
+      actor: { token: string },
+      id: string,
+      body: Record<string, unknown>,
+    ) =>
       request(app.getHttpServer())
         .patch(`/publications/${id}`)
         .set('Authorization', `Bearer ${actor.token}`)
         .send(body);
 
-    const mentionsOf = async (actor: { token: string }, publicationId: string) =>
+    const mentionsOf = async (
+      actor: { token: string },
+      publicationId: string,
+    ) =>
       (
         await request(app.getHttpServer())
           .get('/social/notifications')
@@ -484,14 +558,20 @@ describe('Publications et interactions (e2e)', () => {
 
     it('marque « modifié » seulement quand le texte change', async () => {
       const alice = await register('Retouche');
-      const created = await publish(alice, { caption: 'Premier jet' }).expect(201);
+      const created = await publish(alice, { caption: 'Premier jet' }).expect(
+        201,
+      );
       expect(created.body.editedAt ?? null).toBeNull();
 
       // Style seul : pas de mention « modifié ».
-      const restyled = await edit(alice, created.body.id, { textBackground: 'rose' }).expect(200);
+      const restyled = await edit(alice, created.body.id, {
+        textBackground: 'rose',
+      }).expect(200);
       expect(restyled.body.editedAt ?? null).toBeNull();
 
-      const edited = await edit(alice, created.body.id, { caption: 'Version corrigée' }).expect(200);
+      const edited = await edit(alice, created.body.id, {
+        caption: 'Version corrigée',
+      }).expect(200);
       expect(edited.body.caption).toBe('Version corrigée');
       expect(edited.body.editedAt).toEqual(expect.any(String));
 
@@ -503,7 +583,9 @@ describe('Publications et interactions (e2e)', () => {
       const alice = await register('Ajouteuse');
       const first = await register('Premiere');
       const second = await register('Seconde');
-      const created = await publish(alice, { caption: `Avec @${first.username}` }).expect(201);
+      const created = await publish(alice, {
+        caption: `Avec @${first.username}`,
+      }).expect(201);
       expect(await mentionsOf(first, created.body.id)).toHaveLength(1);
 
       await edit(alice, created.body.id, {
@@ -532,7 +614,9 @@ describe('Publications et interactions (e2e)', () => {
 
       const response = await publish(alice, { textPages: pages }).expect(201);
       expect(response.body.pages).toHaveLength(10);
-      expect(response.body.pages.every((value: string) => value.length === 2000)).toBe(true);
+      expect(
+        response.body.pages.every((value: string) => value.length === 2000),
+      ).toBe(true);
       expect(response.body.caption).toBe(pages[0]);
       expect((await publicationRow(response.body.id)).textPages).toEqual(pages);
     });
@@ -540,15 +624,22 @@ describe('Publications et interactions (e2e)', () => {
     it('rejette une 11e page et une page de plus de 2000 caractères', async () => {
       const alice = await register('Tropdepages');
       await publish(alice, {
-        textPages: Array.from({ length: 11 }, (_, index) => `Page ${index + 1}`),
+        textPages: Array.from(
+          { length: 11 },
+          (_, index) => `Page ${index + 1}`,
+        ),
       }).expect(400);
-      await publish(alice, { textPages: ['Courte', page('x', 2001)] }).expect(400);
+      await publish(alice, { textPages: ['Courte', page('x', 2001)] }).expect(
+        400,
+      );
       expect((await counters(alice.id)).publications).toBe(0);
     });
 
     it('rejette des pages qui ne sont pas du texte', async () => {
       const alice = await register('Pagesnontexte');
-      await publish(alice, { textPages: [42, 'ok'] as unknown as string[] }).expect(400);
+      await publish(alice, {
+        textPages: [42, 'ok'] as unknown as string[],
+      }).expect(400);
     });
 
     it('ignore les pages vides ou faites d’espaces et nettoie les autres', async () => {
@@ -591,7 +682,10 @@ describe('Publications et interactions (e2e)', () => {
 
     it('modère le texte de toutes les pages', async () => {
       const moderator = await register('Moderapages');
-      await db.update(users).set({ role: 'admin' }).where(eq(users.id, moderator.id));
+      await db
+        .update(users)
+        .set({ role: 'admin' })
+        .where(eq(users.id, moderator.id));
       const alice = await register('Pagesmoderees');
       // Mot unique fait de lettres seules, pour ne gêner aucun autre test.
       const word = `interdit${String(suffix)
@@ -608,7 +702,9 @@ describe('Publications et interactions (e2e)', () => {
         const response = await publish(alice, {
           textPages: ['Page sage', 'Toujours sage', `Ici un ${word} caché`],
         }).expect(201);
-        expect((await publicationRow(response.body.id)).moderationStatus).toBe('flagged');
+        expect((await publicationRow(response.body.id)).moderationStatus).toBe(
+          'flagged',
+        );
       } finally {
         await request(app.getHttpServer())
           .delete(`/admin/blocked-words/${added.body.id}`)
@@ -690,7 +786,11 @@ describe('Publications et interactions (e2e)', () => {
       .set('Authorization', `Bearer ${alice.token}`)
       .expect(200);
 
-    expect(await counters(alice.id)).toEqual({ publications: 0, reels: 0, likesReceived: 0 });
+    expect(await counters(alice.id)).toEqual({
+      publications: 0,
+      reels: 0,
+      likesReceived: 0,
+    });
     expect((await publicationRow(post.body.id)).deletedAt).toBeInstanceOf(Date);
     await see(bob, post.body.id).expect(404);
 
@@ -700,6 +800,29 @@ describe('Publications et interactions (e2e)', () => {
       .set('Authorization', `Bearer ${alice.token}`)
       .expect(200);
     expect((await counters(alice.id)).publications).toBe(0);
+  });
+
+  it('ne décrémente qu’une fois lors de suppressions concurrentes d’une citation', async () => {
+    const alice = await register('SupprimeConcurrente');
+    const original = await publish(alice, { caption: 'Originale' }).expect(201);
+    const quote = await publish(alice, {
+      caption: 'Citation',
+      quotedPublicationId: original.body.id,
+    }).expect(201);
+    expect((await publicationRow(original.body.id)).repostCount).toBe(1);
+
+    await Promise.all([
+      request(app.getHttpServer())
+        .delete(`/publications/${quote.body.id}`)
+        .set('Authorization', `Bearer ${alice.token}`)
+        .expect(200),
+      request(app.getHttpServer())
+        .delete(`/publications/${quote.body.id}`)
+        .set('Authorization', `Bearer ${alice.token}`)
+        .expect(200),
+    ]);
+    expect((await counters(alice.id)).publications).toBe(1);
+    expect((await publicationRow(original.body.id)).repostCount).toBe(0);
   });
 
   it('réagit une fois, change de type, puis retire la réaction', async () => {
@@ -745,7 +868,6 @@ describe('Publications et interactions (e2e)', () => {
       .expect(200);
     expect(replay.body.likeCount).toBe(0);
   });
-
 
   it('enregistre puis retire un signet, sans fausser le compteur', async () => {
     const alice = await register('Signets');
@@ -912,11 +1034,18 @@ describe('Publications et interactions (e2e)', () => {
     const reply = await request(app.getHttpServer())
       .post(`/publications/${post.body.id}/comments`)
       .set('Authorization', `Bearer ${alice.token}`)
-      .send({ body: 'Merci !', parentId: root.body.id, clientId: `c-${suffix}-2` })
+      .send({
+        body: 'Merci !',
+        parentId: root.body.id,
+        clientId: `c-${suffix}-2`,
+      })
       .expect(201);
     expect(reply.body.parentId).toBe(root.body.id);
     expect((await publicationRow(post.body.id)).commentCount).toBe(2);
-    const [rootRow] = await db.select().from(comments).where(eq(comments.id, root.body.id));
+    const [rootRow] = await db
+      .select()
+      .from(comments)
+      .where(eq(comments.id, root.body.id));
     expect(rootRow.replyCount).toBe(1);
 
     const list = await request(app.getHttpServer())
@@ -925,8 +1054,14 @@ describe('Publications et interactions (e2e)', () => {
       .expect(200);
     expect(list.body.items.map((item: { body: string }) => item.body)).toEqual([
       'Super post',
-      'Merci !',
     ]);
+    const replies = await request(app.getHttpServer())
+      .get(`/comments/${root.body.id}/replies`)
+      .set('Authorization', `Bearer ${carol.token}`)
+      .expect(200);
+    expect(
+      replies.body.items.map((item: { body: string }) => item.body),
+    ).toEqual(['Merci !']);
     expect(JSON.stringify(list.body)).not.toContain('@e2e.dev');
 
     // Un tiers ne peut pas supprimer.
@@ -941,7 +1076,10 @@ describe('Publications et interactions (e2e)', () => {
       .set('Authorization', `Bearer ${alice.token}`)
       .expect(200);
     expect((await publicationRow(post.body.id)).commentCount).toBe(1);
-    const [rootAfter] = await db.select().from(comments).where(eq(comments.id, root.body.id));
+    const [rootAfter] = await db
+      .select()
+      .from(comments)
+      .where(eq(comments.id, root.body.id));
     expect(rootAfter.replyCount).toBe(0);
 
     // Rejouer la suppression ne décrémente pas deux fois.
@@ -955,7 +1093,9 @@ describe('Publications et interactions (e2e)', () => {
   it('bloque les commentaires quand la permission est « nobody », pas les réactions', async () => {
     const alice = await register('Reservee');
     const bob = await register('Persistant');
-    await db.insert(userSocialSettings).values({ userId: alice.id, commentPermission: 'nobody' });
+    await db
+      .insert(userSocialSettings)
+      .values({ userId: alice.id, commentPermission: 'nobody' });
     const post = await publish(alice).expect(201);
 
     await request(app.getHttpServer())
@@ -997,7 +1137,10 @@ describe('Publications et interactions (e2e)', () => {
       await request(app.getHttpServer())
         .post(`/publications/${post.body.id}/comments`)
         .set('Authorization', `Bearer ${bob.token}`)
-        .send({ body: `Commentaire ${index}`, clientId: `c-${suffix}-page-${index}` })
+        .send({
+          body: `Commentaire ${index}`,
+          clientId: `c-${suffix}-page-${index}`,
+        })
         .expect(201);
     }
 
@@ -1022,6 +1165,247 @@ describe('Publications et interactions (e2e)', () => {
       ...page2.body.items.map((item: { id: string }) => item.id),
     ];
     expect(new Set(ids).size).toBe(3);
+  });
+
+  it('fige le tri Top entre deux pages malgré les nouveaux likes', async () => {
+    const alice = await register('StableTop');
+    const bob = await register('VoteTop');
+    const post = await publish(alice).expect(201);
+    const created = [];
+    for (let index = 0; index < 3; index += 1) {
+      created.push(
+        (
+          await request(app.getHttpServer())
+            .post(`/publications/${post.body.id}/comments`)
+            .set('Authorization', `Bearer ${bob.token}`)
+            .send({
+              body: `Top ${index}`,
+              clientId: `c-${suffix}-stable-${index}`,
+            })
+            .expect(201)
+        ).body.id,
+      );
+    }
+
+    const page1 = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .query({ sort: 'top', limit: 1 })
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(200);
+    expect(page1.body.items.map((item: { id: string }) => item.id)).toEqual([
+      created[0],
+    ]);
+    expect(page1.body.nextCursor).toEqual(expect.any(String));
+
+    await request(app.getHttpServer())
+      .post(`/comments/${created[1]}/like`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(201);
+
+    const page2 = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .query({ sort: 'top', limit: 2, cursor: page1.body.nextCursor })
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(200);
+    expect(page2.body.items.map((item: { id: string }) => item.id)).toEqual([
+      created[1],
+      created[2],
+    ]);
+    expect(page2.body.nextCursor).toBeNull();
+
+    await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .query({ sort: 'top', cursor: page1.body.nextCursor })
+      .set('Authorization', `Bearer ${bob.token}`)
+      .expect(400);
+  });
+
+  it('masque les commentaires d’un auteur bloqué sans masquer la publication', async () => {
+    const alice = await register('ModereComments');
+    const bob = await register('AuteurBloque');
+    const viewer = await register('LecteurBloque');
+    const post = await publish(alice).expect(201);
+    const comment = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({
+        body: 'Visible avant blocage',
+        clientId: `c-${suffix}-blocked-author`,
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/users/${bob.id}/block`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(201);
+
+    const list = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(200);
+    expect(
+      list.body.items.map((item: { id: string }) => item.id),
+    ).not.toContain(comment.body.id);
+    await request(app.getHttpServer())
+      .get(`/comments/${comment.body.id}/replies`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(404);
+  });
+
+  it('révoque les événements Socket.IO après un blocage', async () => {
+    const alice = await register('SocketAuteur');
+    const bob = await register('SocketLecteur');
+    const carol = await register('SocketCommentatrice');
+    const post = await publish(alice).expect(201);
+    if (!app.getHttpServer().listening) {
+      await app.listen(0);
+    }
+    const { port } = app.getHttpServer().address() as AddressInfo;
+    const base = `http://127.0.0.1:${port}`;
+    const connect = (token: string) =>
+      new Promise<Socket>((resolve, reject) => {
+        const socket = io(base, {
+          auth: { token },
+          transports: ['websocket'],
+          forceNew: true,
+        });
+        socket.on('connect', () => resolve(socket));
+        socket.on('connect_error', reject);
+      });
+    const join = (socket: Socket, event: string, publicationId: string) =>
+      new Promise<void>((resolve, reject) => {
+        socket
+          .timeout(2_000)
+          .emit(event, { publicationId }, (error: Error | null) => {
+            if (error) reject(error);
+            else resolve();
+          });
+      });
+    const waitFor = (socket: Socket, event: string, ms = 700) =>
+      new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), ms);
+        socket.once(event, () => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+
+    const bobSocket = await connect(bob.token);
+    const carolSocket = await connect(carol.token);
+    try {
+      await Promise.all([
+        join(bobSocket, 'feed:join', post.body.id),
+        join(bobSocket, 'comments:join', post.body.id),
+        join(carolSocket, 'feed:join', post.body.id),
+        join(carolSocket, 'comments:join', post.body.id),
+      ]);
+      await request(app.getHttpServer())
+        .post(`/users/${carol.id}/block`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .expect(201);
+
+      const bobCommentEvent = waitFor(bobSocket, 'publication:comment');
+      const carolCommentEvent = waitFor(carolSocket, 'publication:comment');
+      await request(app.getHttpServer())
+        .post(`/publications/${post.body.id}/comments`)
+        .set('Authorization', `Bearer ${carol.token}`)
+        .send({ body: 'Après blocage', clientId: `socket-comment-${suffix}` })
+        .expect(201);
+      expect(await bobCommentEvent).toBe(false);
+      expect(await carolCommentEvent).toBe(true);
+
+      const bobStatsEvent = waitFor(bobSocket, 'publication:stats');
+      await request(app.getHttpServer())
+        .post(`/publications/${post.body.id}/like`)
+        .set('Authorization', `Bearer ${alice.token}`)
+        .send({ kind: 'like' })
+        .expect(201);
+      expect(await bobStatsEvent).toBe(true);
+
+      await request(app.getHttpServer())
+        .post(`/users/${alice.id}/block`)
+        .set('Authorization', `Bearer ${bob.token}`)
+        .expect(201);
+      const revokedStatsEvent = waitFor(bobSocket, 'publication:stats');
+      await request(app.getHttpServer())
+        .post(`/publications/${post.body.id}/like`)
+        .set('Authorization', `Bearer ${alice.token}`)
+        .send({ kind: 'like' })
+        .expect(201);
+      expect(await revokedStatsEvent).toBe(false);
+    } finally {
+      bobSocket.close();
+      carolSocket.close();
+    }
+  });
+
+  it('sérialise les votes like/dislike concurrents sans double compteur', async () => {
+    const alice = await register('VoteConcurrent');
+    const bob = await register('VotantConcurrent');
+    const post = await publish(alice).expect(201);
+    const comment = await request(app.getHttpServer())
+      .post(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${bob.token}`)
+      .send({ body: 'Course de votes', clientId: `c-${suffix}-vote-race` })
+      .expect(201);
+
+    const requests = Array.from({ length: 8 }, (_, index) =>
+      request(app.getHttpServer())
+        .post(
+          `/comments/${comment.body.id}/${index % 2 === 0 ? 'like' : 'dislike'}`,
+        )
+        .set('Authorization', `Bearer ${alice.token}`)
+        .expect(201),
+    );
+    await Promise.all(requests);
+
+    const [row] = await db
+      .select()
+      .from(comments)
+      .where(eq(comments.id, comment.body.id));
+    const likeRows = await db
+      .select()
+      .from(commentLikes)
+      .where(eq(commentLikes.commentId, comment.body.id));
+    const dislikeRows = await db
+      .select()
+      .from(commentDislikes)
+      .where(eq(commentDislikes.commentId, comment.body.id));
+    expect(likeRows.length + dislikeRows.length).toBe(1);
+    expect(row.likeCount).toBe(likeRows.length);
+    const list = await request(app.getHttpServer())
+      .get(`/publications/${post.body.id}/comments`)
+      .set('Authorization', `Bearer ${alice.token}`)
+      .expect(200);
+    const item = list.body.items.find(
+      (entry: { id: string }) => entry.id === comment.body.id,
+    );
+    expect(item.viewerLiked && item.viewerDisliked).toBe(false);
+  });
+
+  it('borne les épinglages concurrents à trois publications', async () => {
+    const alice = await register('PinConcurrent');
+    const created = [];
+    for (let index = 0; index < 4; index += 1) {
+      created.push(
+        (await publish(alice, { caption: `Pin ${index}` }).expect(201)).body.id,
+      );
+    }
+    const statuses = await Promise.all(
+      created.map((id) =>
+        request(app.getHttpServer())
+          .post(`/publications/${id}/pin`)
+          .set('Authorization', `Bearer ${alice.token}`)
+          .then((response) => response.status),
+      ),
+    );
+    expect(statuses.filter((status) => status === 201)).toHaveLength(3);
+    expect(statuses.filter((status) => status === 400)).toHaveLength(1);
+    const rows = await db
+      .select()
+      .from(publications)
+      .where(eq(publications.authorId, alice.id));
+    expect(rows.filter((row) => row.pinnedAt !== null)).toHaveLength(3);
   });
 
   it('refuse une réponse à un commentaire d’une autre publication', async () => {
@@ -1068,7 +1452,11 @@ describe('Publications et interactions (e2e)', () => {
     const reply = await request(app.getHttpServer())
       .post(`/publications/${post.body.id}/comments`)
       .set('Authorization', `Bearer ${bob.token}`)
-      .send({ body: 'Réponse', parentId: first.body.id, clientId: `c-${suffix}-pin-3` })
+      .send({
+        body: 'Réponse',
+        parentId: first.body.id,
+        clientId: `c-${suffix}-pin-3`,
+      })
       .expect(201);
 
     // Un tiers ne peut pas épingler, pas plus qu'une réponse.
@@ -1091,8 +1479,12 @@ describe('Publications et interactions (e2e)', () => {
       .get(`/publications/${post.body.id}/comments`)
       .set('Authorization', `Bearer ${bob.token}`)
       .expect(200);
-    expect(list.body.pinned.map((item: { id: string }) => item.id)).toEqual([second.body.id]);
-    expect(list.body.items.map((item: { id: string }) => item.id)).not.toContain(second.body.id);
+    expect(list.body.pinned.map((item: { id: string }) => item.id)).toEqual([
+      second.body.id,
+    ]);
+    expect(
+      list.body.items.map((item: { id: string }) => item.id),
+    ).not.toContain(second.body.id);
 
     // Rejeu idempotent, puis désépinglage.
     await request(app.getHttpServer())
@@ -1110,7 +1502,9 @@ describe('Publications et interactions (e2e)', () => {
       .set('Authorization', `Bearer ${bob.token}`)
       .expect(200);
     expect(after.body.pinned).toHaveLength(0);
-    expect(after.body.items.map((item: { id: string }) => item.id)).toContain(second.body.id);
+    expect(after.body.items.map((item: { id: string }) => item.id)).toContain(
+      second.body.id,
+    );
   });
 
   it('réagit par emoji, change de kind et retire sa réaction', async () => {
@@ -1151,7 +1545,9 @@ describe('Publications et interactions (e2e)', () => {
       .get(`/publications/${post.body.id}/comments`)
       .set('Authorization', `Bearer ${alice.token}`)
       .expect(200);
-    const row = seen.body.items.find((item: { id: string }) => item.id === comment.body.id);
+    const row = seen.body.items.find(
+      (item: { id: string }) => item.id === comment.body.id,
+    );
     expect(row.reactions).toEqual([{ kind: 'laugh', count: 2 }]);
     expect(row.viewerReaction).toBeNull();
 
@@ -1240,17 +1636,29 @@ describe('Publications et interactions (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/publications/${post.body.id}/comments`)
       .set('Authorization', `Bearer ${bob.token}`)
-      .send({ body: 'Réponse à lautre', parentId: other.body.id, clientId: `c-${suffix}-thread-3` })
+      .send({
+        body: 'Réponse à lautre',
+        parentId: other.body.id,
+        clientId: `c-${suffix}-thread-3`,
+      })
       .expect(201);
     const first = await request(app.getHttpServer())
       .post(`/publications/${post.body.id}/comments`)
       .set('Authorization', `Bearer ${bob.token}`)
-      .send({ body: 'Réponse 1', parentId: root.body.id, clientId: `c-${suffix}-thread-4` })
+      .send({
+        body: 'Réponse 1',
+        parentId: root.body.id,
+        clientId: `c-${suffix}-thread-4`,
+      })
       .expect(201);
     const second = await request(app.getHttpServer())
       .post(`/publications/${post.body.id}/comments`)
       .set('Authorization', `Bearer ${alice.token}`)
-      .send({ body: 'Réponse 2', parentId: root.body.id, clientId: `c-${suffix}-thread-5` })
+      .send({
+        body: 'Réponse 2',
+        parentId: root.body.id,
+        clientId: `c-${suffix}-thread-5`,
+      })
       .expect(201);
 
     const replies = await request(app.getHttpServer())
@@ -1287,7 +1695,9 @@ describe('Publications et interactions (e2e)', () => {
         .expect(201);
 
       // Personne n'a aimé : pas d'attribution.
-      expect((await see(viewer, post.body.id).expect(200)).body.likedBy).toBeNull();
+      expect(
+        (await see(viewer, post.body.id).expect(200)).body.likedBy,
+      ).toBeNull();
 
       await request(app.getHttpServer())
         .post(`/publications/${post.body.id}/like`)
@@ -1305,7 +1715,9 @@ describe('Publications et interactions (e2e)', () => {
         verified: false,
       });
       // Un visiteur qui ne suit pas l'amie ne voit que le nombre.
-      expect((await see(stranger, post.body.id).expect(200)).body.likedBy).toBeNull();
+      expect(
+        (await see(stranger, post.body.id).expect(200)).body.likedBy,
+      ).toBeNull();
     });
   });
 });

@@ -6,7 +6,10 @@ import {
 } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import { decodeKeysetCursor, encodeKeysetCursor } from '../common/keyset-cursor.js';
+import {
+  decodeKeysetCursor,
+  encodeKeysetCursor,
+} from '../common/keyset-cursor.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
   blockedWords,
@@ -18,6 +21,7 @@ import {
   users,
 } from '../db/schema.js';
 import { enqueuePublicationCleanup } from '../social-media/media-cleanup.js';
+import { hotScoreSql } from '../feed/hot-score.js';
 
 export const QUEUE_DEFAULT_LIMIT = 20;
 
@@ -53,10 +57,26 @@ export const MODERATION_ACTIONS = [
 ] as const;
 export type ModerationActionKind = (typeof MODERATION_ACTIONS)[number];
 
-export const REPORT_TARGET_TYPES = ['publication', 'comment', 'story', 'user'] as const;
+export const REPORT_TARGET_TYPES = [
+  'publication',
+  'comment',
+  'story',
+  'user',
+] as const;
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number];
 
-export const REPORT_STATUSES = ['open', 'reviewing', 'resolved', 'dismissed'] as const;
+/** Identifiants suffisants pour retirer un commentaire masqué des clients. */
+export interface HiddenCommentChange {
+  commentId: string;
+  publicationId: string;
+}
+
+export const REPORT_STATUSES = [
+  'open',
+  'reviewing',
+  'resolved',
+  'dismissed',
+] as const;
 export type ReportStatus = (typeof REPORT_STATUSES)[number];
 
 export const REPORT_REASONS = [
@@ -105,12 +125,34 @@ export class ModerationService {
    * Les publications s'y inscrivent pour notifier les mentions retenues à la
    * création — sans dépendance circulaire entre les deux modules.
    */
-  private readonly approvalListeners = new Set<(publicationId: string) => Promise<void>>();
+  private readonly approvalListeners = new Set<
+    (publicationId: string) => Promise<void>
+  >();
 
-  onPublicationApproved(listener: (publicationId: string) => Promise<void>): () => void {
+  onPublicationApproved(
+    listener: (publicationId: string) => Promise<void>,
+  ): () => void {
     this.approvalListeners.add(listener);
     return () => {
       this.approvalListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Abonnés au masquage d'un commentaire (`hide`/`remove`). Même découplage que
+   * pour l'approbation : la décision est déjà committée et aucun contenu n'est
+   * transporté par le callback.
+   */
+  private readonly commentHiddenListeners = new Set<
+    (change: HiddenCommentChange) => Promise<void>
+  >();
+
+  onCommentHidden(
+    listener: (change: HiddenCommentChange) => Promise<void>,
+  ): () => void {
+    this.commentHiddenListeners.add(listener);
+    return () => {
+      this.commentHiddenListeners.delete(listener);
     };
   }
 
@@ -126,7 +168,9 @@ export class ModerationService {
   ): Promise<{ id: string; status: string }> {
     const target = await this.loadTarget(input.targetType, input.targetId);
     if (target.authorId === reporterId) {
-      throw new BadRequestException('Impossible de signaler son propre contenu.');
+      throw new BadRequestException(
+        'Impossible de signaler son propre contenu.',
+      );
     }
 
     const [inserted] = await this.db
@@ -160,7 +204,11 @@ export class ModerationService {
   }
 
   /** File de signalements, du plus ancien au plus récent (ordre de traitement). */
-  async queue(status: ReportStatus, limit: number, cursor?: string): Promise<ReportPage> {
+  async queue(
+    status: ReportStatus,
+    limit: number,
+    cursor?: string,
+  ): Promise<ReportPage> {
     const bounded = Math.min(Math.max(1, limit), MAX_LIMIT);
     const conditions = [eq(reports.status, status)];
     if (cursor) {
@@ -259,14 +307,20 @@ export class ModerationService {
     const page = rows.slice(0, bounded);
     const last = page.at(-1);
     return {
-      items: page.map(({ createdAtText: _text, caption, textPages, ...row }) => ({
-        ...row,
-        preview:
-          (textPages && textPages.length > 0 ? textPages.join('\n\n') : caption)?.trim() ||
-          null,
-      })),
+      items: page.map(
+        ({ createdAtText: _text, caption, textPages, ...row }) => ({
+          ...row,
+          preview:
+            (textPages && textPages.length > 0
+              ? textPages.join('\n\n')
+              : caption
+            )?.trim() || null,
+        }),
+      ),
       nextCursor:
-        rows.length > bounded && last ? encodeKeysetCursor(last.createdAtText, last.id) : null,
+        rows.length > bounded && last
+          ? encodeKeysetCursor(last.createdAtText, last.id)
+          : null,
     };
   }
 
@@ -285,7 +339,10 @@ export class ModerationService {
     const moderationStatus = decision === 'approve' ? 'approved' : 'removed';
     await this.db.transaction(async (tx) => {
       const [row] = await tx
-        .select({ status: publications.moderationStatus, deletedAt: publications.deletedAt })
+        .select({
+          status: publications.moderationStatus,
+          deletedAt: publications.deletedAt,
+        })
         .from(publications)
         .where(eq(publications.id, publicationId));
       if (!row || row.deletedAt) {
@@ -300,7 +357,10 @@ export class ModerationService {
         .update(publications)
         .set({ moderationStatus })
         .where(
-          and(eq(publications.id, publicationId), eq(publications.moderationStatus, 'flagged')),
+          and(
+            eq(publications.id, publicationId),
+            eq(publications.moderationStatus, 'flagged'),
+          ),
         )
         .returning({ id: publications.id });
       if (updated.length === 0) {
@@ -311,7 +371,11 @@ export class ModerationService {
       }
       await tx
         .update(reports)
-        .set({ status: 'resolved', resolvedById: moderatorId, resolvedAt: new Date() })
+        .set({
+          status: 'resolved',
+          resolvedById: moderatorId,
+          resolvedAt: new Date(),
+        })
         .where(
           and(
             eq(reports.targetType, 'publication'),
@@ -347,43 +411,57 @@ export class ModerationService {
     action: ModerationActionKind,
     notes?: string,
   ): Promise<{ status: string; applied: ModerationActionKind }> {
-    const [report] = await this.db.select().from(reports).where(eq(reports.id, reportId));
+    const [report] = await this.db
+      .select()
+      .from(reports)
+      .where(eq(reports.id, reportId));
     if (!report) {
       throw new NotFoundException('Signalement introuvable.');
     }
     // Un signalement clos ne se rejoue pas… sauf pour rétablir un contenu
     // (appel ou erreur de modération), qui doit rester possible sans nouveau
     // signalement.
-    if ((report.status === 'resolved' || report.status === 'dismissed') && action !== 'restore') {
+    if (
+      (report.status === 'resolved' || report.status === 'dismissed') &&
+      action !== 'restore'
+    ) {
       return { status: report.status, applied: action };
     }
 
-    const approved = await this.db.transaction(async (tx) => {
-      const wasApproved = await this.applyAction(tx, report.targetType, report.targetId, action);
+    const { approved, hiddenComment } = await this.db.transaction(
+      async (tx) => {
+        const result = await this.applyAction(
+          tx,
+          report.targetType,
+          report.targetId,
+          action,
+        );
 
-      // Une restauration ne rouvre pas le signalement : elle corrige la
-      // décision précédente et laisse le dossier clos.
-      const status =
-        action === 'restore' && (report.status === 'resolved' || report.status === 'dismissed')
-          ? report.status
-          : action === 'dismiss'
-            ? 'dismissed'
-            : 'resolved';
-      await tx
-        .update(reports)
-        .set({ status, resolvedById: moderatorId, resolvedAt: new Date() })
-        .where(eq(reports.id, reportId));
+        // Une restauration ne rouvre pas le signalement : elle corrige la
+        // décision précédente et laisse le dossier clos.
+        const status =
+          action === 'restore' &&
+          (report.status === 'resolved' || report.status === 'dismissed')
+            ? report.status
+            : action === 'dismiss'
+              ? 'dismissed'
+              : 'resolved';
+        await tx
+          .update(reports)
+          .set({ status, resolvedById: moderatorId, resolvedAt: new Date() })
+          .where(eq(reports.id, reportId));
 
-      await tx.insert(moderationActions).values({
-        reportId,
-        moderatorId,
-        targetType: report.targetType,
-        targetId: report.targetId,
-        action,
-        notes: notes?.trim() || null,
-      });
-      return wasApproved;
-    });
+        await tx.insert(moderationActions).values({
+          reportId,
+          moderatorId,
+          targetType: report.targetType,
+          targetId: report.targetId,
+          action,
+          notes: notes?.trim() || null,
+        });
+        return result;
+      },
+    );
 
     // Après validation de la transaction seulement : une notification ne doit
     // jamais pointer vers un contenu dont la décision a été annulée. Un échec
@@ -391,6 +469,11 @@ export class ModerationService {
     if (approved) {
       for (const listener of this.approvalListeners) {
         await listener(report.targetId).catch(() => undefined);
+      }
+    }
+    if (hiddenComment) {
+      for (const listener of this.commentHiddenListeners) {
+        await listener(hiddenComment).catch(() => undefined);
       }
     }
 
@@ -423,7 +506,10 @@ export class ModerationService {
       })
       .from(moderationActions)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(sql`${moderationActions.createdAt} desc`, sql`${moderationActions.id} desc`)
+      .orderBy(
+        sql`${moderationActions.createdAt} desc`,
+        sql`${moderationActions.id} desc`,
+      )
       .limit(bounded + 1);
 
     const page = rows.slice(0, bounded);
@@ -519,18 +605,24 @@ export class ModerationService {
     targetType: ReportTargetType,
     targetId: string,
     action: ModerationActionKind,
-  ): Promise<boolean> {
+  ): Promise<{ approved: boolean; hiddenComment: HiddenCommentChange | null }> {
     // Renvoie vrai quand une publication en revue (`flagged`) devient visible.
     if (action === 'warn' || action === 'dismiss') {
-      return false;
+      return { approved: false, hiddenComment: null };
     }
     if (action === 'suspend') {
-      throw new BadRequestException('La suspension de compte arrive avec la phase 5.');
+      throw new BadRequestException(
+        'La suspension de compte arrive avec la phase 5.',
+      );
     }
 
     if (targetType === 'publication' || targetType === 'comment') {
       const status =
-        action === 'remove' ? 'removed' : action === 'hide' ? 'flagged' : 'approved';
+        action === 'remove'
+          ? 'removed'
+          : action === 'hide'
+            ? 'flagged'
+            : 'approved';
       if (targetType === 'publication') {
         const [previous] = await tx
           .select({ status: publications.moderationStatus })
@@ -540,29 +632,98 @@ export class ModerationService {
           .update(publications)
           .set({ moderationStatus: status })
           .where(eq(publications.id, targetId));
-        if (action === 'restore') {
-          return previous?.status === 'flagged';
-        }
         if (action === 'remove') {
           // Un retrait définitif doit aussi retirer les octets du stockage :
           // sinon l'URL du média reste valable après la décision.
           await enqueuePublicationCleanup(tx, targetId);
         }
-      } else {
-        await tx
-          .update(comments)
-          .set({ moderationStatus: status })
-          .where(eq(comments.id, targetId));
+        return {
+          approved: action === 'restore' && previous?.status === 'flagged',
+          hiddenComment: null,
+        };
       }
-      return false;
+
+      const [previous] = await tx
+        .select({
+          commentId: comments.id,
+          publicationId: comments.publicationId,
+          parentId: comments.parentId,
+          status: comments.moderationStatus,
+          deletedAt: comments.deletedAt,
+        })
+        .from(comments)
+        .where(eq(comments.id, targetId))
+        .for('update');
+      if (!previous || previous.deletedAt) {
+        return { approved: false, hiddenComment: null };
+      }
+      const wasVisible =
+        previous.status === 'pending' || previous.status === 'approved';
+      const willVisible = status === 'approved';
+      const updated = await tx
+        .update(comments)
+        .set({ moderationStatus: status })
+        .where(and(eq(comments.id, targetId), isNull(comments.deletedAt)))
+        .returning({
+          commentId: comments.id,
+          publicationId: comments.publicationId,
+        });
+      if (updated.length === 0) {
+        return { approved: false, hiddenComment: null };
+      }
+      const delta = Number(willVisible) - Number(wasVisible);
+      if (delta !== 0) {
+        await tx
+          .update(publications)
+          .set({
+            commentCount:
+              delta > 0
+                ? sql`${publications.commentCount} + 1`
+                : sql`greatest(${publications.commentCount} - 1, 0)`,
+          })
+          .where(eq(publications.id, previous.publicationId));
+        if (previous.parentId) {
+          await tx
+            .update(comments)
+            .set({
+              replyCount:
+                delta > 0
+                  ? sql`${comments.replyCount} + 1`
+                  : sql`greatest(${comments.replyCount} - 1, 0)`,
+            })
+            .where(
+              and(
+                eq(comments.id, previous.parentId),
+                isNull(comments.deletedAt),
+              ),
+            );
+        }
+        await tx
+          .update(publications)
+          .set({ hotScore: hotScoreSql() })
+          .where(eq(publications.id, previous.publicationId));
+      }
+      const hiddenComment =
+        delta < 0
+          ? {
+              commentId: previous.commentId,
+              publicationId: previous.publicationId,
+            }
+          : null;
+      return { approved: false, hiddenComment };
     }
 
     if (targetType === 'story') {
       if (action !== 'remove') {
-        throw new BadRequestException('Une story ne peut qu’être retirée ou rétablie.');
+        throw new BadRequestException(
+          'Une story ne peut qu’être retirée ou rétablie.',
+        );
       }
-      await tx.update(stories).set({ deletedAt: new Date() }).where(eq(stories.id, targetId));
-      return false;
+      await tx
+        .update(stories)
+        .set({ deletedAt: new Date() })
+        .where(eq(stories.id, targetId));
+      return { approved: false, hiddenComment: null };
     }
 
     // Comptes : les actions de contenu n'ont pas de sens ici.
@@ -609,7 +770,10 @@ export class ModerationService {
   private async previewsFor(
     rows: Array<{ targetType: ReportTargetType; targetId: string }>,
   ): Promise<Map<string, { text: string | null; authorId: string | null }>> {
-    const map = new Map<string, { text: string | null; authorId: string | null }>();
+    const map = new Map<
+      string,
+      { text: string | null; authorId: string | null }
+    >();
     const idsOf = (type: ReportTargetType) =>
       rows.filter((row) => row.targetType === type).map((row) => row.targetId);
 
@@ -634,11 +798,18 @@ export class ModerationService {
     const commentIds = idsOf('comment');
     if (commentIds.length > 0) {
       const found = await this.db
-        .select({ id: comments.id, body: comments.body, authorId: comments.authorId })
+        .select({
+          id: comments.id,
+          body: comments.body,
+          authorId: comments.authorId,
+        })
         .from(comments)
         .where(inArray(comments.id, commentIds));
       for (const row of found) {
-        map.set(`comment:${row.id}`, { text: row.body.slice(0, 160), authorId: row.authorId });
+        map.set(`comment:${row.id}`, {
+          text: row.body.slice(0, 160),
+          authorId: row.authorId,
+        });
       }
     }
 
@@ -667,7 +838,10 @@ export class ModerationService {
         .from(users)
         .where(inArray(users.id, userIds));
       for (const row of found) {
-        map.set(`user:${row.id}`, { text: `@${row.username}`, authorId: row.id });
+        map.set(`user:${row.id}`, {
+          text: `@${row.username}`,
+          authorId: row.id,
+        });
       }
     }
 

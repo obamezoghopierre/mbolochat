@@ -13,7 +13,7 @@ import type { Server, Socket } from 'socket.io';
 
 import { corsOrigin, socketAllowRequest } from '../common/cors.js';
 import { authenticateSocket } from '../chat/socket-auth.js';
-import { FEED_STATS_ROOM, PublicationEvents } from './publication-events.js';
+import { feedPostRoomOf, PublicationEvents } from './publication-events.js';
 import { PublicationsService } from './publications.service.js';
 
 /**
@@ -21,7 +21,10 @@ import { PublicationsService } from './publications.service.js';
  * `assertVisible` — un compte qui ne voit pas la publication ne reçoit ni le
  * contenu des commentaires ni leurs mises à jour.
  */
-@WebSocketGateway({ cors: { origin: corsOrigin, credentials: true }, allowRequest: socketAllowRequest })
+@WebSocketGateway({
+  cors: { origin: corsOrigin, credentials: true },
+  allowRequest: socketAllowRequest,
+})
 export class CommentsGateway implements OnGatewayInit, OnGatewayConnection {
   @WebSocketServer()
   server: Server;
@@ -37,9 +40,37 @@ export class CommentsGateway implements OnGatewayInit, OnGatewayConnection {
   }
 
   async handleConnection(client: Socket) {
+    // Authentifie et joint le salon personnel `user:<id>` du compte.
     await authenticateSocket(client, this.jwtService);
-    // Compteurs du fil en temps réel : joint une fois pour toute la session.
-    await client.join(FEED_STATS_ROOM);
+  }
+
+  /** Rejoint les compteurs d'une publication après contrôle d'autorisation. */
+  @SubscribeMessage('feed:join')
+  async joinFeed(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { publicationId?: string },
+  ) {
+    const userId = client.data.userId as string | undefined;
+    const publicationId = body?.publicationId;
+    if (!userId || typeof publicationId !== 'string' || !publicationId) {
+      throw new WsException('Publication requise.');
+    }
+    await this.publications.assertVisiblePublication(publicationId, userId);
+    await client.join(feedPostRoomOf(publicationId));
+    return { joined: publicationId };
+  }
+
+  /** Quitte les compteurs d'une publication ; aucun accès n'est requis. */
+  @SubscribeMessage('feed:leave')
+  async leaveFeed(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { publicationId?: string },
+  ) {
+    const publicationId = body?.publicationId;
+    if (typeof publicationId === 'string' && publicationId) {
+      await client.leave(feedPostRoomOf(publicationId));
+    }
+    return { left: publicationId ?? null };
   }
 
   @SubscribeMessage('comments:join')

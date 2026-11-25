@@ -122,7 +122,9 @@ export function buildSessionOrder(
   ranked: RankedCandidate[],
   exploration: RankedCandidate[],
 ): string[] {
-  return diversifyAuthors(interleaveExploration(ranked, exploration)).map((item) => item.id);
+  return diversifyAuthors(interleaveExploration(ranked, exploration)).map(
+    (item) => item.id,
+  );
 }
 
 /** Curseur d'une session : identifiant + décalage dans l'ordre figé. */
@@ -141,7 +143,7 @@ export function decodeSessionCursor(cursor: string): {
   if (
     separator <= 0 ||
     sessionId.length === 0 ||
-    !Number.isInteger(offset) ||
+    !Number.isSafeInteger(offset) ||
     offset < 0
   ) {
     throw new BadRequestException('Curseur invalide.');
@@ -151,10 +153,15 @@ export function decodeSessionCursor(cursor: string): {
 
 /** Curseur chronologique `(created_at, id)` de l'onglet Abonnements. */
 export function encodeFeedTimeCursor(createdAt: Date, id: string): string {
-  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString('base64url');
+  return Buffer.from(`${createdAt.toISOString()}|${id}`, 'utf8').toString(
+    'base64url',
+  );
 }
 
-export function decodeFeedTimeCursor(cursor: string): { createdAt: Date; id: string } {
+export function decodeFeedTimeCursor(cursor: string): {
+  createdAt: Date;
+  id: string;
+} {
   const raw = Buffer.from(cursor, 'base64url').toString('utf8');
   const separator = raw.lastIndexOf('|');
   const createdAt = new Date(raw.slice(0, separator));

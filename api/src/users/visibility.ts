@@ -12,7 +12,10 @@ export interface ViewerRelation {
   blocked: boolean;
 }
 
-export function canSee(visibility: Visibility, relation: ViewerRelation): boolean {
+export function canSee(
+  visibility: Visibility,
+  relation: ViewerRelation,
+): boolean {
   if (relation.blocked) {
     return false;
   }
@@ -33,10 +36,12 @@ export function canSee(visibility: Visibility, relation: ViewerRelation): boolea
 
 export type SocialVisibility = 'public' | 'followers' | 'private';
 
-export type SocialModerationStatus = 'pending' | 'approved' | 'flagged' | 'removed';
+export type SocialModerationStatus =
+  'pending' | 'approved' | 'flagged' | 'removed';
 
 /** Qui peut commenter, mentionner ou reposter (cf. `user_social_settings`). */
-export type SocialInteractor = 'everyone' | 'followers' | 'following' | 'nobody';
+export type SocialInteractor =
+  'everyone' | 'followers' | 'following' | 'nobody';
 
 export interface SocialViewer {
   /** `null` pour un visiteur non authentifié (web en consultation). */
@@ -79,7 +84,8 @@ export function canViewPublication(
   publication: SocialPublicationFacts,
   viewer: SocialViewer,
 ): boolean {
-  const isAuthor = viewer.viewerId !== null && viewer.viewerId === publication.authorId;
+  const isAuthor =
+    viewer.viewerId !== null && viewer.viewerId === publication.authorId;
   if (publication.deleted) {
     return isAuthor || viewer.isModerator === true;
   }
@@ -105,6 +111,42 @@ export function canViewPublication(
     return viewer.isFollower;
   }
   return false;
+}
+
+/** Faits nécessaires pour réévaluer l'originale copiée par une citation. */
+export interface QuotedOriginalFacts extends SocialPublicationFacts {
+  authorPrivateAccount: boolean;
+  authorDeleted: boolean;
+}
+
+/**
+ * Une citation réutilise les médias de son originale : elle ne peut continuer
+ * à les exposer que si l'originale reste visible pour ce viewer. Contrairement à
+ * `canViewPublication`, le statut `flagged`/`removed` et la suppression ne sont jamais
+ * prolongés pour l'auteur ou la modération.
+ */
+export function canViewQuotedOriginal(
+  publication: QuotedOriginalFacts,
+  viewer: SocialViewer,
+): boolean {
+  if (
+    publication.deleted ||
+    publication.authorDeleted ||
+    publication.moderationStatus === 'flagged' ||
+    publication.moderationStatus === 'removed'
+  ) {
+    return false;
+  }
+  return (
+    canViewPublication(publication, viewer) &&
+    canViewProfile(
+      {
+        userId: publication.authorId,
+        privateAccount: publication.authorPrivateAccount,
+      },
+      viewer,
+    )
+  );
 }
 
 /** Profil visible ? Un compte privé n'ouvre son contenu qu'à ses abonnés. */
@@ -152,12 +194,16 @@ export function isPubliclyCacheable(publication: {
     return false;
   }
   return (
-    publication.moderationStatus === 'pending' || publication.moderationStatus === 'approved'
+    publication.moderationStatus === 'pending' ||
+    publication.moderationStatus === 'approved'
   );
 }
 
 /** Le visiteur peut-il commenter / mentionner / reposter ce compte ? */
-export function canInteract(permission: SocialInteractor, viewer: SocialViewer): boolean {
+export function canInteract(
+  permission: SocialInteractor,
+  viewer: SocialViewer,
+): boolean {
   if (viewer.viewerId === null || viewer.blocked) {
     return false;
   }
@@ -172,4 +218,3 @@ export function canInteract(permission: SocialInteractor, viewer: SocialViewer):
   }
   return false;
 }
-

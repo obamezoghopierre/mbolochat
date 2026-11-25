@@ -566,6 +566,8 @@ export interface FeedPost {
     reaction: SocialReaction | null;
     /** Le visiteur suit l'auteur (abonnement accepté). */
     followingAuthor: boolean;
+    /** Demande d'abonnement à un compte privé en attente d'accord. */
+    followRequestPending?: boolean;
     /** Le visiteur a enregistré la publication. */
     saved?: boolean;
     /** Le visiteur a republié la publication. */

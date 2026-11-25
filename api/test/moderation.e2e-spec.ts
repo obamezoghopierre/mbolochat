@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module.js';
 import { DRIZZLE, type Database } from '../src/db/db.module.js';
-import { publications, users } from '../src/db/schema.js';
+import { comments, publications, users } from '../src/db/schema.js';
 
 /**
  * Signalements et modération sur vraie base : file, décisions, audit,
@@ -23,9 +23,13 @@ describe('Modération (e2e)', () => {
   let counter = 0;
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
     db = app.get<Database>(DRIZZLE);
     await migrate(db, { migrationsFolder: 'drizzle' });
@@ -48,7 +52,10 @@ describe('Modération (e2e)', () => {
         gender: 'FEMALE',
       })
       .expect(201);
-    return { ...response.body.user, token: response.body.accessToken as string };
+    return {
+      ...response.body.user,
+      token: response.body.accessToken as string,
+    };
   };
 
   const promote = async (userId: string, role: 'moderator' | 'admin') => {
@@ -78,7 +85,10 @@ describe('Modération (e2e)', () => {
       .set('Authorization', `Bearer ${actor.token}`)
       .send({ targetType, targetId, reason, details: 'Signalement de test' });
 
-  const queue = (actor: { token: string }, query: Record<string, unknown> = {}) =>
+  const queue = (
+    actor: { token: string },
+    query: Record<string, unknown> = {},
+  ) =>
     request(app.getHttpServer())
       .get('/admin/reports')
       .query(query)
@@ -96,7 +106,10 @@ describe('Modération (e2e)', () => {
       .send({ action, notes });
 
   const publicationRow = async (id: string) => {
-    const [row] = await db.select().from(publications).where(eq(publications.id, id));
+    const [row] = await db
+      .select()
+      .from(publications)
+      .where(eq(publications.id, id));
     return row;
   };
 
@@ -125,7 +138,11 @@ describe('Modération (e2e)', () => {
     const author = await register('Auto');
     const post = await publish(author, 'Mon contenu');
     await report(author, 'publication', post.id).expect(400);
-    await report(author, 'publication', '00000000-0000-0000-0000-000000000000').expect(404);
+    await report(
+      author,
+      'publication',
+      '00000000-0000-0000-0000-000000000000',
+    ).expect(404);
   });
 
   it('ferme l’accès /admin aux comptes ordinaires', async () => {
@@ -135,7 +152,9 @@ describe('Modération (e2e)', () => {
       .get('/admin/blocked-words')
       .set('Authorization', `Bearer ${normal.token}`)
       .expect(403);
-    await decide(normal, '00000000-0000-0000-0000-000000000000', 'warn').expect(403);
+    await decide(normal, '00000000-0000-0000-0000-000000000000', 'warn').expect(
+      403,
+    );
   });
 
   it('masque, retire et restaure une publication, avec audit', async () => {
@@ -145,12 +164,22 @@ describe('Modération (e2e)', () => {
     await promote(moderator.id, 'moderator');
 
     const hidden = await publish(author, 'A masquer');
-    const hiddenReport = await report(reporter, 'publication', hidden.id).expect(201);
-    await decide(moderator, hiddenReport.body.id, 'hide', 'Signale').expect(201);
+    const hiddenReport = await report(
+      reporter,
+      'publication',
+      hidden.id,
+    ).expect(201);
+    await decide(moderator, hiddenReport.body.id, 'hide', 'Signale').expect(
+      201,
+    );
     expect((await publicationRow(hidden.id)).moderationStatus).toBe('flagged');
 
     const removed = await publish(author, 'A retirer');
-    const removedReport = await report(reporter, 'publication', removed.id).expect(201);
+    const removedReport = await report(
+      reporter,
+      'publication',
+      removed.id,
+    ).expect(201);
     await decide(moderator, removedReport.body.id, 'remove').expect(201);
     expect((await publicationRow(removed.id)).moderationStatus).toBe('removed');
     // Le contenu retiré n'est plus lisible par un tiers.
@@ -161,19 +190,82 @@ describe('Modération (e2e)', () => {
 
     // Restauration : une publication `flagged` redevient `approved`.
     const restoredPost = await publish(author, 'A restaurer');
-    const restoredReport = await report(reporter, 'publication', restoredPost.id).expect(201);
+    const restoredReport = await report(
+      reporter,
+      'publication',
+      restoredPost.id,
+    ).expect(201);
     await decide(moderator, restoredReport.body.id, 'hide').expect(201);
     await decide(moderator, restoredReport.body.id, 'restore').expect(201);
     // Le signalement était clos : seule une restauration reste possible, et
     // elle ne rouvre pas le dossier.
-    expect((await publicationRow(restoredPost.id)).moderationStatus).toBe('approved');
+    expect((await publicationRow(restoredPost.id)).moderationStatus).toBe(
+      'approved',
+    );
 
     const audit = await request(app.getHttpServer())
       .get('/admin/audit')
       .set('Authorization', `Bearer ${moderator.token}`)
       .expect(200);
-    const actions = audit.body.items.map((item: { action: string }) => item.action);
+    const actions = audit.body.items.map(
+      (item: { action: string }) => item.action,
+    );
     expect(actions).toEqual(expect.arrayContaining(['hide', 'remove']));
+  });
+
+  it('ajuste les compteurs quand un commentaire est masqué puis restauré', async () => {
+    const author = await register('AuteurCommentaire');
+    const commenter = await register('CommentateurModere');
+    const reporter = await register('PlainteCommentaire');
+    const moderator = await register('ModerateurCommentaire');
+    await promote(moderator.id, 'moderator');
+    const post = await publish(author, 'Discussion modérée');
+    const root = await request(app.getHttpServer())
+      .post(`/publications/${post.id}/comments`)
+      .set('Authorization', `Bearer ${commenter.token}`)
+      .send({ body: 'Racine', clientId: `modo-comment-${suffix}-root` })
+      .expect(201);
+    const reply = await request(app.getHttpServer())
+      .post(`/publications/${post.id}/comments`)
+      .set('Authorization', `Bearer ${commenter.token}`)
+      .send({
+        body: 'Réponse à masquer',
+        parentId: root.body.id,
+        clientId: `modo-comment-${suffix}-reply`,
+      })
+      .expect(201);
+    expect((await publicationRow(post.id)).commentCount).toBe(2);
+
+    const created = await report(reporter, 'comment', reply.body.id).expect(
+      201,
+    );
+    await decide(moderator, created.body.id, 'hide').expect(201);
+    expect((await publicationRow(post.id)).commentCount).toBe(1);
+    const [hiddenRoot] = await db
+      .select()
+      .from(comments)
+      .where(eq(comments.id, root.body.id));
+    expect(hiddenRoot.replyCount).toBe(0);
+    const hiddenList = await request(app.getHttpServer())
+      .get(`/comments/${root.body.id}/replies`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .expect(200);
+    expect(hiddenList.body.items).toEqual([]);
+
+    await decide(moderator, created.body.id, 'restore').expect(201);
+    expect((await publicationRow(post.id)).commentCount).toBe(2);
+    const [restoredRoot] = await db
+      .select()
+      .from(comments)
+      .where(eq(comments.id, root.body.id));
+    expect(restoredRoot.replyCount).toBe(1);
+    const restoredList = await request(app.getHttpServer())
+      .get(`/comments/${root.body.id}/replies`)
+      .set('Authorization', `Bearer ${author.token}`)
+      .expect(200);
+    expect(
+      restoredList.body.items.map((item: { id: string }) => item.id),
+    ).toEqual([reply.body.id]);
   });
 
   it('rejette un signalement sans toucher au contenu', async () => {
@@ -183,13 +275,22 @@ describe('Modération (e2e)', () => {
     await promote(moderator.id, 'admin');
     const post = await publish(author, 'Contenu licite');
 
-    const created = await report(reporter, 'publication', post.id, 'other').expect(201);
-    const decision = await decide(moderator, created.body.id, 'dismiss').expect(201);
+    const created = await report(
+      reporter,
+      'publication',
+      post.id,
+      'other',
+    ).expect(201);
+    const decision = await decide(moderator, created.body.id, 'dismiss').expect(
+      201,
+    );
     expect(decision.body.status).toBe('dismissed');
     expect((await publicationRow(post.id)).moderationStatus).toBe('pending');
 
     const page = await queue(moderator, { status: 'dismissed' }).expect(200);
-    expect(page.body.items.map((item: { id: string }) => item.id)).toContain(created.body.id);
+    expect(page.body.items.map((item: { id: string }) => item.id)).toContain(
+      created.body.id,
+    );
   });
 
   it('auto-flag une publication qui contient un mot bloqué', async () => {
@@ -206,7 +307,10 @@ describe('Modération (e2e)', () => {
     expect(added.body.word).toBe(word);
 
     // Accents et majuscules neutralisés à la comparaison.
-    const post = await publish(author, `Quel VILAIN${letters.toUpperCase()} propos`);
+    const post = await publish(
+      author,
+      `Quel VILAIN${letters.toUpperCase()} propos`,
+    );
     expect((await publicationRow(post.id)).moderationStatus).toBe('flagged');
 
     // Le mot retiré, un nouveau contenu repasse en contrôle automatique.
@@ -214,7 +318,10 @@ describe('Modération (e2e)', () => {
       .delete(`/admin/blocked-words/${added.body.id}`)
       .set('Authorization', `Bearer ${moderator.token}`)
       .expect(200);
-    const clean = await publish(author, `Quel VILAIN${letters.toUpperCase()} propos`);
+    const clean = await publish(
+      author,
+      `Quel VILAIN${letters.toUpperCase()} propos`,
+    );
     expect((await publicationRow(clean.id)).moderationStatus).toBe('pending');
   });
 
@@ -320,11 +427,18 @@ describe('Modération (e2e)', () => {
     const created = await report(reporter, 'publication', post.id).expect(201);
     await decide(moderator, created.body.id, 'suspend').expect(400);
 
-    const userReport = await report(reporter, 'user', author.id, 'harassment').expect(201);
+    const userReport = await report(
+      reporter,
+      'user',
+      author.id,
+      'harassment',
+    ).expect(201);
     await decide(moderator, userReport.body.id, 'remove').expect(400);
     // Le signalement reste ouvert après un refus d'action.
     const page = await queue(moderator).expect(200);
-    expect(page.body.items.map((item: { id: string }) => item.id)).toContain(userReport.body.id);
+    expect(page.body.items.map((item: { id: string }) => item.id)).toContain(
+      userReport.body.id,
+    );
   });
 
   it('recherche un compte pour le back-office et valide la requête', async () => {
@@ -337,7 +451,9 @@ describe('Modération (e2e)', () => {
       .query({ q: `Pseudo${letters}` })
       .set('Authorization', `Bearer ${moderator.token}`)
       .expect(200);
-    expect(found.body.map((row: { id: string }) => row.id)).toContain(target.id);
+    expect(found.body.map((row: { id: string }) => row.id)).toContain(
+      target.id,
+    );
     expect(found.body[0]).not.toHaveProperty('email');
 
     await request(app.getHttpServer())

@@ -6,10 +6,11 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Avatar } from '@/components/avatar';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedSurface, Radii, Spacing } from '@/constants/theme';
+import { FeedMetrics, FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
 import { api, type SuggestedAccount } from '@/lib/api';
 import { resolveMediaUrl } from '@/lib/media-url';
+import type { FollowState } from '@/lib/types';
 import { useTextPostTones } from './pager/feed-tokens';
 
 /**
@@ -20,7 +21,9 @@ import { useTextPostTones } from './pager/feed-tokens';
 export function SuggestedAccountsCard({ token }: { token: string }) {
   const tones = useTextPostTones();
   const [items, setItems] = useState<SuggestedAccount[] | null>(null);
-  const [followed, setFollowed] = useState<Set<string>>(() => new Set());
+  const [followStates, setFollowStates] = useState<
+    Map<string, FollowState['status'] | 'sending'>
+  >(() => new Map());
 
   useEffect(() => {
     let alive = true;
@@ -37,15 +40,16 @@ export function SuggestedAccountsCard({ token }: { token: string }) {
     return null;
   }
 
-  const follow = (account: SuggestedAccount) => {
-    setFollowed((current) => new Set(current).add(account.id));
-    void api.followUser(token, account.id).catch(() =>
-      setFollowed((current) => {
-        const next = new Set(current);
-        next.delete(account.id);
-        return next;
-      }),
-    );
+  const follow = async (account: SuggestedAccount) => {
+    setFollowStates((current) => new Map(current).set(account.id, 'sending'));
+    try {
+      const result = await api.followUser(token, account.id);
+      setFollowStates((current) =>
+        new Map(current).set(account.id, result.status === 'accepted' ? 'accepted' : 'pending'),
+      );
+    } catch {
+      setFollowStates((current) => new Map(current).set(account.id, 'none'));
+    }
   };
 
   return (
@@ -53,12 +57,14 @@ export function SuggestedAccountsCard({ token }: { token: string }) {
       <ThemedText style={[styles.title, { color: tones.text }]}>{fr.social.suggestedTitle}</ThemedText>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
         {items.map((account) => {
-          const isFollowed = followed.has(account.id);
+          const followState = followStates.get(account.id) ?? 'none';
+          const isFollowed = followState === 'accepted';
+          const followDisabled = followState !== 'none';
           return (
             <View key={account.id} style={[styles.item, { borderColor: tones.cardBorder }]}>
               <Pressable
                 onPress={() => setItems((current) => (current ?? []).filter((x) => x.id !== account.id))}
-                hitSlop={8}
+                hitSlop={Spacing.four}
                 accessibilityRole="button"
                 accessibilityLabel={fr.social.suggestedDismiss}
                 style={styles.dismiss}>
@@ -84,17 +90,26 @@ export function SuggestedAccountsCard({ token }: { token: string }) {
                 </ThemedText>
               </Pressable>
               <Pressable
-                onPress={() => (isFollowed ? undefined : follow(account))}
-                disabled={isFollowed}
+                onPress={() => void follow(account)}
+                disabled={followDisabled}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: followDisabled }}
                 style={[
                   styles.follow,
-                  isFollowed
+                  followState !== 'none'
                     ? { backgroundColor: tones.badge }
                     : { backgroundColor: FeedSurface.follow },
                 ]}>
-                <ThemedText style={[styles.followText, { color: isFollowed ? tones.text : '#000000' }]}>
-                  {isFollowed ? fr.social.suggestedFollowing : fr.social.follow}
+                <ThemedText
+                  style={[
+                    styles.followText,
+                    { color: followState === 'none' ? tones.onFollow : tones.text },
+                  ]}>
+                  {followState === 'pending'
+                    ? fr.social.requested
+                    : isFollowed
+                      ? fr.social.suggestedFollowing
+                      : fr.social.follow}
                 </ThemedText>
               </Pressable>
             </View>
@@ -113,10 +128,10 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.four,
     gap: Spacing.two,
   },
-  title: { fontWeight: '700', fontSize: 15, paddingHorizontal: Spacing.three },
+  title: { ...Type.body, fontWeight: '700', paddingHorizontal: Spacing.three },
   row: { gap: Spacing.two, paddingHorizontal: Spacing.three },
   item: {
-    width: 150,
+    width: FeedMetrics.suggestedCardWidth,
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: Radii.md,
     padding: Spacing.three,
@@ -124,14 +139,15 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
   },
   dismiss: { position: 'absolute', right: Spacing.two, top: Spacing.two, zIndex: 1 },
-  identity: { alignItems: 'center', gap: 2, width: '100%' },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: Spacing.one, maxWidth: '100%' },
-  name: { fontWeight: '700', fontSize: 13, flexShrink: 1 },
+  identity: { alignItems: 'center', gap: Spacing.half, width: '100%' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.half, marginTop: Spacing.one, maxWidth: '100%' },
+  name: { ...Type.caption, fontWeight: '700', flexShrink: 1 },
   follow: {
     alignSelf: 'stretch',
+    minHeight: FeedMetrics.touchTarget,
     alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: Radii.sm,
-    paddingVertical: Spacing.one + 2,
   },
-  followText: { fontWeight: '700', fontSize: 13 },
+  followText: { ...Type.caption, fontWeight: '700' },
 });

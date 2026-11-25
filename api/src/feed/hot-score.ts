@@ -42,14 +42,19 @@ export function computeHotScore(
   createdAt: Date,
   now: Date = new Date(),
 ): number {
-  const ageHours = Math.max(0, (now.getTime() - createdAt.getTime()) / 3_600_000);
+  const ageHours = Math.max(
+    0,
+    (now.getTime() - createdAt.getTime()) / 3_600_000,
+  );
   const engagement =
     counts.likes * 3 +
     counts.comments * 4 +
     counts.reposts * 5 +
     counts.saves * 2 +
     (counts.views ?? 0) * VIEW_WEIGHT;
-  const raw = Math.round(((engagement + 1) / Math.pow(ageHours + 2, 1.5)) * 1_000_000);
+  const raw = Math.round(
+    ((engagement + 1) / Math.pow(ageHours + 2, 1.5)) * 1_000_000,
+  );
   return Math.min(HOT_SCORE_MAX, Math.max(0, raw));
 }
 
@@ -61,9 +66,9 @@ export function computeHotScore(
 export function hotScoreSql() {
   return sql`least(
     round(
-      ((${publications.likeCount} * 3 + ${publications.commentCount} * 4
-        + ${publications.repostCount} * 5 + ${publications.saveCount} * 2
-        + ${publications.viewCount} * ${VIEW_WEIGHT}::numeric + 1)
+      ((${publications.likeCount}::numeric * 3 + ${publications.commentCount}::numeric * 4
+        + ${publications.repostCount}::numeric * 5 + ${publications.saveCount}::numeric * 2
+        + ${publications.viewCount}::numeric * ${VIEW_WEIGHT}::numeric + 1)
        / power(extract(epoch from (now() - ${publications.createdAt})) / 3600 + 2, 1.5))
       * 1000000
     ),

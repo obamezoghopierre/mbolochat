@@ -26,6 +26,7 @@ import {
   commentLikes,
   commentReactions,
   comments,
+  commentSessions,
   follows,
   hashtags,
   mediaAssets,
@@ -50,6 +51,7 @@ import { SocialNotificationsService } from '../social-notifications/social-notif
 import {
   canInteract,
   canViewPublication,
+  canViewQuotedOriginal,
   isPubliclyCacheable,
   type SocialViewer,
 } from '../users/visibility.js';
@@ -59,10 +61,20 @@ import type {
   ReactDto,
   RecordViewDto,
 } from './dto/interactions.dto.js';
-import { COMMENT_REACTION_KINDS, MAX_WATCH_MS } from './dto/interactions.dto.js';
-import { loadPublicationMedia, type PublicationMediaView } from './publication-media.js';
+import {
+  COMMENT_REACTION_KINDS,
+  MAX_WATCH_MS,
+} from './dto/interactions.dto.js';
+import {
+  loadPublicationMedia,
+  type PublicationMediaView,
+} from './publication-media.js';
 import { PublicationEvents } from './publication-events.js';
 import { loadLikedByFollowed } from '../social/liked-by.js';
+import {
+  visibleCommentAuthorCondition,
+  visibleCommentCondition,
+} from '../social/comment-visibility.js';
 import {
   MAX_TEXT_SIZE,
   MIN_TEXT_SIZE,
@@ -71,6 +83,11 @@ import {
 } from './dto/create-publication.dto.js';
 import type { UpdatePublicationDto } from './dto/update-publication.dto.js';
 import { previewForText, type LinkPreviewMeta } from './link-preview.js';
+import {
+  COMMENT_SESSION_TTL_MS,
+  decodeCommentSessionCursor,
+  encodeCommentSessionCursor,
+} from './comment-session.js';
 
 /** Borne anti-spam : au-delà, les mentions suivantes ne notifient pas. */
 const MAX_MENTIONS_PER_PUBLICATION = 20;
@@ -211,7 +228,10 @@ function commentScoreSql() {
     select count(*)::int from ${commentDislikes}
     where ${commentDislikes.commentId} = ${comments.id}
   )`;
-  return { dislikes, score: sql<number>`greatest(${comments.likeCount} - ${dislikes}, 0)` };
+  return {
+    dislikes,
+    score: sql<number>`greatest(${comments.likeCount} - ${dislikes}, 0)`,
+  };
 }
 
 /** État du graphe social entre le lecteur et l'auteur d'un commentaire. */
@@ -238,12 +258,18 @@ function encodeCommentCursor(
   createdAtText: string,
   id: string,
 ): string {
-  return Buffer.from(`${sort}|${score}|${createdAtText}|${id}`, 'utf8').toString('base64url');
+  return Buffer.from(
+    `${sort}|${score}|${createdAtText}|${id}`,
+    'utf8',
+  ).toString('base64url');
 }
 
-function decodeCommentCursor(
-  cursor: string,
-): { sort: CommentSort; score: number; createdAtText: string; id: string } {
+function decodeCommentCursor(cursor: string): {
+  sort: CommentSort;
+  score: number;
+  createdAtText: string;
+  id: string;
+} {
   const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
   if (parts.length !== 4) {
     throw new BadRequestException('Curseur invalide.');
@@ -309,6 +335,12 @@ export class PublicationsService {
     this.moderation.onPublicationApproved((publicationId) =>
       this.notifyMentionsAfterApproval(publicationId),
     );
+    // ModerationService notifie après commit : aucune dépendance circulaire
+    // entre modération et publications. Le retrait ne contient que des ids.
+    this.moderation.onCommentHidden(({ commentId, publicationId }) => {
+      this.events.emitCommentDeleted(publicationId, commentId);
+      return this.broadcastStats(publicationId);
+    });
   }
 
   /**
@@ -338,21 +370,32 @@ export class PublicationsService {
       return;
     }
     const created = await this.db.transaction((tx) =>
-      this.applyPublicationMentions(tx, text, row.authorId, publicationId, row.visibility),
+      this.applyPublicationMentions(
+        tx,
+        text,
+        row.authorId,
+        publicationId,
+        row.visibility,
+      ),
     );
     for (const notification of created) {
       await this.notifications.deliver(notification);
     }
   }
 
-  async create(authorId: string, dto: CreatePublicationDto): Promise<PublicationView> {
+  async create(
+    authorId: string,
+    dto: CreatePublicationDto,
+  ): Promise<PublicationView> {
     const assetIds = dto.assetIds ?? [];
     if (new Set(assetIds).size !== assetIds.length) {
       throw new BadRequestException('Média fourni deux fois.');
     }
     const quotedPublicationId = dto.quotedPublicationId?.trim() || null;
     if (quotedPublicationId && assetIds.length > 0) {
-      throw new BadRequestException('Une citation ne peut pas ajouter de média.');
+      throw new BadRequestException(
+        'Une citation ne peut pas ajouter de média.',
+      );
     }
     const caption = (dto.caption ?? '').trim();
     // Pages d'un post texte multi-cartes : une seule page non vide reste une
@@ -365,7 +408,8 @@ export class PublicationsService {
         style: this.cleanPageStyle(dto.textPageStyles?.[index]),
       }))
       .filter((pair) => pair.text.length > 0);
-    const storedPages = pagePairs.length > 1 ? pagePairs.map((pair) => pair.text) : [];
+    const storedPages =
+      pagePairs.length > 1 ? pagePairs.map((pair) => pair.text) : [];
     const storedPageStyles = this.packPageStyles(
       storedPages.length > 0 ? pagePairs.map((pair) => pair.style) : [],
     );
@@ -374,21 +418,29 @@ export class PublicationsService {
     // Conforme au DTO : dès que des pages sont fournies, `caption` est ignoré,
     // y compris quand une seule page est non vide (elle devient la légende).
     const pagesProvided = (dto.textPages?.length ?? 0) > 0;
-    const effectiveCaption = pagesProvided ? (pagePairs[0]?.text ?? '') : caption;
+    const effectiveCaption = pagesProvided
+      ? (pagePairs[0]?.text ?? '')
+      : caption;
     if (
       effectiveCaption.length === 0 &&
       assetIds.length === 0 &&
       !quotedPublicationId
     ) {
-      throw new BadRequestException('La légende ne peut pas être vide sans média.');
+      throw new BadRequestException(
+        'La légende ne peut pas être vide sans média.',
+      );
     }
     // Une citation copie les médias de l'originale : la citation devient une
     // publication à part entière, visible selon sa propre visibilité. Seul un
     // contenu déjà public d'un compte public peut être cité, sinon la copie
     // exposerait un contenu `followers`/privé à un autre audience.
-    let quoted: { id: string; authorId: string; assetIds: string[] } | null = null;
+    let quoted: { id: string; authorId: string; assetIds: string[] } | null =
+      null;
     if (quotedPublicationId) {
-      const { row: original, facts } = await this.assertVisible(quotedPublicationId, authorId);
+      const { row: original, facts } = await this.assertVisible(
+        quotedPublicationId,
+        authorId,
+      );
       if (facts.blocked || original.deletedAt) {
         throw new NotFoundException('Publication introuvable.');
       }
@@ -396,8 +448,13 @@ export class PublicationsService {
         .select({ privateAccount: users.privateAccount })
         .from(users)
         .where(eq(users.id, original.authorId));
-      if (original.visibility !== 'public' || originalAuthor?.privateAccount === true) {
-        throw new BadRequestException('Seule une publication publique peut être citée.');
+      if (
+        original.visibility !== 'public' ||
+        originalAuthor?.privateAccount === true
+      ) {
+        throw new BadRequestException(
+          'Seule une publication publique peut être citée.',
+        );
       }
       const mediaRows = await this.db
         .select({ assetId: publicationMedia.assetId })
@@ -412,7 +469,10 @@ export class PublicationsService {
     }
     // Médias de la citation : ceux de l'originale, dans leur ordre.
     const effectiveAssetIds = quoted ? quoted.assetIds : assetIds;
-    if (storedPages.length > 0 && (effectiveAssetIds.length > 0 || quotedPublicationId)) {
+    if (
+      storedPages.length > 0 &&
+      (effectiveAssetIds.length > 0 || quotedPublicationId)
+    ) {
       throw new BadRequestException(
         'Un post multi-pages ne peut pas avoir de média ni être une citation.',
       );
@@ -420,12 +480,19 @@ export class PublicationsService {
     const kind = quoted ? 'post' : (dto.kind ?? 'post');
     // Auto-flag : un contenu qui contient un mot bloqué part en revue humaine
     // au lieu d'être publié directement. Toutes les pages sont modérées.
-    const moderationText = storedPages.length > 0 ? storedPages.join('\n') : effectiveCaption;
+    const moderationText =
+      storedPages.length > 0 ? storedPages.join('\n') : effectiveCaption;
     const flagged =
-      moderationText.length > 0 ? await this.moderation.hasBlockedWord(moderationText) : false;
+      moderationText.length > 0
+        ? await this.moderation.hasBlockedWord(moderationText)
+        : false;
 
-    let quoteNotification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
-    let mentionNotifications: Awaited<ReturnType<SocialNotificationsService['create']>>[] = [];
+    let quoteNotification: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    > = null;
+    let mentionNotifications: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    >[] = [];
 
     const inserted = await this.db.transaction(async (tx) => {
       const assets =
@@ -450,11 +517,13 @@ export class PublicationsService {
       }
       // L'ordre du carrousel est celui fourni par le client — ou celui des
       // médias de l'originale pour une citation.
-      const ordered = effectiveAssetIds.map(
-        (assetId) => assets.find((asset) => asset.id === assetId)!,
+      const ordered = effectiveAssetIds.map((assetId) =>
+        assets.find((asset) => asset.id === assetId)!,
       );
       if (ordered.length === 0 && effectiveCaption.length === 0) {
-        throw new BadRequestException('La légende ne peut pas être vide sans média.');
+        throw new BadRequestException(
+          'La légende ne peut pas être vide sans média.',
+        );
       }
       // Carrousel façon Instagram : jusqu'à 10 photos et vidéos, mélangées
       // dans l'ordre choisi. Le son seul n'est jamais un média de publication.
@@ -480,7 +549,8 @@ export class PublicationsService {
           format,
           caption: effectiveCaption.length > 0 ? effectiveCaption : null,
           // Le fond n'a de sens que sur une carte texte sans média.
-          textBackground: format === 'text' ? (dto.textBackground ?? null) : null,
+          textBackground:
+            format === 'text' ? (dto.textBackground ?? null) : null,
           textPages: storedPages.length > 0 ? storedPages : null,
           // Styles par page : réservés au post texte multi-cartes.
           textPageStyles: format === 'text' ? storedPageStyles : null,
@@ -490,11 +560,14 @@ export class PublicationsService {
           textColor: format === 'text' ? (dto.textColor ?? null) : null,
           // Titre dédié : réservé au post texte, les blancs ne sont pas stockés.
           textTitle:
-            format === 'text' ? (dto.textTitle?.trim() ? dto.textTitle.trim() : null) : null,
+            format === 'text'
+              ? dto.textTitle?.trim()
+                ? dto.textTitle.trim()
+                : null
+              : null,
           textSize: format === 'text' ? (dto.textSize ?? null) : null,
           // Lieu : texte libre borné, blancs non stockés.
-          location:
-            dto.location?.trim() ? dto.location.trim() : null,
+          location: dto.location?.trim() ? dto.location.trim() : null,
           // Aperçu du premier lien : les métadonnées sont lues côté serveur
           // pour que les lecteurs ne contactent jamais les sites liés.
           linkPreview:
@@ -511,7 +584,11 @@ export class PublicationsService {
           clientId: dto.clientId,
           createdAt: now,
           // Score matérialisé dès la création : le feed pagine dessus.
-          hotScore: computeHotScore({ likes: 0, comments: 0, reposts: 0, saves: 0 }, now, now),
+          hotScore: computeHotScore(
+            { likes: 0, comments: 0, reposts: 0, saves: 0 },
+            now,
+            now,
+          ),
         })
         .onConflictDoNothing()
         .returning();
@@ -532,7 +609,9 @@ export class PublicationsService {
         .update(users)
         .set({
           publicationCount: sql`${users.publicationCount} + 1`,
-          ...(kind === 'reel' ? { reelCount: sql`${users.reelCount} + 1` } : {}),
+          ...(kind === 'reel'
+            ? { reelCount: sql`${users.reelCount} + 1` }
+            : {}),
         })
         .where(eq(users.id, authorId));
       if (quoted) {
@@ -575,7 +654,12 @@ export class PublicationsService {
     const [existing] = await this.db
       .select()
       .from(publications)
-      .where(and(eq(publications.authorId, authorId), eq(publications.clientId, dto.clientId)));
+      .where(
+        and(
+          eq(publications.authorId, authorId),
+          eq(publications.clientId, dto.clientId),
+        ),
+      );
     if (!existing) {
       throw new ForbiddenException('Publication en conflit.');
     }
@@ -625,14 +709,20 @@ export class PublicationsService {
     ) {
       return null;
     }
-    const media = (
-      await loadPublicationMedia(
-        this.db,
-        [row.id],
-        this.storage.isConfigured() ? this.storage : null,
-        () => 'public',
-      )
-    ).get(row.id);
+    const copiedMediaVisible =
+      !row.quotedPublicationId ||
+      (await this.loadVisibleQuote(row.quotedPublicationId, null)) !== null;
+    const media = copiedMediaVisible
+      ? (
+          await loadPublicationMedia(
+            this.db,
+            [row.id],
+            this.storage.isConfigured() ? this.storage : null,
+            // Une citation ne doit jamais produire d'URL publique immuable.
+            () => (row.quotedPublicationId ? 'signed' : 'public'),
+          )
+        ).get(row.id)
+      : undefined;
     const first = media?.[0] ?? null;
     return {
       id: row.id,
@@ -643,43 +733,74 @@ export class PublicationsService {
         displayName: authorRow.displayName,
         avatarUrl: authorRow.avatarUrl,
       },
-      imageUrl: first ? (first.kind === 'video' ? first.posterUrl : first.url) : null,
+      imageUrl: first
+        ? first.kind === 'video'
+          ? first.posterUrl
+          : first.url
+        : null,
       isVideo: first?.kind === 'video',
     };
   }
 
   /** Profil : 3 publications épinglées au plus, comme Instagram. */
-  async setPinned(publicationId: string, viewerId: string, pinned: boolean): Promise<PublicationView> {
-    const { row } = await this.load(publicationId);
-    if (row.authorId !== viewerId) {
-      throw new ForbiddenException('Seul l’auteur peut épingler sa publication.');
-    }
-    if (row.deletedAt) {
-      throw new NotFoundException('Publication introuvable.');
-    }
-    if (pinned && row.pinnedAt === null) {
-      const [{ value }] = await this.db
-        .select({ value: count() })
+  async setPinned(
+    publicationId: string,
+    viewerId: string,
+    pinned: boolean,
+  ): Promise<PublicationView> {
+    const updated = await this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`publication-pin:${viewerId}`}, 0))`,
+      );
+      const [row] = await tx
+        .select()
         .from(publications)
-        .where(
-          and(
-            eq(publications.authorId, viewerId),
-            isNotNull(publications.pinnedAt),
-            isNull(publications.deletedAt),
-          ),
-        );
-      if (value >= MAX_PINNED_PUBLICATIONS) {
-        throw new BadRequestException(
-          `Tu peux épingler ${MAX_PINNED_PUBLICATIONS} publications au plus.`,
+        .where(eq(publications.id, publicationId))
+        .for('update');
+      if (!row) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+      if (row.authorId !== viewerId) {
+        throw new ForbiddenException(
+          'Seul l’auteur peut épingler sa publication.',
         );
       }
-    }
-    const [updated] = await this.db
-      .update(publications)
-      .set({ pinnedAt: pinned ? (row.pinnedAt ?? new Date()) : null })
-      .where(eq(publications.id, publicationId))
-      .returning();
-    return this.view(updated ?? row, viewerId);
+      if (row.deletedAt) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+      if (pinned && row.pinnedAt === null) {
+        const [{ value }] = await tx
+          .select({ value: count() })
+          .from(publications)
+          .where(
+            and(
+              eq(publications.authorId, viewerId),
+              isNotNull(publications.pinnedAt),
+              isNull(publications.deletedAt),
+            ),
+          );
+        if (value >= MAX_PINNED_PUBLICATIONS) {
+          throw new BadRequestException(
+            `Tu peux épingler ${MAX_PINNED_PUBLICATIONS} publications au plus.`,
+          );
+        }
+      }
+      const [result] = await tx
+        .update(publications)
+        .set({ pinnedAt: pinned ? (row.pinnedAt ?? new Date()) : null })
+        .where(
+          and(
+            eq(publications.id, publicationId),
+            isNull(publications.deletedAt),
+          ),
+        )
+        .returning();
+      if (!result) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+      return result;
+    });
+    return this.view(updated, viewerId);
   }
 
   async get(publicationId: string, viewerId: string): Promise<PublicationView> {
@@ -699,7 +820,9 @@ export class PublicationsService {
   ): Promise<PublicationView> {
     const { row } = await this.load(publicationId);
     if (row.authorId !== viewerId) {
-      throw new ForbiddenException('Seul l’auteur peut modifier sa publication.');
+      throw new ForbiddenException(
+        'Seul l’auteur peut modifier sa publication.',
+      );
     }
     if (row.deletedAt || row.moderationStatus === 'removed') {
       throw new NotFoundException('Publication introuvable.');
@@ -719,9 +842,12 @@ export class PublicationsService {
         }))
       : null;
     const nextPages = submittedPairs
-      ? submittedPairs.filter((pair) => pair.text.length > 0).map((pair) => pair.text)
+      ? submittedPairs
+          .filter((pair) => pair.text.length > 0)
+          .map((pair) => pair.text)
       : null;
-    let storedPages = nextPages !== null && nextPages.length > 1 ? nextPages : [];
+    let storedPages =
+      nextPages !== null && nextPages.length > 1 ? nextPages : [];
 
     // Légende seule sur un post multi-pages : elle devient la première page,
     // comme à la création où la légende EST la première page.
@@ -766,23 +892,31 @@ export class PublicationsService {
       resolvedPageStyles =
         effectivePageCount > 1
           ? this.packPageStyles(
-              Array.from({ length: effectivePageCount }, (_, index) => source[index] ?? null),
+              Array.from(
+                { length: effectivePageCount },
+                (_, index) => source[index] ?? null,
+              ),
             )
           : null;
     }
 
     const hasMedia = row.format !== 'text';
     if (!hasMedia && effectiveCaption.length === 0) {
-      throw new BadRequestException('La légende ne peut pas être vide sans média.');
+      throw new BadRequestException(
+        'La légende ne peut pas être vide sans média.',
+      );
     }
 
     // Médias : retirer ou réordonner ceux déjà attachés, jamais en ajouter.
-    let nextMedia: Array<{ assetId: string; altText: string | null }> | null = null;
+    let nextMedia: Array<{ assetId: string; altText: string | null }> | null =
+      null;
     let nextFormat: 'image' | 'carousel' | 'video' | null = null;
     let removedAssetIds: string[] = [];
     if (dto.mediaAssetIds !== undefined) {
       if (!hasMedia) {
-        throw new BadRequestException('Un post texte n’a pas de média à modifier.');
+        throw new BadRequestException(
+          'Un post texte n’a pas de média à modifier.',
+        );
       }
       const requested = dto.mediaAssetIds;
       if (requested.length === 0) {
@@ -811,7 +945,9 @@ export class PublicationsService {
       }
       const unchangedOrder =
         requested.length === current.length &&
-        requested.every((assetId, index) => current[index]?.assetId === assetId);
+        requested.every(
+          (assetId, index) => current[index]?.assetId === assetId,
+        );
       if (!unchangedOrder) {
         nextMedia = requested.map((assetId) => ({
           assetId,
@@ -837,12 +973,16 @@ export class PublicationsService {
     const moderationText =
       storedPages.length > 0 ? storedPages.join('\n') : effectiveCaption;
     const flagged =
-      moderationText.length > 0 ? await this.moderation.hasBlockedWord(moderationText) : false;
+      moderationText.length > 0
+        ? await this.moderation.hasBlockedWord(moderationText)
+        : false;
 
     // « Modifié » : seulement si le texte lu change vraiment (légende, pages
     // ou titre), pas pour un simple changement de fond ou de police.
     const previousText = [
-      (row.textPages ?? []).length > 1 ? (row.textPages ?? []).join('\n') : (row.caption ?? ''),
+      (row.textPages ?? []).length > 1
+        ? (row.textPages ?? []).join('\n')
+        : (row.caption ?? ''),
       row.textTitle ?? '',
     ].join('\u0000');
     const nextTitle =
@@ -851,8 +991,11 @@ export class PublicationsService {
           ? ''
           : dto.textTitle.trim()
         : (row.textTitle ?? '');
-    const textChanged = previousText !== [moderationText, nextTitle].join('\u0000');
-    let mentionNotifications: Awaited<ReturnType<SocialNotificationsService['create']>>[] = [];
+    const textChanged =
+      previousText !== [moderationText, nextTitle].join('\u0000');
+    let mentionNotifications: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    >[] = [];
 
     const updated = await this.db.transaction(async (tx) => {
       const [result] = await tx
@@ -880,19 +1023,33 @@ export class PublicationsService {
                 ...(dto.textBackground !== undefined
                   ? { textBackground: dto.textBackground }
                   : {}),
-                ...(dto.textFont !== undefined ? { textFont: dto.textFont } : {}),
-                ...(dto.textAlign !== undefined ? { textAlign: dto.textAlign } : {}),
-                ...(dto.textColor !== undefined ? { textColor: dto.textColor } : {}),
-                ...(dto.textSize !== undefined ? { textSize: dto.textSize } : {}),
+                ...(dto.textFont !== undefined
+                  ? { textFont: dto.textFont }
+                  : {}),
+                ...(dto.textAlign !== undefined
+                  ? { textAlign: dto.textAlign }
+                  : {}),
+                ...(dto.textColor !== undefined
+                  ? { textColor: dto.textColor }
+                  : {}),
+                ...(dto.textSize !== undefined
+                  ? { textSize: dto.textSize }
+                  : {}),
               }
             : {}),
-          ...(dto.commentsDisabled !== undefined ? { commentsDisabled: dto.commentsDisabled } : {}),
-          ...(dto.hideLikeCount !== undefined ? { hideLikeCount: dto.hideLikeCount } : {}),
+          ...(dto.commentsDisabled !== undefined
+            ? { commentsDisabled: dto.commentsDisabled }
+            : {}),
+          ...(dto.hideLikeCount !== undefined
+            ? { hideLikeCount: dto.hideLikeCount }
+            : {}),
           // Lieu : pour toutes les publications (texte, photo, vidéo).
           ...(dto.location !== undefined
             ? {
                 location:
-                  dto.location === null || !dto.location.trim() ? null : dto.location.trim(),
+                  dto.location === null || !dto.location.trim()
+                    ? null
+                    : dto.location.trim(),
               }
             : {}),
           ...(flagged ? { moderationStatus: 'flagged' as const } : {}),
@@ -904,7 +1061,10 @@ export class PublicationsService {
           ...(isTextPost &&
           (dto.caption !== undefined || dto.textPages !== undefined)
             ? {
-                linkPreview: await previewForText([effectiveCaption, ...storedPages]),
+                linkPreview: await previewForText([
+                  effectiveCaption,
+                  ...storedPages,
+                ]),
               }
             : {}),
         })
@@ -913,7 +1073,9 @@ export class PublicationsService {
       if (result && nextMedia) {
         // Réécriture complète : l'index unique (publication, position) interdit
         // de permuter les lignes en place.
-        await tx.delete(publicationMedia).where(eq(publicationMedia.publicationId, publicationId));
+        await tx
+          .delete(publicationMedia)
+          .where(eq(publicationMedia.publicationId, publicationId));
         await tx.insert(publicationMedia).values(
           nextMedia.map((entry, position) => ({
             publicationId,
@@ -932,7 +1094,9 @@ export class PublicationsService {
       // création (la clé de déduplication ignore celles déjà prévenues). Un
       // post en revue attend la décision de la modération.
       const visible =
-        result && result.moderationStatus !== 'flagged' && result.moderationStatus !== 'removed';
+        result &&
+        result.moderationStatus !== 'flagged' &&
+        result.moderationStatus !== 'removed';
       if (result && textChanged && visible && moderationText.length > 0) {
         mentionNotifications = await this.applyPublicationMentions(
           tx,
@@ -968,20 +1132,34 @@ export class PublicationsService {
     publicationId: string,
     viewerId: string,
     input: RecordViewDto,
-  ): Promise<{ viewCount: number; watchMs: number; completed: boolean; firstView: boolean }> {
+  ): Promise<{
+    viewCount: number;
+    watchMs: number;
+    completed: boolean;
+    firstView: boolean;
+  }> {
     await this.assertVisible(publicationId, viewerId);
-    const watchedMs = Math.min(Math.max(0, Math.trunc(input.watchedMs ?? 0)), MAX_WATCH_MS);
+    const watchedMs = Math.min(
+      Math.max(0, Math.trunc(input.watchedMs ?? 0)),
+      MAX_WATCH_MS,
+    );
     const completed = input.completed === true;
 
     const result = await this.db.transaction(async (tx) => {
       const [upserted] = await tx
         .insert(publicationViews)
-        .values({ publicationId, userId: viewerId, watchMs: watchedMs, completed })
+        .values({
+          publicationId,
+          userId: viewerId,
+          watchMs: watchedMs,
+          completed,
+        })
         .onConflictDoUpdate({
           target: [publicationViews.publicationId, publicationViews.userId],
           set: {
             watchMs: sql`greatest(${publicationViews.watchMs}, excluded.watch_ms)`,
             completed: sql`${publicationViews.completed} or excluded.completed`,
+            viewedAt: sql`now()`,
           },
         })
         // `xmax = 0` distingue l'insertion de la mise à jour dans un upsert.
@@ -1040,20 +1218,34 @@ export class PublicationsService {
   }
 
   /** Suppression logique par l'auteur, idempotente. */
-  async remove(publicationId: string, viewerId: string): Promise<{ deleted: true }> {
+  async remove(
+    publicationId: string,
+    viewerId: string,
+  ): Promise<{ deleted: true }> {
     const { row } = await this.load(publicationId);
     if (row.authorId !== viewerId) {
-      throw new ForbiddenException('Seul l’auteur peut supprimer sa publication.');
+      throw new ForbiddenException(
+        'Seul l’auteur peut supprimer sa publication.',
+      );
     }
     if (row.deletedAt) {
       return { deleted: true };
     }
 
     await this.db.transaction(async (tx) => {
-      await tx
+      const deleted = await tx
         .update(publications)
         .set({ deletedAt: new Date() })
-        .where(eq(publications.id, publicationId));
+        .where(
+          and(
+            eq(publications.id, publicationId),
+            isNull(publications.deletedAt),
+          ),
+        )
+        .returning({ id: publications.id });
+      if (deleted.length === 0) {
+        return;
+      }
       await tx
         .update(users)
         .set({
@@ -1070,7 +1262,9 @@ export class PublicationsService {
         // La citation comptait comme une republication de l'originale.
         await tx
           .update(publications)
-          .set({ repostCount: sql`greatest(${publications.repostCount} - 1, 0)` })
+          .set({
+            repostCount: sql`greatest(${publications.repostCount} - 1, 0)`,
+          })
           .where(eq(publications.id, row.quotedPublicationId));
         await this.refreshHotScore(tx, row.quotedPublicationId);
       }
@@ -1088,7 +1282,9 @@ export class PublicationsService {
       throw new ForbiddenException('Interaction impossible avec ce compte.');
     }
     const kind = dto.kind ?? 'like';
-    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
+    let notification: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    > = null;
 
     await this.db.transaction(async (tx) => {
       const inserted = await tx
@@ -1131,7 +1327,10 @@ export class PublicationsService {
     await this.notifications.deliver(notification);
 
     void this.broadcastStats(publicationId);
-    return { reaction: kind, likeCount: await this.likeCount(publicationId) };
+    return {
+      reaction: kind,
+      likeCount: await this.likeCount(publicationId, viewerId),
+    };
   }
 
   /**
@@ -1199,10 +1398,14 @@ export class PublicationsService {
       throw new ForbiddenException('Interaction impossible avec ce compte.');
     }
     if (row.authorId === viewerId) {
-      throw new BadRequestException('On ne peut pas republier sa propre publication.');
+      throw new BadRequestException(
+        'On ne peut pas republier sa propre publication.',
+      );
     }
 
-    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
+    let notification: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    > = null;
 
     await this.db.transaction(async (tx) => {
       const inserted = await tx
@@ -1231,7 +1434,10 @@ export class PublicationsService {
     await this.notifications.deliver(notification);
 
     void this.broadcastStats(publicationId);
-    return { reposted: true, repostCount: await this.repostCount(publicationId) };
+    return {
+      reposted: true,
+      repostCount: await this.repostCount(publicationId),
+    };
   }
 
   /** Retire la republication, idempotent. */
@@ -1259,7 +1465,10 @@ export class PublicationsService {
     });
 
     void this.broadcastStats(publicationId);
-    return { reposted: false, repostCount: await this.repostCount(publicationId) };
+    return {
+      reposted: false,
+      repostCount: await this.repostCount(publicationId),
+    };
   }
 
   /** Retire la réaction, idempotent. */
@@ -1286,13 +1495,18 @@ export class PublicationsService {
         .where(eq(publications.id, publicationId));
       await tx
         .update(users)
-        .set({ likeReceivedCount: sql`greatest(${users.likeReceivedCount} - 1, 0)` })
+        .set({
+          likeReceivedCount: sql`greatest(${users.likeReceivedCount} - 1, 0)`,
+        })
         .where(eq(users.id, row.authorId));
       await this.refreshHotScore(tx, publicationId);
     });
 
     void this.broadcastStats(publicationId);
-    return { reaction: null, likeCount: await this.likeCount(publicationId) };
+    return {
+      reaction: null,
+      likeCount: await this.likeCount(publicationId, viewerId),
+    };
   }
 
   /** Commente ou répond. Idempotent par `(auteur, clientId)`. */
@@ -1304,7 +1518,9 @@ export class PublicationsService {
     const body = (dto.body ?? '').trim();
     const { row, facts } = await this.assertVisible(publicationId, viewerId);
     if (row.commentsDisabled && row.authorId !== viewerId) {
-      throw new ForbiddenException('Les commentaires sont désactivés pour cette publication.');
+      throw new ForbiddenException(
+        'Les commentaires sont désactivés pour cette publication.',
+      );
     }
 
     // Pièce jointe : sticker de catalogue, ou asset image/audio `ready` du
@@ -1352,7 +1568,9 @@ export class PublicationsService {
         voiceAsset.kind !== 'audio' ||
         voiceAsset.id === mediaAssetId
       ) {
-        throw new BadRequestException('Note vocale introuvable ou pas encore prête.');
+        throw new BadRequestException(
+          'Note vocale introuvable ou pas encore prête.',
+        );
       }
       if (!mediaAssetId && !stickerRef) {
         kind = 'audio';
@@ -1373,27 +1591,60 @@ export class PublicationsService {
       .from(userSocialSettings)
       .where(eq(userSocialSettings.userId, row.authorId));
     if (!canInteract(settings?.commentPermission ?? 'everyone', facts)) {
-      throw new ForbiddenException('Ce compte n’autorise pas les commentaires.');
+      throw new ForbiddenException(
+        'Ce compte n’autorise pas les commentaires.',
+      );
     }
 
     let parentAuthorId: string | null = null;
-    if (dto.parentId) {
-      const [parent] = await this.db
-        .select({
-          id: comments.id,
-          publicationId: comments.publicationId,
-          authorId: comments.authorId,
-        })
-        .from(comments)
-        .where(and(eq(comments.id, dto.parentId), isNull(comments.deletedAt)));
-      if (!parent || parent.publicationId !== publicationId) {
-        throw new NotFoundException('Commentaire parent introuvable.');
-      }
-      parentAuthorId = parent.authorId;
-    }
-
     let created: PublicationCommentNotification[] = [];
     const inserted = await this.db.transaction(async (tx) => {
+      if (dto.parentId) {
+        const [parent] = await tx
+          .select({
+            id: comments.id,
+            publicationId: comments.publicationId,
+            authorId: comments.authorId,
+          })
+          .from(comments)
+          .innerJoin(users, eq(users.id, comments.authorId))
+          .where(
+            and(
+              eq(comments.id, dto.parentId),
+              visibleCommentCondition(),
+              visibleCommentAuthorCondition(viewerId),
+            ),
+          )
+          .for('update');
+        if (!parent || parent.publicationId !== publicationId) {
+          throw new NotFoundException('Commentaire parent introuvable.');
+        }
+        parentAuthorId = parent.authorId;
+      }
+      const [publication] = await tx
+        .select({
+          id: publications.id,
+          authorId: publications.authorId,
+          commentsDisabled: publications.commentsDisabled,
+          deletedAt: publications.deletedAt,
+          moderationStatus: publications.moderationStatus,
+        })
+        .from(publications)
+        .where(eq(publications.id, publicationId))
+        .for('update');
+      if (
+        !publication ||
+        publication.deletedAt ||
+        publication.moderationStatus === 'removed' ||
+        publication.moderationStatus === 'flagged'
+      ) {
+        throw new NotFoundException('Publication introuvable.');
+      }
+      if (publication.commentsDisabled && publication.authorId !== viewerId) {
+        throw new ForbiddenException(
+          'Les commentaires sont désactivés pour cette publication.',
+        );
+      }
       const [comment] = await tx
         .insert(comments)
         .values({
@@ -1421,12 +1672,20 @@ export class PublicationsService {
         await tx
           .update(comments)
           .set({ replyCount: sql`${comments.replyCount} + 1` })
-          .where(eq(comments.id, comment.parentId));
+          .where(
+            and(eq(comments.id, comment.parentId), isNull(comments.deletedAt)),
+          );
       }
       await this.refreshHotScore(tx, publicationId);
       const tagged =
         body.length > 0
-          ? await this.applyCommentTags(tx, body, viewerId, publicationId, comment.id)
+          ? await this.applyCommentTags(
+              tx,
+              body,
+              viewerId,
+              publicationId,
+              comment.id,
+            )
           : [];
       const notifications = [
         await this.notifications.create(tx, {
@@ -1438,7 +1697,11 @@ export class PublicationsService {
           commentId: comment.id,
         }),
       ];
-      if (comment.parentId && parentAuthorId && parentAuthorId !== row.authorId) {
+      if (
+        comment.parentId &&
+        parentAuthorId &&
+        parentAuthorId !== row.authorId
+      ) {
         notifications.push(
           await this.notifications.create(tx, {
             recipientId: parentAuthorId,
@@ -1451,7 +1714,9 @@ export class PublicationsService {
         );
       }
       created = [
-        ...notifications.filter((item): item is NonNullable<typeof item> => item !== null),
+        ...notifications.filter(
+          (item): item is NonNullable<typeof item> => item !== null,
+        ),
         ...tagged,
       ];
       return comment;
@@ -1472,11 +1737,20 @@ export class PublicationsService {
   }
 
   /** Rejeu idempotent : le commentaire existe déjà pour ce `clientId`. */
-  private async loadExistingCommentView(clientId: string, viewerId: string): Promise<CommentView> {
+  private async loadExistingCommentView(
+    clientId: string,
+    viewerId: string,
+  ): Promise<CommentView> {
     const [existing] = await this.db
       .select()
       .from(comments)
-      .where(and(eq(comments.authorId, viewerId), eq(comments.clientId, clientId)));
+      .where(
+        and(
+          eq(comments.authorId, viewerId),
+          eq(comments.clientId, clientId),
+          visibleCommentCondition(),
+        ),
+      );
     if (!existing) {
       throw new ForbiddenException('Commentaire en conflit.');
     }
@@ -1503,33 +1777,35 @@ export class PublicationsService {
 
     const conditions: SQL[] = [
       eq(comments.publicationId, publicationId),
-      isNull(comments.deletedAt),
+      visibleCommentCondition(),
+      visibleCommentAuthorCondition(viewerId),
+      isNull(comments.parentId),
       isNull(comments.pinnedAt),
     ];
+    if (sort === 'top') {
+      return this.listTopComments(
+        publicationId,
+        viewerId,
+        bounded,
+        cursor,
+        conditions,
+      );
+    }
     if (cursor) {
       const after = decodeCommentCursor(cursor);
       if (after.sort !== sort) {
-        throw new BadRequestException('Curseur incompatible avec le tri demandé.');
+        throw new BadRequestException(
+          'Curseur incompatible avec le tri demandé.',
+        );
       }
-      if (sort === 'top') {
-        const { score } = commentScoreSql();
-        conditions.push(sql`(
-          ${score} < ${after.score}
-          or (${score} = ${after.score}
-            and (${comments.createdAt}, ${comments.id}) > (${after.createdAtText}::timestamptz, ${after.id}))
-        )`);
-      } else {
-        conditions.push(sql`(${comments.createdAt}, ${comments.id}) < (${after.createdAtText}::timestamptz, ${after.id})`);
-      }
+      conditions.push(
+        sql`(${comments.createdAt}, ${comments.id}) < (${after.createdAtText}::timestamptz, ${after.id})`,
+      );
     }
 
     const rows = await this.commentViewSelect(viewerId)
       .where(and(...conditions))
-      .orderBy(
-        ...(sort === 'top'
-          ? [desc(commentScoreSql().score), asc(comments.createdAt), asc(comments.id)]
-          : [desc(comments.createdAt), desc(comments.id)]),
-      )
+      .orderBy(desc(comments.createdAt), desc(comments.id))
       .limit(bounded + 1);
 
     const page = rows.slice(0, bounded);
@@ -1539,7 +1815,119 @@ export class PublicationsService {
       items: await this.hydrateCommentViews(page, viewerId),
       nextCursor:
         rows.length > bounded && last
-          ? encodeCommentCursor(sort, last.score, last.createdAtText, last.comment.id)
+          ? encodeCommentCursor(
+              sort,
+              last.score,
+              last.createdAtText,
+              last.comment.id,
+            )
+          : null,
+    };
+  }
+
+  /** Figère l'ordre « Top » : les likes ne doivent pas déplacer une page à l'autre. */
+  private async listTopComments(
+    publicationId: string,
+    viewerId: string,
+    limit: number,
+    cursor: string | undefined,
+    conditions: SQL[],
+  ): Promise<CommentPage> {
+    let ids: string[];
+    let sessionId: string | null = null;
+    let offset = 0;
+
+    if (cursor) {
+      const decoded = decodeCommentSessionCursor(cursor);
+      const [session] = await this.db
+        .select({
+          id: commentSessions.id,
+          userId: commentSessions.userId,
+          publicationId: commentSessions.publicationId,
+          commentIds: commentSessions.commentIds,
+          expiresAt: commentSessions.expiresAt,
+        })
+        .from(commentSessions)
+        .where(eq(commentSessions.id, decoded.sessionId))
+        .limit(1);
+      if (
+        !session ||
+        session.userId !== viewerId ||
+        session.publicationId !== publicationId ||
+        session.expiresAt.getTime() <= Date.now() ||
+        decoded.offset > session.commentIds.length
+      ) {
+        throw new BadRequestException(
+          'Curseur de commentaires invalide ou expiré.',
+        );
+      }
+      ids = session.commentIds;
+      sessionId = session.id;
+      offset = decoded.offset;
+    } else {
+      const rows = await this.db
+        .select({ id: comments.id })
+        .from(comments)
+        .innerJoin(users, eq(users.id, comments.authorId))
+        .where(and(...conditions))
+        .orderBy(
+          desc(commentScoreSql().score),
+          asc(comments.createdAt),
+          asc(comments.id),
+        );
+      ids = rows.map((row) => row.id);
+      if (ids.length > limit) {
+        const [session] = await this.db
+          .insert(commentSessions)
+          .values({
+            userId: viewerId,
+            publicationId,
+            commentIds: ids,
+            expiresAt: new Date(Date.now() + COMMENT_SESSION_TTL_MS),
+          })
+          .returning({ id: commentSessions.id });
+        sessionId = session.id;
+      }
+    }
+
+    const items: CommentView[] = [];
+    const emitted = new Set<string>();
+    while (offset < ids.length && items.length < limit) {
+      const chunk = ids.slice(offset, offset + Math.max(limit, 20));
+      const rows = await this.commentViewSelect(viewerId).where(
+        and(
+          eq(comments.publicationId, publicationId),
+          visibleCommentCondition(),
+          visibleCommentAuthorCondition(viewerId),
+          isNull(comments.parentId),
+          isNull(comments.pinnedAt),
+          inArray(comments.id, chunk),
+        ),
+      );
+      const views = await this.hydrateCommentViews(rows, viewerId);
+      const byId = new Map(views.map((view) => [view.id, view]));
+      for (const [index, id] of chunk.entries()) {
+        const view = byId.get(id);
+        if (view && !emitted.has(id)) {
+          emitted.add(id);
+          items.push(view);
+          if (items.length === limit) {
+            offset += index + 1;
+            break;
+          }
+        }
+      }
+      if (items.length < limit) {
+        offset += chunk.length;
+      }
+    }
+
+    return {
+      pinned: await this.pinnedComments(publicationId, viewerId),
+      items,
+      nextCursor:
+        sessionId && offset < ids.length
+          ? encodeCommentSessionCursor(sessionId, offset)
           : null,
     };
   }
@@ -1558,7 +1946,14 @@ export class PublicationsService {
     const [root] = await this.db
       .select({ id: comments.id, publicationId: comments.publicationId })
       .from(comments)
-      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+      .innerJoin(users, eq(users.id, comments.authorId))
+      .where(
+        and(
+          eq(comments.id, commentId),
+          visibleCommentCondition(),
+          visibleCommentAuthorCondition(viewerId),
+        ),
+      );
     if (!root) {
       throw new NotFoundException('Commentaire introuvable.');
     }
@@ -1568,7 +1963,8 @@ export class PublicationsService {
     const conditions: SQL[] = [
       eq(comments.publicationId, root.publicationId),
       eq(comments.parentId, commentId),
-      isNull(comments.deletedAt),
+      visibleCommentCondition(),
+      visibleCommentAuthorCondition(viewerId),
     ];
     if (cursor) {
       const after = decodeCommentCursor(cursor);
@@ -1589,7 +1985,12 @@ export class PublicationsService {
       items: await this.hydrateCommentViews(page, viewerId),
       nextCursor:
         rows.length > bounded && last
-          ? encodeCommentCursor('recent', last.score, last.createdAtText, last.comment.id)
+          ? encodeCommentCursor(
+              'recent',
+              last.score,
+              last.createdAtText,
+              last.comment.id,
+            )
           : null,
     };
   }
@@ -1598,48 +1999,83 @@ export class PublicationsService {
    * Épingle ou désépingle un commentaire racine. Réservé à l'auteur de la
    * publication, idempotent : renvoyer le même état ne change rien.
    */
-  async pinComment(commentId: string, viewerId: string, pinned: boolean): Promise<CommentView> {
-    const [row] = await this.db
-      .select({
-        id: comments.id,
-        parentId: comments.parentId,
-        publicationAuthorId: publications.authorId,
-        publicationId: comments.publicationId,
-        pinnedAt: comments.pinnedAt,
-        deletedAt: comments.deletedAt,
-      })
+  async pinComment(
+    commentId: string,
+    viewerId: string,
+    pinned: boolean,
+  ): Promise<CommentView> {
+    const [target] = await this.db
+      .select({ publicationId: comments.publicationId })
       .from(comments)
-      .innerJoin(publications, eq(publications.id, comments.publicationId))
-      .where(eq(comments.id, commentId));
-    if (!row || row.deletedAt) {
+      .where(eq(comments.id, commentId))
+      .limit(1);
+    if (!target) {
       throw new NotFoundException('Commentaire introuvable.');
     }
-    if (row.publicationAuthorId !== viewerId) {
-      throw new ForbiddenException('Seul l’auteur de la publication peut épingler.');
-    }
-    if (row.parentId) {
-      throw new BadRequestException('Seule une réponse de premier niveau peut être épinglée.');
-    }
-    if (pinned && !row.pinnedAt) {
-      const [{ value: pinnedCount } = { value: 0 }] = await this.db
-        .select({ value: count() })
+    await this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`comment-pin:${target.publicationId}`}, 0))`,
+      );
+      const [row] = await tx
+        .select({
+          id: comments.id,
+          parentId: comments.parentId,
+          publicationAuthorId: publications.authorId,
+          publicationId: comments.publicationId,
+          pinnedAt: comments.pinnedAt,
+        })
         .from(comments)
+        .innerJoin(publications, eq(publications.id, comments.publicationId))
+        .innerJoin(users, eq(users.id, comments.authorId))
         .where(
           and(
-            eq(comments.publicationId, row.publicationId),
-            isNull(comments.deletedAt),
-            isNull(comments.parentId),
-            isNotNull(comments.pinnedAt),
+            eq(comments.id, commentId),
+            visibleCommentCondition(),
+            visibleCommentAuthorCondition(viewerId),
           ),
         );
-      if (pinnedCount >= MAX_PINNED_COMMENTS) {
-        throw new BadRequestException('Limite de commentaires épinglés atteinte.');
+      if (!row) {
+        throw new NotFoundException('Commentaire introuvable.');
       }
-    }
-    await this.db
-      .update(comments)
-      .set({ pinnedAt: pinned ? new Date() : null })
-      .where(eq(comments.id, commentId));
+      if (row.publicationAuthorId !== viewerId) {
+        throw new ForbiddenException(
+          'Seul l’auteur de la publication peut épingler.',
+        );
+      }
+      if (row.parentId) {
+        throw new BadRequestException(
+          'Seule une réponse de premier niveau peut être épinglée.',
+        );
+      }
+      if (pinned && !row.pinnedAt) {
+        const [{ value: pinnedCount } = { value: 0 }] = await tx
+          .select({ value: count() })
+          .from(comments)
+          .innerJoin(users, eq(users.id, comments.authorId))
+          .where(
+            and(
+              eq(comments.publicationId, row.publicationId),
+              visibleCommentCondition(),
+              visibleCommentAuthorCondition(viewerId),
+              isNull(comments.parentId),
+              isNotNull(comments.pinnedAt),
+            ),
+          );
+        if (pinnedCount >= MAX_PINNED_COMMENTS) {
+          throw new BadRequestException(
+            'Limite de commentaires épinglés atteinte.',
+          );
+        }
+      }
+      const updated = await tx
+        .update(comments)
+        .set({ pinnedAt: pinned ? (row.pinnedAt ?? new Date()) : null })
+        .where(and(eq(comments.id, commentId), visibleCommentCondition()))
+        .returning({ id: comments.id });
+      if (updated.length === 0) {
+        throw new NotFoundException('Commentaire introuvable.');
+      }
+    });
     const view = await this.loadCommentView(commentId, viewerId);
     this.events.emitCommentUpdated(view);
     return view;
@@ -1657,7 +2093,14 @@ export class PublicationsService {
         authorId: comments.authorId,
       })
       .from(comments)
-      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+      .innerJoin(users, eq(users.id, comments.authorId))
+      .where(
+        and(
+          eq(comments.id, commentId),
+          visibleCommentCondition(),
+          visibleCommentAuthorCondition(viewerId),
+        ),
+      );
     if (!row) {
       throw new NotFoundException('Commentaire introuvable.');
     }
@@ -1666,40 +2109,54 @@ export class PublicationsService {
       throw new ForbiddenException('Interaction impossible avec ce compte.');
     }
 
-    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
+    let notification: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    > = null;
     await this.db.transaction(async (tx) => {
+      const [locked] = await tx
+        .select({ id: comments.id })
+        .from(comments)
+        .where(and(eq(comments.id, commentId), visibleCommentCondition()))
+        .for('update');
+      if (!locked) {
+        throw new NotFoundException('Commentaire introuvable.');
+      }
       if (kind === null) {
         await tx
           .delete(commentReactions)
           .where(
-            and(eq(commentReactions.commentId, commentId), eq(commentReactions.userId, viewerId)),
+            and(
+              eq(commentReactions.commentId, commentId),
+              eq(commentReactions.userId, viewerId),
+            ),
           );
         return;
       }
-      const [existing] = await tx
-        .select({ kind: commentReactions.kind })
-        .from(commentReactions)
-        .where(
-          and(eq(commentReactions.commentId, commentId), eq(commentReactions.userId, viewerId)),
-        );
-      await tx
+      const inserted = await tx
         .insert(commentReactions)
         .values({ commentId, userId: viewerId, kind })
-        .onConflictDoUpdate({
-          target: [commentReactions.commentId, commentReactions.userId],
-          set: { kind },
-        });
-      // Une seule notification par commentateur, même s'il change de réaction.
-      if (!existing) {
-        notification = await this.notifications.create(tx, {
-          recipientId: row.authorId,
-          actorId: viewerId,
-          type: 'like',
-          dedupeKey: `comment-react:${commentId}:${viewerId}`,
-          publicationId: row.publicationId,
-          commentId,
-        });
+        .onConflictDoNothing()
+        .returning({ commentId: commentReactions.commentId });
+      if (inserted.length === 0) {
+        await tx
+          .update(commentReactions)
+          .set({ kind })
+          .where(
+            and(
+              eq(commentReactions.commentId, commentId),
+              eq(commentReactions.userId, viewerId),
+            ),
+          );
+        return;
       }
+      notification = await this.notifications.create(tx, {
+        recipientId: row.authorId,
+        actorId: viewerId,
+        type: 'like',
+        dedupeKey: `comment-react:${commentId}:${viewerId}`,
+        publicationId: row.publicationId,
+        commentId,
+      });
     });
 
     await this.notifications.deliver(notification);
@@ -1709,17 +2166,25 @@ export class PublicationsService {
   }
 
   /** Commentaires racines épinglés, du plus récemment épinglé au plus ancien. */
-  private async pinnedComments(publicationId: string, viewerId: string): Promise<CommentView[]> {
+  private async pinnedComments(
+    publicationId: string,
+    viewerId: string,
+  ): Promise<CommentView[]> {
     const rows = await this.commentViewSelect(viewerId)
       .where(
         and(
           eq(comments.publicationId, publicationId),
-          isNull(comments.deletedAt),
+          visibleCommentCondition(),
+          visibleCommentAuthorCondition(viewerId),
           isNull(comments.parentId),
           isNotNull(comments.pinnedAt),
         ),
       )
-      .orderBy(desc(comments.pinnedAt), asc(comments.createdAt), asc(comments.id))
+      .orderBy(
+        desc(comments.pinnedAt),
+        asc(comments.createdAt),
+        asc(comments.id),
+      )
       .limit(MAX_PINNED_COMMENTS);
     return this.hydrateCommentViews(rows, viewerId);
   }
@@ -1782,15 +2247,22 @@ export class PublicationsService {
         .where(inArray(commentReactions.commentId, ids))
         .groupBy(commentReactions.commentId, commentReactions.kind);
       for (const row of grouped) {
-        const byKind = counts.get(row.commentId) ?? new Map<CommentReactionKind, number>();
+        const byKind =
+          counts.get(row.commentId) ?? new Map<CommentReactionKind, number>();
         byKind.set(row.kind, row.count);
         counts.set(row.commentId, byKind);
       }
       const own = await this.db
-        .select({ commentId: commentReactions.commentId, kind: commentReactions.kind })
+        .select({
+          commentId: commentReactions.commentId,
+          kind: commentReactions.kind,
+        })
         .from(commentReactions)
         .where(
-          and(inArray(commentReactions.commentId, ids), eq(commentReactions.userId, viewerId)),
+          and(
+            inArray(commentReactions.commentId, ids),
+            eq(commentReactions.userId, viewerId),
+          ),
         );
       for (const row of own) {
         mine.set(row.commentId, row.kind);
@@ -1803,19 +2275,30 @@ export class PublicationsService {
     const assetIds = [
       ...new Set(
         rows
-          .flatMap((row) => [row.comment.mediaAssetId, row.comment.voiceMediaAssetId])
+          .flatMap((row) => [
+            row.comment.mediaAssetId,
+            row.comment.voiceMediaAssetId,
+          ])
           .filter((id): id is string => typeof id === 'string'),
       ),
     ];
     const assets = new Map<
       string,
-      { url: string | null; mime: string; durationMs: number | null; width: number | null; height: number | null }
+      {
+        url: string | null;
+        mime: string;
+        durationMs: number | null;
+        width: number | null;
+        height: number | null;
+      }
     >();
     if (assetIds.length > 0 && this.storage.isConfigured()) {
       const found = await this.db
         .select()
         .from(mediaAssets)
-        .where(and(inArray(mediaAssets.id, assetIds), isNull(mediaAssets.deletedAt)));
+        .where(
+          and(inArray(mediaAssets.id, assetIds), isNull(mediaAssets.deletedAt)),
+        );
       await Promise.all(
         found.map(async (asset) => {
           const url = await this.storage.presignGet(asset.storageKey);
@@ -1881,7 +2364,11 @@ export class PublicationsService {
         body: row.comment.body,
         attachment,
         createdAt: row.comment.createdAt,
-        author: { ...row.author, following: row.following, followedBy: row.followedBy },
+        author: {
+          ...row.author,
+          following: row.following,
+          followedBy: row.followedBy,
+        },
         likeCount: row.comment.likeCount,
         replyCount: row.comment.replyCount,
         viewerLiked: row.viewerLiked,
@@ -1896,19 +2383,29 @@ export class PublicationsService {
   }
 
   /** Suppression logique par l'auteur du commentaire ou de la publication. */
-  async removeComment(commentId: string, viewerId: string): Promise<{ deleted: true }> {
+  async removeComment(
+    commentId: string,
+    viewerId: string,
+  ): Promise<{ deleted: true }> {
     const [row] = await this.db
       .select({
         id: comments.id,
         parentId: comments.parentId,
         publicationId: comments.publicationId,
         authorId: comments.authorId,
-        deletedAt: comments.deletedAt,
         publicationAuthorId: publications.authorId,
+        deletedAt: comments.deletedAt,
       })
       .from(comments)
       .innerJoin(publications, eq(publications.id, comments.publicationId))
-      .where(eq(comments.id, commentId));
+      .innerJoin(users, eq(users.id, comments.authorId))
+      .where(
+        and(
+          eq(comments.id, commentId),
+          inArray(comments.moderationStatus, ['pending', 'approved']),
+          visibleCommentAuthorCondition(viewerId),
+        ),
+      );
     if (!row) {
       throw new NotFoundException('Commentaire introuvable.');
     }
@@ -1918,28 +2415,44 @@ export class PublicationsService {
     if (row.deletedAt) {
       return { deleted: true };
     }
-
-    await this.db.transaction(async (tx) => {
-      await tx.update(comments).set({ deletedAt: new Date() }).where(eq(comments.id, commentId));
+    const deleted = await this.db.transaction(async (tx) => {
+      const updated = await tx
+        .update(comments)
+        .set({ deletedAt: new Date() })
+        .where(and(eq(comments.id, commentId), visibleCommentCondition()))
+        .returning({ id: comments.id });
+      if (updated.length === 0) {
+        return false;
+      }
       await tx
         .update(publications)
-        .set({ commentCount: sql`greatest(${publications.commentCount} - 1, 0)` })
+        .set({
+          commentCount: sql`greatest(${publications.commentCount} - 1, 0)`,
+        })
         .where(eq(publications.id, row.publicationId));
       if (row.parentId) {
         await tx
           .update(comments)
           .set({ replyCount: sql`greatest(${comments.replyCount} - 1, 0)` })
-          .where(eq(comments.id, row.parentId));
+          .where(
+            and(eq(comments.id, row.parentId), isNull(comments.deletedAt)),
+          );
       }
       await this.refreshHotScore(tx, row.publicationId);
+      return true;
     });
-    this.events.emitCommentDeleted(row.publicationId, commentId);
-    void this.broadcastStats(row.publicationId);
+    if (deleted) {
+      this.events.emitCommentDeleted(row.publicationId, commentId);
+      void this.broadcastStats(row.publicationId);
+    }
     return { deleted: true };
   }
 
   /** Visibilité d'une publication pour les salons temps réel (gateway). */
-  async assertVisiblePublication(publicationId: string, viewerId: string): Promise<void> {
+  async assertVisiblePublication(
+    publicationId: string,
+    viewerId: string,
+  ): Promise<void> {
     await this.assertVisible(publicationId, viewerId);
   }
 
@@ -1973,10 +2486,14 @@ export class PublicationsService {
     const isAuthor = row.authorId === viewerId;
     if (!isAuthor && facts.isModerator !== true) {
       const [author] = await this.db
-        .select({ privateAccount: users.privateAccount, deletedAt: users.deletedAt })
+        .select({
+          privateAccount: users.privateAccount,
+          deletedAt: users.deletedAt,
+        })
         .from(users)
         .where(eq(users.id, row.authorId));
-      const hiddenByAuthor = author?.privateAccount === true && !facts.isFollower;
+      const hiddenByAuthor =
+        author?.privateAccount === true && !facts.isFollower;
       if (hiddenByAuthor || author?.deletedAt) {
         throw new NotFoundException('Publication introuvable.');
       }
@@ -1995,7 +2512,62 @@ export class PublicationsService {
     return { row };
   }
 
-  private async view(row: PublicationRow, viewerId: string): Promise<PublicationView> {
+  /**
+   * Réévalue l'originale d'une citation au moment de la lecture. Une ligne
+   * persistée ne vaut pas autorisation : modération, suppression, compte privé,
+   * visibilité et blocages peuvent avoir changé depuis la création de la citation.
+   */
+  private async loadVisibleQuote(
+    publicationId: string,
+    viewerId: string | null,
+  ): Promise<PublicationView['quoted']> {
+    const [original] = await this.db
+      .select({
+        id: publications.id,
+        authorId: publications.authorId,
+        caption: publications.caption,
+        visibility: publications.visibility,
+        moderationStatus: publications.moderationStatus,
+        deletedAt: publications.deletedAt,
+        authorUsername: users.username,
+        authorDisplayName: users.displayName,
+        authorPrivateAccount: users.privateAccount,
+        authorDeletedAt: users.deletedAt,
+      })
+      .from(publications)
+      .innerJoin(users, eq(users.id, publications.authorId))
+      .where(eq(publications.id, publicationId));
+    if (!original) {
+      return null;
+    }
+    const viewer = await this.follows.viewerFacts(viewerId, original.authorId);
+    if (
+      !canViewQuotedOriginal(
+        {
+          authorId: original.authorId,
+          visibility: original.visibility,
+          moderationStatus: original.moderationStatus,
+          deleted: original.deletedAt !== null,
+          authorPrivateAccount: original.authorPrivateAccount,
+          authorDeleted: original.authorDeletedAt !== null,
+        },
+        viewer,
+      )
+    ) {
+      return null;
+    }
+    return {
+      id: original.id,
+      authorUsername: original.authorUsername,
+      authorDisplayName: original.authorDisplayName,
+      caption: original.caption,
+    };
+  }
+
+  private async view(
+    row: PublicationRow,
+    viewerId: string,
+  ): Promise<PublicationView> {
     const [authorRow] = await this.db
       .select({ ...this.authorFields(), privateAccount: users.privateAccount })
       .from(users)
@@ -2008,22 +2580,39 @@ export class PublicationsService {
           avatarUrl: authorRow.avatarUrl,
           verified: authorRow.verified,
         }
-      : { id: row.authorId, username: '', displayName: '', avatarUrl: null, verified: false };
+      : {
+          id: row.authorId,
+          username: '',
+          displayName: '',
+          avatarUrl: null,
+          verified: false,
+        };
+    const quoted = row.quotedPublicationId
+      ? await this.loadVisibleQuote(row.quotedPublicationId, viewerId)
+      : null;
+    const hideCopiedMedia = row.quotedPublicationId !== null && quoted === null;
     // Mêmes règles que le fil : URL publique seulement si le contenu l'est.
-    const access = isPubliclyCacheable({
-      visibility: row.visibility,
-      moderationStatus: row.moderationStatus,
-      deleted: row.deletedAt !== null,
-      authorPrivateAccount: authorRow?.privateAccount ?? false,
-    })
-      ? 'public'
-      : 'signed';
-    const mediaMap = await loadPublicationMedia(
-      this.db,
-      [row.id],
-      this.storage.isConfigured() ? this.storage : null,
-      () => access,
-    );
+    // Les médias copiés d'une citation restent toujours signés, même quand
+    // l'originale est encore publique, pour pouvoir révoquer les lectures suivantes.
+    const access =
+      !hideCopiedMedia &&
+      !row.quotedPublicationId &&
+      isPubliclyCacheable({
+        visibility: row.visibility,
+        moderationStatus: row.moderationStatus,
+        deleted: row.deletedAt !== null,
+        authorPrivateAccount: authorRow?.privateAccount ?? false,
+      })
+        ? 'public'
+        : 'signed';
+    const mediaMap = hideCopiedMedia
+      ? new Map<string, PublicationMediaView[]>()
+      : await loadPublicationMedia(
+          this.db,
+          [row.id],
+          this.storage.isConfigured() ? this.storage : null,
+          () => access,
+        );
     const [reaction] = await this.db
       .select({ kind: publicationReactions.kind })
       .from(publicationReactions)
@@ -2037,45 +2626,26 @@ export class PublicationsService {
       .select({ userId: publicationSaves.userId })
       .from(publicationSaves)
       .where(
-        and(eq(publicationSaves.publicationId, row.id), eq(publicationSaves.userId, viewerId)),
+        and(
+          eq(publicationSaves.publicationId, row.id),
+          eq(publicationSaves.userId, viewerId),
+        ),
       );
     const [reposted] = await this.db
       .select({ userId: publicationReposts.userId })
       .from(publicationReposts)
       .where(
-        and(eq(publicationReposts.publicationId, row.id), eq(publicationReposts.userId, viewerId)),
+        and(
+          eq(publicationReposts.publicationId, row.id),
+          eq(publicationReposts.userId, viewerId),
+        ),
       );
 
     // « Aimé par » : inutile de chercher quand personne n'a réagi.
     const likedBy =
-      row.likeCount > 0
+      row.likeCount > 0 && (!row.hideLikeCount || viewerId === row.authorId)
         ? await loadLikedByFollowed(this.db, [row.id], viewerId)
         : new Map<string, AuthorCard>();
-
-    let quoted: PublicationView['quoted'] = null;
-    if (row.quotedPublicationId) {
-      const [original] = await this.db
-        .select({
-          id: publications.id,
-          caption: publications.caption,
-          deletedAt: publications.deletedAt,
-          authorUsername: users.username,
-          authorDisplayName: users.displayName,
-        })
-        .from(publications)
-        .innerJoin(users, eq(users.id, publications.authorId))
-        .where(eq(publications.id, row.quotedPublicationId));
-      // La citation survit à l'originale (`set null`) ; si la ligne citée a
-      // été supprimée physiquement ou masquée, on n'expose que l'attribution.
-      if (original && !original.deletedAt) {
-        quoted = {
-          id: original.id,
-          authorUsername: original.authorUsername,
-          authorDisplayName: original.authorDisplayName,
-          caption: original.caption,
-        };
-      }
-    }
 
     return {
       id: row.id,
@@ -2103,7 +2673,8 @@ export class PublicationsService {
       author,
       counters: {
         // Nombre masqué par l'auteur : seul l'auteur le voit.
-        likes: row.hideLikeCount && viewerId !== row.authorId ? 0 : row.likeCount,
+        likes:
+          row.hideLikeCount && viewerId !== row.authorId ? 0 : row.likeCount,
         comments: row.commentCount,
         reposts: row.repostCount,
         saves: row.saveCount,
@@ -2138,17 +2709,25 @@ export class PublicationsService {
     if (visibility === 'private') {
       return [];
     }
-    const usernames = extractMentions(text).slice(0, MAX_MENTIONS_PER_PUBLICATION);
+    const usernames = extractMentions(text).slice(
+      0,
+      MAX_MENTIONS_PER_PUBLICATION,
+    );
     if (usernames.length === 0) {
       return [];
     }
     const targets = await tx
-      .select({ id: users.id, permission: userSocialSettings.mentionPermission })
+      .select({
+        id: users.id,
+        permission: userSocialSettings.mentionPermission,
+      })
       .from(users)
       .leftJoin(userSocialSettings, eq(userSocialSettings.userId, users.id))
       .where(inArray(sql`lower(${users.username})`, usernames));
 
-    const delivered: Awaited<ReturnType<SocialNotificationsService['create']>>[] = [];
+    const delivered: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    >[] = [];
     for (const target of targets) {
       if (target.id === authorId) {
         continue;
@@ -2226,15 +2805,27 @@ export class PublicationsService {
         .values(tags.map((tag) => ({ tag, usageCount: 1 })))
         .onConflictDoUpdate({
           target: hashtags.tag,
-          set: { usageCount: sql`${hashtags.usageCount} + 1`, updatedAt: new Date() },
+          set: {
+            usageCount: sql`${hashtags.usageCount} + 1`,
+            updatedAt: new Date(),
+          },
         });
     }
     return delivered;
   }
 
-  private async loadCommentView(commentId: string, viewerId: string): Promise<CommentView> {
+  private async loadCommentView(
+    commentId: string,
+    viewerId: string,
+  ): Promise<CommentView> {
     const rows = await this.commentViewSelect(viewerId)
-      .where(eq(comments.id, commentId))
+      .where(
+        and(
+          eq(comments.id, commentId),
+          visibleCommentCondition(),
+          visibleCommentAuthorCondition(viewerId),
+        ),
+      )
       .limit(1);
     const [view] = await this.hydrateCommentViews(rows, viewerId);
     if (!view) {
@@ -2244,14 +2835,25 @@ export class PublicationsService {
   }
 
   /** J'aime sur un commentaire, idempotent et transactionnel. */
-  async likeComment(commentId: string, viewerId: string, liked: boolean): Promise<CommentView> {
+  async likeComment(
+    commentId: string,
+    viewerId: string,
+    liked: boolean,
+  ): Promise<CommentView> {
     const [row] = await this.db
       .select({
         publicationId: comments.publicationId,
         authorId: comments.authorId,
       })
       .from(comments)
-      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+      .innerJoin(users, eq(users.id, comments.authorId))
+      .where(
+        and(
+          eq(comments.id, commentId),
+          visibleCommentCondition(),
+          visibleCommentAuthorCondition(viewerId),
+        ),
+      );
     if (!row) {
       throw new NotFoundException('Commentaire introuvable.');
     }
@@ -2260,39 +2862,64 @@ export class PublicationsService {
       throw new ForbiddenException('Interaction impossible avec ce compte.');
     }
 
-    let notification: Awaited<ReturnType<SocialNotificationsService['create']>> = null;
+    let notification: Awaited<
+      ReturnType<SocialNotificationsService['create']>
+    > = null;
     await this.db.transaction(async (tx) => {
-      const [existing] = await tx
-        .select({ userId: commentLikes.userId })
-        .from(commentLikes)
-        .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
-      if (liked && !existing) {
-        // J'aime et « Je n'aime pas » s'excluent mutuellement.
-        await tx
-          .delete(commentDislikes)
-          .where(and(eq(commentDislikes.commentId, commentId), eq(commentDislikes.userId, viewerId)));
-        await tx.insert(commentLikes).values({ commentId, userId: viewerId });
-        await tx
-          .update(comments)
-          .set({ likeCount: sql`${comments.likeCount} + 1` })
-          .where(eq(comments.id, commentId));
-        notification = await this.notifications.create(tx, {
-          recipientId: row.authorId,
-          actorId: viewerId,
-          type: 'like',
-          dedupeKey: `comment-like:${commentId}:${viewerId}`,
-          publicationId: row.publicationId,
-          commentId,
-        });
-      } else if (!liked && existing) {
-        await tx
-          .delete(commentLikes)
-          .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
-        await tx
-          .update(comments)
-          .set({ likeCount: sql`greatest(${comments.likeCount} - 1, 0)` })
-          .where(eq(comments.id, commentId));
+      const [locked] = await tx
+        .select({ id: comments.id })
+        .from(comments)
+        .where(and(eq(comments.id, commentId), visibleCommentCondition()))
+        .for('update');
+      if (!locked) {
+        throw new NotFoundException('Commentaire introuvable.');
       }
+      if (!liked) {
+        const deleted = await tx
+          .delete(commentLikes)
+          .where(
+            and(
+              eq(commentLikes.commentId, commentId),
+              eq(commentLikes.userId, viewerId),
+            ),
+          )
+          .returning({ commentId: commentLikes.commentId });
+        if (deleted.length > 0) {
+          await tx
+            .update(comments)
+            .set({ likeCount: sql`greatest(${comments.likeCount} - 1, 0)` })
+            .where(eq(comments.id, commentId));
+        }
+        return;
+      }
+      await tx
+        .delete(commentDislikes)
+        .where(
+          and(
+            eq(commentDislikes.commentId, commentId),
+            eq(commentDislikes.userId, viewerId),
+          ),
+        );
+      const inserted = await tx
+        .insert(commentLikes)
+        .values({ commentId, userId: viewerId })
+        .onConflictDoNothing()
+        .returning({ commentId: commentLikes.commentId });
+      if (inserted.length === 0) {
+        return;
+      }
+      await tx
+        .update(comments)
+        .set({ likeCount: sql`${comments.likeCount} + 1` })
+        .where(eq(comments.id, commentId));
+      notification = await this.notifications.create(tx, {
+        recipientId: row.authorId,
+        actorId: viewerId,
+        type: 'like',
+        dedupeKey: `comment-like:${commentId}:${viewerId}`,
+        publicationId: row.publicationId,
+        commentId,
+      });
     });
 
     await this.notifications.deliver(notification);
@@ -2302,45 +2929,69 @@ export class PublicationsService {
   }
 
   /** « Je n'aime pas » sur un commentaire, idempotent et exclusif du j'aime. */
-  async dislikeComment(commentId: string, viewerId: string, disliked: boolean): Promise<CommentView> {
+  async dislikeComment(
+    commentId: string,
+    viewerId: string,
+    disliked: boolean,
+  ): Promise<CommentView> {
     const [row] = await this.db
       .select({ publicationId: comments.publicationId })
       .from(comments)
-      .where(and(eq(comments.id, commentId), isNull(comments.deletedAt)));
+      .innerJoin(users, eq(users.id, comments.authorId))
+      .where(
+        and(
+          eq(comments.id, commentId),
+          visibleCommentCondition(),
+          visibleCommentAuthorCondition(viewerId),
+        ),
+      );
     if (!row) {
       throw new NotFoundException('Commentaire introuvable.');
     }
-    await this.assertVisible(row.publicationId, viewerId);
+    const { facts } = await this.assertVisible(row.publicationId, viewerId);
+    if (facts.blocked) {
+      throw new ForbiddenException('Interaction impossible avec ce compte.');
+    }
 
     await this.db.transaction(async (tx) => {
-      const [existing] = await tx
-        .select({ userId: commentDislikes.userId })
-        .from(commentDislikes)
-        .where(
-          and(eq(commentDislikes.commentId, commentId), eq(commentDislikes.userId, viewerId)),
-        );
-      if (disliked && !existing) {
-        await tx.insert(commentDislikes).values({ commentId, userId: viewerId });
-        const [liked] = await tx
-          .select({ userId: commentLikes.userId })
-          .from(commentLikes)
-          .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
-        if (liked) {
-          await tx
-            .delete(commentLikes)
-            .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, viewerId)));
-          await tx
-            .update(comments)
-            .set({ likeCount: sql`greatest(${comments.likeCount} - 1, 0)` })
-            .where(eq(comments.id, commentId));
-        }
-      } else if (!disliked && existing) {
+      const [locked] = await tx
+        .select({ id: comments.id })
+        .from(comments)
+        .where(and(eq(comments.id, commentId), visibleCommentCondition()))
+        .for('update');
+      if (!locked) {
+        throw new NotFoundException('Commentaire introuvable.');
+      }
+      if (!disliked) {
         await tx
           .delete(commentDislikes)
           .where(
-            and(eq(commentDislikes.commentId, commentId), eq(commentDislikes.userId, viewerId)),
+            and(
+              eq(commentDislikes.commentId, commentId),
+              eq(commentDislikes.userId, viewerId),
+            ),
           );
+        return;
       }
+      const removedLike = await tx
+        .delete(commentLikes)
+        .where(
+          and(
+            eq(commentLikes.commentId, commentId),
+            eq(commentLikes.userId, viewerId),
+          ),
+        )
+        .returning({ commentId: commentLikes.commentId });
+      if (removedLike.length > 0) {
+        await tx
+          .update(comments)
+          .set({ likeCount: sql`greatest(${comments.likeCount} - 1, 0)` })
+          .where(eq(comments.id, commentId));
+      }
+      await tx
+        .insert(commentDislikes)
+        .values({ commentId, userId: viewerId })
+        .onConflictDoNothing();
     });
 
     const view = await this.loadCommentView(commentId, viewerId);
@@ -2373,12 +3024,22 @@ export class PublicationsService {
     };
   }
 
-  private async likeCount(publicationId: string): Promise<number> {
+  private async likeCount(
+    publicationId: string,
+    viewerId: string,
+  ): Promise<number> {
     const [row] = await this.db
-      .select({ likeCount: publications.likeCount })
+      .select({
+        authorId: publications.authorId,
+        hideLikeCount: publications.hideLikeCount,
+        likeCount: publications.likeCount,
+      })
       .from(publications)
       .where(eq(publications.id, publicationId));
-    return row?.likeCount ?? 0;
+    if (!row || (row.hideLikeCount && row.authorId !== viewerId)) {
+      return 0;
+    }
+    return row.likeCount;
   }
 
   private async viewCount(publicationId: string): Promise<number> {
@@ -2410,7 +3071,9 @@ export class PublicationsService {
    * sont conservées (le DTO a déjà validé les valeurs, on blinde quand
    * même contre un client qui contournerait la validation).
    */
-  private cleanPageStyle(style: TextPageStyleDto | null | undefined): TextPageStyle | null {
+  private cleanPageStyle(
+    style: TextPageStyleDto | null | undefined,
+  ): TextPageStyle | null {
     if (!style || typeof style !== 'object') {
       return null;
     }
@@ -2428,7 +3091,10 @@ export class PublicationsService {
       clean.align = style.align;
     }
     if (typeof style.size === 'number' && Number.isFinite(style.size)) {
-      clean.size = Math.min(MAX_TEXT_SIZE, Math.max(MIN_TEXT_SIZE, Math.trunc(style.size)));
+      clean.size = Math.min(
+        MAX_TEXT_SIZE,
+        Math.max(MIN_TEXT_SIZE, Math.trunc(style.size)),
+      );
     }
     return Object.keys(clean).length > 0 ? clean : null;
   }
@@ -2456,6 +3122,8 @@ export class PublicationsService {
     try {
       const [row] = await this.db
         .select({
+          authorId: publications.authorId,
+          hideLikeCount: publications.hideLikeCount,
           likes: publications.likeCount,
           comments: publications.commentCount,
           reposts: publications.repostCount,
@@ -2467,7 +3135,13 @@ export class PublicationsService {
         .where(eq(publications.id, publicationId))
         .limit(1);
       if (row) {
-        this.events.emitPublicationStats(publicationId, row);
+        const { authorId, hideLikeCount, ...counters } = row;
+        this.events.emitPublicationStats(
+          publicationId,
+          counters,
+          authorId,
+          hideLikeCount,
+        );
       }
     } catch {
       // Diffusion best-effort : le compteur reste correct en base.

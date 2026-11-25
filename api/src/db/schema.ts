@@ -16,7 +16,10 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
-export const conversationTypeEnum = pgEnum('conversation_type', ['DIRECT', 'GROUP']);
+export const conversationTypeEnum = pgEnum('conversation_type', [
+  'DIRECT',
+  'GROUP',
+]);
 
 export const lastSeenVisibilityEnum = pgEnum('last_seen_visibility', [
   'everyone',
@@ -53,91 +56,117 @@ const tsvector = customType<{ data: string; driverData: string }>({
   },
 });
 
-export const users = pgTable('users', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  email: text('email').notNull().unique(),
-  username: text('username').notNull().unique(),
-  displayName: text('display_name').notNull(),
-  bio: text('bio'),
-  /** Notifications dans l'application (badges, compteurs de non-lus). */
-  notificationsEnabled: boolean('notifications_enabled').notNull().default(true),
-  /** Son des notifications poussées (les appels sonnent toujours). */
-  notificationSound: boolean('notification_sound').notNull().default(true),
-  /** Aperçu du texte des messages dans les notifications. */
-  notificationPreview: boolean('notification_preview').notNull().default(true),
-  passwordHash: text('password_hash').notNull(),
-  avatarUrl: text('avatar_url'),
-  birthday: date('birthday'),
-  gender: text('gender'),
-  /** Libellé libre saisi quand le genre choisi est « Personnalisé ». */
-  genderCustom: text('gender_custom'),
-  /** Dernier passage en ligne → hors ligne, en UTC. */
-  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
-  lastSeenVisibility: lastSeenVisibilityEnum('last_seen_visibility')
-    .notNull()
-    .default('contacts'),
-  onlineVisibility: onlineVisibilityEnum('online_visibility')
-    .notNull()
-    .default('same_as_last_seen'),
-  /** Ville vérifiée par géocodage serveur : jamais de coordonnées stockées. */
-  city: text('city'),
-  country: text('country'),
-  cityUpdatedAt: timestamp('city_updated_at', { withTimezone: true }),
-  /** La ville est masquée aux autres par défaut pour les mineurs. */
-  cityVisible: boolean('city_visible').notNull().default(true),
-  /** Photo, bio, ville et âge : même visibilité pour ces quatre champs. */
-  profileVisibility: privacyVisibilityEnum('profile_visibility').notNull().default('everyone'),
-  /** Qui peut m'écrire (nouvelle conversation directe). */
-  writePermission: privacyVisibilityEnum('write_permission').notNull().default('everyone'),
-  /** Qui peut m'ajouter à un groupe. */
-  groupAddPermission: privacyVisibilityEnum('group_add_permission').notNull().default('everyone'),
-  /** Qui peut m'appeler. */
-  callPermission: privacyVisibilityEnum('call_permission').notNull().default('everyone'),
-  /** Qui peut me trouver par nom d'utilisateur. */
-  discoverability: privacyVisibilityEnum('discoverability').notNull().default('everyone'),
-  /** Accusés de lecture diffusés aux autres (la lecture locale reste vraie). */
-  readReceipts: boolean('read_receipts').notNull().default(true),
-  /** Indicateur « en train d'écrire » diffusé aux autres. */
-  typingIndicator: boolean('typing_indicator').notNull().default(true),
-  notifyMessages: boolean('notify_messages').notNull().default(true),
-  notifyGroups: boolean('notify_groups').notNull().default(true),
-  notifyMentions: boolean('notify_mentions').notNull().default(true),
-  notifyCalls: boolean('notify_calls').notNull().default(true),
-  notifyReactions: boolean('notify_reactions').notNull().default(true),
-  quietHoursEnabled: boolean('quiet_hours_enabled').notNull().default(false),
-  /** Minutes depuis minuit, heure locale du compte. */
-  quietStartMinute: integer('quiet_start_minute').notNull().default(1320),
-  quietEndMinute: integer('quiet_end_minute').notNull().default(420),
-  quietUtcOffsetMinutes: integer('quiet_utc_offset_minutes').notNull().default(0),
-  /** Suppression demandée : anonymisation après 30 jours, annulable avant. */
-  deletedAt: timestamp('deleted_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  /**
-   * Identité sociale (ADR-0001). Le compte reste le même : le rôle et les
-   * compteurs vivent sur `users`, pas dans une table de profil séparée, pour
-   * qu'une seule jointure suffise à autoriser une action ou à rendre un profil.
-   */
-  role: userRoleEnum('role').notNull().default('user'),
-  /** Badge de vérification, attribué manuellement par la modération. */
-  verified: boolean('verified').notNull().default(false),
-  /** Compte privé : les abonnements passent par une demande (`follows.status`). */
-  privateAccount: boolean('private_account').notNull().default(false),
-  /** Compteurs dénormalisés, écrits uniquement par l'API en transaction. */
-  followerCount: integer('follower_count').notNull().default(0),
-  followingCount: integer('following_count').notNull().default(0),
-  publicationCount: integer('publication_count').notNull().default(0),
-  reelCount: integer('reel_count').notNull().default(0),
-  /** Total de réactions reçues sur les publications de ce compte. */
-  likeReceivedCount: integer('like_received_count').notNull().default(0),
-  /** Dernier changement de `username` : sert de base au cooldown. */
-  usernameUpdatedAt: timestamp('username_updated_at', { withTimezone: true }),
-},
+export const users = pgTable(
+  'users',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    email: text('email').notNull().unique(),
+    username: text('username').notNull().unique(),
+    displayName: text('display_name').notNull(),
+    bio: text('bio'),
+    /** Notifications dans l'application (badges, compteurs de non-lus). */
+    notificationsEnabled: boolean('notifications_enabled')
+      .notNull()
+      .default(true),
+    /** Son des notifications poussées (les appels sonnent toujours). */
+    notificationSound: boolean('notification_sound').notNull().default(true),
+    /** Aperçu du texte des messages dans les notifications. */
+    notificationPreview: boolean('notification_preview')
+      .notNull()
+      .default(true),
+    passwordHash: text('password_hash').notNull(),
+    avatarUrl: text('avatar_url'),
+    birthday: date('birthday'),
+    gender: text('gender'),
+    /** Libellé libre saisi quand le genre choisi est « Personnalisé ». */
+    genderCustom: text('gender_custom'),
+    /** Dernier passage en ligne → hors ligne, en UTC. */
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+    lastSeenVisibility: lastSeenVisibilityEnum('last_seen_visibility')
+      .notNull()
+      .default('contacts'),
+    onlineVisibility: onlineVisibilityEnum('online_visibility')
+      .notNull()
+      .default('same_as_last_seen'),
+    /** Ville vérifiée par géocodage serveur : jamais de coordonnées stockées. */
+    city: text('city'),
+    country: text('country'),
+    cityUpdatedAt: timestamp('city_updated_at', { withTimezone: true }),
+    /** La ville est masquée aux autres par défaut pour les mineurs. */
+    cityVisible: boolean('city_visible').notNull().default(true),
+    /** Photo, bio, ville et âge : même visibilité pour ces quatre champs. */
+    profileVisibility: privacyVisibilityEnum('profile_visibility')
+      .notNull()
+      .default('everyone'),
+    /** Qui peut m'écrire (nouvelle conversation directe). */
+    writePermission: privacyVisibilityEnum('write_permission')
+      .notNull()
+      .default('everyone'),
+    /** Qui peut m'ajouter à un groupe. */
+    groupAddPermission: privacyVisibilityEnum('group_add_permission')
+      .notNull()
+      .default('everyone'),
+    /** Qui peut m'appeler. */
+    callPermission: privacyVisibilityEnum('call_permission')
+      .notNull()
+      .default('everyone'),
+    /** Qui peut me trouver par nom d'utilisateur. */
+    discoverability: privacyVisibilityEnum('discoverability')
+      .notNull()
+      .default('everyone'),
+    /** Accusés de lecture diffusés aux autres (la lecture locale reste vraie). */
+    readReceipts: boolean('read_receipts').notNull().default(true),
+    /** Indicateur « en train d'écrire » diffusé aux autres. */
+    typingIndicator: boolean('typing_indicator').notNull().default(true),
+    notifyMessages: boolean('notify_messages').notNull().default(true),
+    notifyGroups: boolean('notify_groups').notNull().default(true),
+    notifyMentions: boolean('notify_mentions').notNull().default(true),
+    notifyCalls: boolean('notify_calls').notNull().default(true),
+    notifyReactions: boolean('notify_reactions').notNull().default(true),
+    quietHoursEnabled: boolean('quiet_hours_enabled').notNull().default(false),
+    /** Minutes depuis minuit, heure locale du compte. */
+    quietStartMinute: integer('quiet_start_minute').notNull().default(1320),
+    quietEndMinute: integer('quiet_end_minute').notNull().default(420),
+    quietUtcOffsetMinutes: integer('quiet_utc_offset_minutes')
+      .notNull()
+      .default(0),
+    /** Suppression demandée : anonymisation après 30 jours, annulable avant. */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /**
+     * Identité sociale (ADR-0001). Le compte reste le même : le rôle et les
+     * compteurs vivent sur `users`, pas dans une table de profil séparée, pour
+     * qu'une seule jointure suffise à autoriser une action ou à rendre un profil.
+     */
+    role: userRoleEnum('role').notNull().default('user'),
+    /** Badge de vérification, attribué manuellement par la modération. */
+    verified: boolean('verified').notNull().default(false),
+    /** Compte privé : les abonnements passent par une demande (`follows.status`). */
+    privateAccount: boolean('private_account').notNull().default(false),
+    /** Compteurs dénormalisés, écrits uniquement par l'API en transaction. */
+    followerCount: integer('follower_count').notNull().default(0),
+    followingCount: integer('following_count').notNull().default(0),
+    publicationCount: integer('publication_count').notNull().default(0),
+    reelCount: integer('reel_count').notNull().default(0),
+    /** Total de réactions reçues sur les publications de ce compte. */
+    likeReceivedCount: integer('like_received_count').notNull().default(0),
+    /** Dernier changement de `username` : sert de base au cooldown. */
+    usernameUpdatedAt: timestamp('username_updated_at', { withTimezone: true }),
+  },
   (table) => [
     // Autocomplétion de la recherche par pseudo et par nom affiché.
-    index('users_username_trgm_idx').using('gin', sql`${table.username} gin_trgm_ops`),
-    index('users_display_name_trgm_idx').using('gin', sql`${table.displayName} gin_trgm_ops`),
+    index('users_username_trgm_idx').using(
+      'gin',
+      sql`${table.username} gin_trgm_ops`,
+    ),
+    index('users_display_name_trgm_idx').using(
+      'gin',
+      sql`${table.displayName} gin_trgm_ops`,
+    ),
   ],
 );
 
@@ -154,18 +183,27 @@ export const conversations = pgTable('conversations', {
   color: text('color'),
   description: text('description'),
   /** Créateur du groupe : badge « propriétaire », non révocable par les autres. */
-  ownerId: text('owner_id').references(() => users.id, { onDelete: 'set null' }),
+  ownerId: text('owner_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
   /** Qui peut écrire : `all` (défaut) ou `admins`. */
   sendPermission: text('send_permission').notNull().default('all'),
   /** Qui peut ajouter des membres : `all` (défaut) ou `admins`. */
   addPermission: text('add_permission').notNull().default('all'),
   /** Bascule irréversible vers le chiffrement de bout en bout. */
   e2eeSince: timestamp('e2ee_since', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
-export const conversationRoleEnum = pgEnum('conversation_role', ['admin', 'member']);
+export const conversationRoleEnum = pgEnum('conversation_role', [
+  'admin',
+  'member',
+]);
 
 export const conversationMembers = pgTable(
   'conversation_members',
@@ -176,7 +214,9 @@ export const conversationMembers = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    joinedAt: timestamp('joined_at', { withTimezone: true }).notNull().defaultNow(),
+    joinedAt: timestamp('joined_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     lastReadAt: timestamp('last_read_at', { withTimezone: true }),
     pinnedAt: timestamp('pinned_at', { withTimezone: true }),
     mutedAt: timestamp('muted_at', { withTimezone: true }),
@@ -215,9 +255,13 @@ export const conversationInvites = pgTable(
     /** L'admin doit approuver chaque demande avant l'entrée. */
     requiresApproval: boolean('requires_approval').notNull().default(false),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (table) => [index('conversation_invites_conversation_idx').on(table.conversationId)],
+  (table) => [
+    index('conversation_invites_conversation_idx').on(table.conversationId),
+  ],
 );
 
 export const joinRequestStatusEnum = pgEnum('join_request_status', [
@@ -243,9 +287,13 @@ export const conversationJoinRequests = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     status: joinRequestStatusEnum('status').notNull().default('pending'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
-    resolvedById: text('resolved_by_id').references(() => users.id, { onDelete: 'set null' }),
+    resolvedById: text('resolved_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
   },
   (table) => [
     uniqueIndex('conversation_join_requests_invite_user_idx').on(
@@ -269,7 +317,9 @@ export const blocks = pgTable(
     blockedId: text('blocked_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.blockerId, table.blockedId] })],
 );
@@ -297,7 +347,9 @@ export const pushTokens = pgTable(
     deviceId: text('device_id'),
     /** Adresse de l'API telle que l'appareil la joint (pour les images). */
     baseUrl: text('base_url'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index('push_tokens_user_idx').on(table.userId),
@@ -305,7 +357,8 @@ export const pushTokens = pgTable(
   ],
 );
 
-export type MessageAttachmentType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | 'GIF' | 'STICKER';
+export type MessageAttachmentType =
+  'IMAGE' | 'VIDEO' | 'AUDIO' | 'FILE' | 'GIF' | 'STICKER';
 
 /** Pièce jointe d'un message (photo pour l'instant, extensible). */
 export interface MessageAttachment {
@@ -383,7 +436,9 @@ export const uploads = pgTable(
      * médias en clair.
      */
     encrypted: boolean('encrypted').notNull().default(false),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [index('uploads_user_idx').on(table.userId)],
 );
@@ -430,9 +485,15 @@ export const uploadIdempotency = pgTable(
     attemptToken: text('attempt_token').notNull(),
     /** `pending` tant que le blob et la ligne ne sont pas validés ensemble. */
     state: text('state').notNull().default('pending'),
-    uploadId: text('upload_id').references(() => uploads.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    uploadId: text('upload_id').references(() => uploads.id, {
+      onDelete: 'cascade',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.key] }),
@@ -485,12 +546,22 @@ export const messageEvents = pgTable(
      */
     claimToken: text('claim_token'),
     /** Report d'une tentative en échec (fournisseur indisponible…). */
-    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    uniqueIndex('message_events_dedupe_idx').on(table.messageId, table.kind, table.userId),
+    uniqueIndex('message_events_dedupe_idx').on(
+      table.messageId,
+      table.kind,
+      table.userId,
+    ),
     index('message_events_pending_idx').on(table.status, table.nextAttemptAt),
   ],
 );
@@ -510,9 +581,13 @@ export const uploadConversations = pgTable(
     conversationId: text('conversation_id')
       .notNull()
       .references(() => conversations.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (table) => [index('upload_conversations_conversation_idx').on(table.conversationId)],
+  (table) => [
+    index('upload_conversations_conversation_idx').on(table.conversationId),
+  ],
 );
 
 export const messages = pgTable(
@@ -547,7 +622,9 @@ export const messages = pgTable(
      * dans `payload`. Alternative de `attachment` : un message n'a jamais les
      * deux. Aucune URL ici, donc rien que l'intercepteur de médias puisse signer.
      */
-    encryptedAttachment: jsonb('encrypted_attachment').$type<E2eeAttachmentRef>(),
+    encryptedAttachment: jsonb(
+      'encrypted_attachment',
+    ).$type<E2eeAttachmentRef>(),
     /**
      * Identifiant d'envoi généré par l'appareil émetteur. Une reprise après
      * une coupure renvoie le même message au lieu d'en créer un doublon.
@@ -567,11 +644,19 @@ export const messages = pgTable(
      * date ; sans elle, un message vide ressemblerait à un message supprimé.
      */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    index('messages_conversation_created_idx').on(table.conversationId, table.createdAt),
-    uniqueIndex('messages_sender_client_idx').on(table.senderId, table.clientId),
+    index('messages_conversation_created_idx').on(
+      table.conversationId,
+      table.createdAt,
+    ),
+    uniqueIndex('messages_sender_client_idx').on(
+      table.senderId,
+      table.clientId,
+    ),
   ],
 );
 
@@ -611,7 +696,9 @@ export const messageReactions = pgTable(
     /** Référence de sticker (« mbolo-panther-2d/amour »). La colonne garde son
      *  ancien nom SQL `emoji` : aucun changement de schéma n'est nécessaire. */
     reaction: text('emoji').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.messageId, table.userId, table.reaction] }),
@@ -633,7 +720,9 @@ export const messageHides = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.messageId, table.userId] }),
@@ -653,7 +742,9 @@ export const passwordResetTokens = pgTable(
     codeHash: text('code_hash').notNull(),
     attempts: integer('attempts').notNull().default(0),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [index('password_reset_tokens_user_idx').on(table.userId)],
 );
@@ -673,10 +764,14 @@ export const refreshTokens = pgTable(
     platform: text('platform'),
     /** Identifiant d'appareil porté par le JWT (appareil unique actif). */
     deviceId: text('device_id'),
-    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [index('refresh_tokens_user_idx').on(table.userId)],
 );
@@ -693,7 +788,9 @@ export const geoCityCache = pgTable('geo_city_cache', {
   country: text('country'),
   latitude: doublePrecision('latitude').notNull(),
   longitude: doublePrecision('longitude').notNull(),
-  fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  fetchedAt: timestamp('fetched_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 /** Appareil E2EE actif : seules les clés publiques sont stockées. */
@@ -718,12 +815,19 @@ export const e2eeDevices = pgTable(
     fallbackPrekeyKeyId: text('fallback_prekey_key_id'),
     deviceName: text('device_name'),
     platform: text('platform'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    lastUsedAt: timestamp('last_used_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('e2ee_devices_user_device_idx').on(table.userId, table.deviceId),
+    uniqueIndex('e2ee_devices_user_device_idx').on(
+      table.userId,
+      table.deviceId,
+    ),
     uniqueIndex('e2ee_devices_active_user_idx')
       .on(table.userId)
       .where(sql`${table.revokedAt} is null`),
@@ -744,11 +848,16 @@ export const e2eeOneTimePrekeys = pgTable(
     publicKey: text('public_key').notNull(),
     /** Signature Ed25519 de la clé publique par l'identité de l'appareil. */
     signature: text('signature'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     usedAt: timestamp('used_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('e2ee_prekeys_device_key_idx').on(table.deviceRowId, table.keyId),
+    uniqueIndex('e2ee_prekeys_device_key_idx').on(
+      table.deviceRowId,
+      table.keyId,
+    ),
     index('e2ee_prekeys_device_used_idx').on(table.deviceRowId, table.usedAt),
   ],
 );
@@ -768,7 +877,10 @@ export const socialInteractorEnum = pgEnum('social_interactor', [
 ]);
 
 /** `pending` = demande d'abonnement à un compte privé, en attente d'accord. */
-export const followStatusEnum = pgEnum('follow_status', ['accepted', 'pending']);
+export const followStatusEnum = pgEnum('follow_status', [
+  'accepted',
+  'pending',
+]);
 
 /** Posts et reels partagent le même agrégat ; seul le rendu diffère. */
 export const publicationKindEnum = pgEnum('publication_kind', ['post', 'reel']);
@@ -794,9 +906,17 @@ export const moderationStatusEnum = pgEnum('moderation_status', [
   'removed',
 ]);
 
-export const reactionKindEnum = pgEnum('reaction_kind', ['like', 'love', 'fire', 'clap']);
+export const reactionKindEnum = pgEnum('reaction_kind', [
+  'like',
+  'love',
+  'fire',
+  'clap',
+]);
 
-export const storyAudienceEnum = pgEnum('story_audience', ['everyone', 'followers']);
+export const storyAudienceEnum = pgEnum('story_audience', [
+  'everyone',
+  'followers',
+]);
 
 export const mediaKindEnum = pgEnum('media_kind', ['image', 'video', 'audio']);
 
@@ -889,20 +1009,32 @@ export const userSocialSettings = pgTable('user_social_settings', {
     .primaryKey()
     .references(() => users.id, { onDelete: 'cascade' }),
   /** Qui peut commenter les publications. */
-  commentPermission: socialInteractorEnum('comment_permission').notNull().default('everyone'),
+  commentPermission: socialInteractorEnum('comment_permission')
+    .notNull()
+    .default('everyone'),
   /** Qui peut mentionner le compte dans une publication ou un commentaire. */
-  mentionPermission: socialInteractorEnum('mention_permission').notNull().default('everyone'),
+  mentionPermission: socialInteractorEnum('mention_permission')
+    .notNull()
+    .default('everyone'),
   /** Qui peut reposter le contenu du compte. */
-  repostPermission: socialInteractorEnum('repost_permission').notNull().default('everyone'),
+  repostPermission: socialInteractorEnum('repost_permission')
+    .notNull()
+    .default('everyone'),
   /** Audience par défaut des stories. */
-  storyAudience: storyAudienceEnum('story_audience').notNull().default('followers'),
+  storyAudience: storyAudienceEnum('story_audience')
+    .notNull()
+    .default('followers'),
   notifyLikes: boolean('notify_likes').notNull().default(true),
   notifyComments: boolean('notify_comments').notNull().default(true),
   notifyFollows: boolean('notify_follows').notNull().default(true),
   notifyMentions: boolean('notify_mentions').notNull().default(true),
   notifyReposts: boolean('notify_reposts').notNull().default(true),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });
 
 /**
@@ -922,7 +1054,9 @@ export const follows = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     status: followStatusEnum('status').notNull().default('accepted'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     acceptedAt: timestamp('accepted_at', { withTimezone: true }),
   },
   (table) => [
@@ -982,8 +1116,12 @@ export const mediaAssets = pgTable(
     variants: jsonb('variants').$type<MediaVariant[]>(),
     /** Empreinte SHA-256 calculée côté serveur à la confirmation. */
     checksum: text('checksum'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     /** Suppression logique avant purge de l'objet S3 et du cache CDN. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
@@ -1017,9 +1155,15 @@ export const mediaJobs = pgTable(
     lastError: text('last_error'),
     lockedUntil: timestamp('locked_until', { withTimezone: true }),
     claimToken: text('claim_token'),
-    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }).notNull().defaultNow(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index('media_jobs_pending_idx').on(table.status, table.nextAttemptAt),
@@ -1041,12 +1185,18 @@ export const sounds = pgTable(
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
     title: text('title').notNull(),
-    assetId: text('asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+    assetId: text('asset_id').references(() => mediaAssets.id, {
+      onDelete: 'set null',
+    }),
     /** Auteur du son, `null` pour un son de catalogue ou orphelin. */
-    createdById: text('created_by_id').references(() => users.id, { onDelete: 'set null' }),
+    createdById: text('created_by_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     durationMs: integer('duration_ms'),
     usageCount: integer('usage_count').notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index('sounds_usage_idx').on(table.usageCount),
@@ -1108,7 +1258,8 @@ export const publications = pgTable(
      * (même index). `null` ou entrée sans clé = style par défaut de la page.
      * Chaque carte est indépendante, comme les carrousels Instagram.
      */
-    textPageStyles: jsonb('text_page_styles').$type<Array<TextPageStyle | null>>(),
+    textPageStyles:
+      jsonb('text_page_styles').$type<Array<TextPageStyle | null>>(),
     /**
      * Police du post texte (clé du catalogue mobile : `classic`, `modern`,
      * `typewriter`, `bold`, `elegant`). `null` = police système par défaut.
@@ -1159,10 +1310,16 @@ export const publications = pgTable(
      * texte, qui a déjà son fond dédié.
      */
     mediaFilter: text('media_filter'),
-    visibility: publicationVisibilityEnum('visibility').notNull().default('public'),
-    moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
+    visibility: publicationVisibilityEnum('visibility')
+      .notNull()
+      .default('public'),
+    moderationStatus: moderationStatusEnum('moderation_status')
+      .notNull()
+      .default('pending'),
     /** Son utilisé par un reel, facultatif. */
-    soundId: text('sound_id').references(() => sounds.id, { onDelete: 'set null' }),
+    soundId: text('sound_id').references(() => sounds.id, {
+      onDelete: 'set null',
+    }),
     /**
      * Publication citée (« Citer » façon Instagram) : la citation est une
      * publication à part entière qui copie les médias de l'originale et
@@ -1185,8 +1342,12 @@ export const publications = pgTable(
     viewCount: integer('view_count').notNull().default(0),
     /** Clé d'idempotence fournie par l'appareil, unique par auteur. */
     clientId: text('client_id').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     /** Suppression logique : les interactions restent auditables jusqu'à purge. */
     /**
      * Dernière retouche du texte par l'auteur (légende, pages, titre). `null`
@@ -1211,17 +1372,32 @@ export const publications = pgTable(
   },
   (table) => [
     index('publications_search_idx').using('gin', table.searchVector),
-    uniqueIndex('publications_author_client_idx').on(table.authorId, table.clientId),
-    index('publications_feed_idx').on(table.visibility, table.moderationStatus, table.createdAt),
+    uniqueIndex('publications_author_client_idx').on(
+      table.authorId,
+      table.clientId,
+    ),
+    index('publications_feed_idx').on(
+      table.visibility,
+      table.moderationStatus,
+      table.createdAt,
+    ),
     index('publications_hot_score_idx').on(table.hotScore),
     // Index du fil : la requête filtre toujours les suppressions et la
     // modération, puis trie par score. Un index partiel évite de parcourir les
     // lignes invisibles avant de trouver la page demandée.
     index('publications_feed_hot_idx')
       .on(table.hotScore)
-      .where(sql`deleted_at is null and moderation_status in ('pending', 'approved')`),
-    index('publications_visibility_hot_idx').on(table.visibility, table.hotScore),
-    index('publications_author_created_idx').on(table.authorId, table.createdAt),
+      .where(
+        sql`deleted_at is null and moderation_status in ('pending', 'approved')`,
+      ),
+    index('publications_visibility_hot_idx').on(
+      table.visibility,
+      table.hotScore,
+    ),
+    index('publications_author_created_idx').on(
+      table.authorId,
+      table.createdAt,
+    ),
     index('publications_quoted_idx').on(table.quotedPublicationId),
   ],
 );
@@ -1243,16 +1419,26 @@ export const publicationMedia = pgTable(
     position: integer('position').notNull().default(0),
     /** Texte alternatif saisi par l'auteur (accessibilité). */
     altText: text('alt_text'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    uniqueIndex('publication_media_position_idx').on(table.publicationId, table.position),
+    uniqueIndex('publication_media_position_idx').on(
+      table.publicationId,
+      table.position,
+    ),
     index('publication_media_asset_idx').on(table.assetId),
   ],
 );
 
 /** Nature d'un commentaire : texte, vocal, photo ou sticker. */
-export const commentKindEnum = pgEnum('comment_kind', ['text', 'audio', 'image', 'sticker']);
+export const commentKindEnum = pgEnum('comment_kind', [
+  'text',
+  'audio',
+  'image',
+  'sticker',
+]);
 
 /** Commentaire ou réponse (`parentId`) à une publication. */
 export const comments = pgTable(
@@ -1279,24 +1465,37 @@ export const comments = pgTable(
       onDelete: 'set null',
     }),
     /** Note vocale jointe en légende d'une photo ou d'un sticker. */
-    voiceMediaAssetId: text('voice_media_asset_id').references(() => mediaAssets.id, {
-      onDelete: 'set null',
-    }),
+    voiceMediaAssetId: text('voice_media_asset_id').references(
+      () => mediaAssets.id,
+      {
+        onDelete: 'set null',
+      },
+    ),
     /** Sticker de catalogue (« pack/sticker »), sans fichier à stocker. */
     stickerRef: text('sticker_ref'),
     likeCount: integer('like_count').notNull().default(0),
     replyCount: integer('reply_count').notNull().default(0),
     /** Épinglé par l'auteur de la publication : affiché en tête de fil. */
     pinnedAt: timestamp('pinned_at', { withTimezone: true }),
-    moderationStatus: moderationStatusEnum('moderation_status').notNull().default('pending'),
+    moderationStatus: moderationStatusEnum('moderation_status')
+      .notNull()
+      .default('pending'),
     /** Clé d'idempotence fournie par l'appareil, unique par auteur. */
     clientId: text('client_id').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
-    uniqueIndex('comments_author_client_idx').on(table.authorId, table.clientId),
-    index('comments_publication_created_idx').on(table.publicationId, table.createdAt),
+    uniqueIndex('comments_author_client_idx').on(
+      table.authorId,
+      table.clientId,
+    ),
+    index('comments_publication_created_idx').on(
+      table.publicationId,
+      table.createdAt,
+    ),
     index('comments_parent_idx').on(table.parentId),
   ],
 );
@@ -1311,7 +1510,9 @@ export const commentLikes = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
 );
@@ -1335,7 +1536,9 @@ export const commentDislikes = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
 );
@@ -1354,7 +1557,9 @@ export const commentReactions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     kind: commentReactionKindEnum('kind').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.commentId, table.userId] }),
@@ -1373,7 +1578,9 @@ export const publicationReactions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     kind: reactionKindEnum('kind').notNull().default('like'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.publicationId, table.userId] }),
@@ -1395,12 +1602,19 @@ export const saveCollections = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index('save_collections_user_idx').on(table.userId),
-    uniqueIndex('save_collections_user_name_idx').on(table.userId, sql`lower(${table.name})`),
+    uniqueIndex('save_collections_user_name_idx').on(
+      table.userId,
+      sql`lower(${table.name})`,
+    ),
   ],
 );
 
@@ -1418,7 +1632,9 @@ export const publicationSaves = pgTable(
     collectionId: text('collection_id').references(() => saveCollections.id, {
       onDelete: 'set null',
     }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.publicationId, table.userId] }),
@@ -1437,7 +1653,9 @@ export const publicationReposts = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.publicationId, table.userId] }),
@@ -1455,7 +1673,9 @@ export const publicationViews = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
+    viewedAt: timestamp('viewed_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     /**
      * Temps de visionnage cumulé le plus élevé observé pour cette vue, en
      * millisecondes. Signal de classement (`watch time`), jamais fourni
@@ -1475,7 +1695,10 @@ export const publicationViews = pgTable(
 );
 
 /** Cible d'un retour négatif : une publication précise ou un auteur entier. */
-export const feedbackTargetEnum = pgEnum('feedback_target', ['publication', 'author']);
+export const feedbackTargetEnum = pgEnum('feedback_target', [
+  'publication',
+  'author',
+]);
 
 /**
  * Retours négatifs du fil (« Pas intéressé », « Masquer cet auteur »).
@@ -1496,7 +1719,9 @@ export const contentFeedback = pgTable(
     targetId: text('target_id').notNull(),
     /** Motif technique, extensible (`not_interested` pour l'instant). */
     kind: text('kind').notNull().default('not_interested'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.targetType, table.targetId] }),
@@ -1523,14 +1748,54 @@ export const feedSessions = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     /** Onglet d'origine : `for-you` ou `local` (les abonnements sont chronologiques). */
     tab: text('tab').notNull(),
+    /** Format demandé à la construction ; `null` signifie tous les formats. */
+    format: text('format'),
+    /** Ville figée pour l'onglet Local ; `null` pour les autres onglets. */
+    city: text('city'),
     /** Ordre figé de la session (identifiants de publications). */
     publicationIds: jsonb('publication_ids').$type<string[]>().notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },
   (table) => [
     index('feed_sessions_user_idx').on(table.userId, table.createdAt),
     index('feed_sessions_expiry_idx').on(table.expiresAt),
+  ],
+);
+
+/**
+ * Session de tri « Top » des commentaires : le score dépend des likes/dislikes,
+ * donc un curseur de score seul sauterait ou répéterait des lignes après une
+ * interaction. L'ordre des racines est figé pour la même durée qu'une session
+ * de feed ; les réponses restent chronologiques.
+ */
+export const commentSessions = pgTable(
+  'comment_sessions',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    commentIds: jsonb('comment_ids').$type<string[]>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index('comment_sessions_user_publication_idx').on(
+      table.userId,
+      table.publicationId,
+      table.createdAt,
+    ),
+    index('comment_sessions_expiry_idx').on(table.expiresAt),
   ],
 );
 
@@ -1545,8 +1810,12 @@ export const hashtags = pgTable(
     usageCount: integer('usage_count').notNull().default(0),
     /** Score de tendance recalculé par worker, jamais fourni par le client. */
     trendScore: integer('trend_score').notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index('hashtags_trend_idx').on(table.trendScore),
@@ -1583,12 +1852,16 @@ export const stories = pgTable(
     authorId: text('author_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    assetId: text('asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+    assetId: text('asset_id').references(() => mediaAssets.id, {
+      onDelete: 'set null',
+    }),
     caption: text('caption'),
     audience: storyAudienceEnum('audience').notNull().default('followers'),
     /** Expiration fixée à la création (`now() + 24 h`), jamais prolongée. */
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
   },
   (table) => [
@@ -1606,7 +1879,9 @@ export const storyViews = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
+    viewedAt: timestamp('viewed_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.storyId, table.userId] }),
@@ -1624,7 +1899,9 @@ export const storyExcludedUsers = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.storyId, table.userId] })],
 );
@@ -1644,8 +1921,12 @@ export const highlights = pgTable(
     coverAssetId: text('cover_asset_id').references(() => mediaAssets.id, {
       onDelete: 'set null',
     }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [index('highlights_owner_idx').on(table.ownerId, table.createdAt)],
 );
@@ -1663,16 +1944,23 @@ export const highlightItems = pgTable(
     highlightId: text('highlight_id')
       .notNull()
       .references(() => highlights.id, { onDelete: 'cascade' }),
-    assetId: text('asset_id').references(() => mediaAssets.id, { onDelete: 'set null' }),
+    assetId: text('asset_id').references(() => mediaAssets.id, {
+      onDelete: 'set null',
+    }),
     /** Story d'origine, conservée pour l'audit ; `null` si elle est purgée. */
     sourceStoryId: text('source_story_id').references(() => stories.id, {
       onDelete: 'set null',
     }),
     position: integer('position').notNull().default(0),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    uniqueIndex('highlight_items_position_idx').on(table.highlightId, table.position),
+    uniqueIndex('highlight_items_position_idx').on(
+      table.highlightId,
+      table.position,
+    ),
     index('highlight_items_story_idx').on(table.sourceStoryId),
   ],
 );
@@ -1694,21 +1982,35 @@ export const socialNotifications = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     /** Auteur de l'action ; `null` pour une notification de modération. */
-    actorId: text('actor_id').references(() => users.id, { onDelete: 'cascade' }),
+    actorId: text('actor_id').references(() => users.id, {
+      onDelete: 'cascade',
+    }),
     type: socialNotificationTypeEnum('type').notNull(),
     publicationId: text('publication_id').references(() => publications.id, {
       onDelete: 'cascade',
     }),
-    commentId: text('comment_id').references(() => comments.id, { onDelete: 'cascade' }),
-    storyId: text('story_id').references(() => stories.id, { onDelete: 'cascade' }),
+    commentId: text('comment_id').references(() => comments.id, {
+      onDelete: 'cascade',
+    }),
+    storyId: text('story_id').references(() => stories.id, {
+      onDelete: 'cascade',
+    }),
     /** Clé de déduplication, unique par destinataire. */
     dedupeKey: text('dedupe_key').notNull(),
     readAt: timestamp('read_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
-    uniqueIndex('social_notifications_dedupe_idx').on(table.userId, table.dedupeKey),
-    index('social_notifications_user_created_idx').on(table.userId, table.createdAt),
+    uniqueIndex('social_notifications_dedupe_idx').on(
+      table.userId,
+      table.dedupeKey,
+    ),
+    index('social_notifications_user_created_idx').on(
+      table.userId,
+      table.createdAt,
+    ),
     index('social_notifications_unread_idx').on(table.userId, table.readAt),
   ],
 );
@@ -1733,7 +2035,9 @@ export const reports = pgTable(
       onDelete: 'set null',
     }),
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     uniqueIndex('reports_reporter_target_idx').on(
@@ -1756,13 +2060,19 @@ export const moderationActions = pgTable(
     id: text('id')
       .primaryKey()
       .$defaultFn(() => crypto.randomUUID()),
-    reportId: text('report_id').references(() => reports.id, { onDelete: 'set null' }),
-    moderatorId: text('moderator_id').references(() => users.id, { onDelete: 'set null' }),
+    reportId: text('report_id').references(() => reports.id, {
+      onDelete: 'set null',
+    }),
+    moderatorId: text('moderator_id').references(() => users.id, {
+      onDelete: 'set null',
+    }),
     targetType: reportTargetTypeEnum('target_type').notNull(),
     targetId: text('target_id').notNull(),
     action: moderationActionEnum('action').notNull(),
     notes: text('notes'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [
     index('moderation_actions_target_idx').on(table.targetType, table.targetId),
@@ -1783,7 +2093,9 @@ export const blockedWords = pgTable(
     createdById: text('created_by_id').references(() => users.id, {
       onDelete: 'set null',
     }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (table) => [index('blocked_words_active_idx').on(table.active)],
 );
@@ -1807,9 +2119,8 @@ export type StoryView = typeof storyViews.$inferSelect;
 export type Highlight = typeof highlights.$inferSelect;
 export type HighlightItem = typeof highlightItems.$inferSelect;
 export type SocialNotification = typeof socialNotifications.$inferSelect;
-export type SocialNotificationType = (typeof socialNotificationTypeEnum.enumValues)[number];
+export type SocialNotificationType =
+  (typeof socialNotificationTypeEnum.enumValues)[number];
 export type Report = typeof reports.$inferSelect;
 export type ModerationAction = typeof moderationActions.$inferSelect;
 export type BlockedWord = typeof blockedWords.$inferSelect;
-
-

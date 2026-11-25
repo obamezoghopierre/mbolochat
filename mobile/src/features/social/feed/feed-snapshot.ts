@@ -60,7 +60,11 @@ function parse(raw: string | null): Snapshot | null {
   }
   try {
     const value = JSON.parse(raw) as Snapshot;
-    if (!Array.isArray(value?.items) || typeof value.savedAt !== 'number') {
+    if (
+      !Array.isArray(value?.items) ||
+      !Number.isFinite(value.savedAt) ||
+      (value.cursor !== null && typeof value.cursor !== 'string')
+    ) {
       return null;
     }
     return Date.now() - value.savedAt < MAX_AGE_MS ? value : null;
@@ -106,7 +110,17 @@ export function saveFeedSnapshot(
   items: FeedPost[],
   cursor: string | null,
 ): void {
-  if (!userId || items.length === 0) {
+  if (!userId) {
+    return;
+  }
+  if (items.length === 0) {
+    if (userId === ownerId) {
+      memory.delete(tab);
+    }
+    const store = getStorage();
+    if (store) {
+      void store.removeItem(keyFor(userId, tab)).catch(() => undefined);
+    }
     return;
   }
   const snapshot: Snapshot = {
