@@ -3,11 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildExploreRows,
   hydrateDiscoverPost,
+  hydrateSearchPublication,
   mediaAspect,
   type DiscoverPostHydration,
 } from './discover-feed-model';
 import type { DiscoverPublication } from './discover-api';
-import type { FeedPost, PublicationMedia } from '@/lib/types';
+import type { FeedPost, PublicationMedia, SearchPublication } from '@/lib/types';
 
 function media(overrides: Partial<PublicationMedia> = {}): PublicationMedia {
   return {
@@ -79,6 +80,50 @@ describe('hydrateDiscoverPost', () => {
     expect(hydrated.viewer.reaction).toBe('love');
     expect(hydrated.viewer.followingAuthor).toBe(true);
     expect(hydrated.viewer.reposted).toBe(true);
+  });
+});
+
+describe('hydrateSearchPublication', () => {
+  function searchPost(
+    overrides: Partial<SearchPublication> = {},
+  ): SearchPublication {
+    return {
+      id: 'sp1',
+      kind: 'post',
+      caption: 'Un résultat de recherche',
+      createdAt: '2026-11-16T10:00:00.000Z',
+      author: {
+        id: 'u1',
+        username: 'auteur',
+        displayName: 'Auteur',
+        avatarUrl: null,
+        verified: false,
+      },
+      ...overrides,
+    };
+  }
+
+  it('crée une publication exploitable par le visionneuse', () => {
+    const hydrated = hydrateSearchPublication(searchPost(), hydration);
+
+    expect(hydrated.id).toBe('sp1');
+    expect(hydrated.kind).toBe('post');
+    expect(hydrated.caption).toBe('Un résultat de recherche');
+    expect(hydrated.visibility).toBe('public');
+    // La recherche ne renvoie pas les médias : le visionneuse les récupère
+    // dans le détail de la publication.
+    expect(hydrated.media).toEqual([]);
+    expect(hydrated.viewer).toEqual({ reaction: null, followingAuthor: false });
+  });
+
+  it('garde le contexte du lecteur fourni', () => {
+    const hydrated = hydrateSearchPublication(searchPost(), {
+      viewer: { reaction: 'like', followingAuthor: true, saved: true },
+    });
+
+    expect(hydrated.viewer.reaction).toBe('like');
+    expect(hydrated.viewer.followingAuthor).toBe(true);
+    expect(hydrated.counters.saves).toBe(0);
   });
 });
 

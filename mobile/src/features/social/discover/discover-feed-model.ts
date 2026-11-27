@@ -1,6 +1,7 @@
 import type {
   FeedPost,
   PublicationMedia,
+  SearchPublication,
   SocialAuthor,
   SocialReaction,
 } from '@/lib/types';
@@ -56,6 +57,34 @@ export function hydrateDiscoverPost(
     quoted: base.quoted ?? null,
     repostedBy: base.repostedBy ?? null,
     likedBy: base.likedBy ?? null,
+  };
+}
+
+/**
+ * Conversion d'un résultat publication de recherche en publication du fil.
+ *
+ * La recherche ne renvoie pas les médias : la publication est hydratée
+ * sans média, et le visionneuse récupère le détail complet (médias,
+ * compteurs, état du lecteur) dès l'ouverture.
+ */
+export function hydrateSearchPublication(
+  item: SearchPublication,
+  base: DiscoverPostHydration,
+): FeedPost {
+  return {
+    id: item.id,
+    kind: item.kind,
+    format: 'image',
+    caption: item.caption,
+    visibility: 'public',
+    createdAt: item.createdAt,
+    author: item.author,
+    media: [],
+    counters: { likes: 0, comments: 0, reposts: 0, saves: 0, views: 0 },
+    viewer: base.viewer,
+    quoted: null,
+    repostedBy: null,
+    likedBy: null,
   };
 }
 

@@ -12,7 +12,6 @@ import {
 import { useNetworkState } from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Avatar } from '@/components/avatar';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
@@ -23,12 +22,20 @@ import {
   DiscoverExploreGrid,
   type DiscoverExploreGridHandle,
 } from '@/features/social/discover/discover-explore-grid';
+import { hydrateSearchPublication } from '@/features/social/discover/discover-feed-model';
 import { readDiscoverSnapshot } from '@/features/social/discover/discover-snapshot';
-import { useDiscoverFeed } from '@/features/social/discover/use-discover-feed';
+import { SearchHistoryPanel } from '@/features/social/discover/search-history-panel';
+import { SearchUserRow } from '@/features/social/discover/search-user-row';
+import { SearchFilterTabs, type SearchFilter } from '@/features/social/discover/search-filter-tabs';
 import {
-  normalizeSearchQuery,
-  totalResults,
-} from '@/features/social/discover/search-model';
+  clearSearchHistory,
+  hydrateSearchHistory,
+  readSearchHistory,
+  removeSearchHistory,
+  saveSearchHistory,
+} from '@/features/social/discover/search-history';
+import { useDiscoverFeed } from '@/features/social/discover/use-discover-feed';
+import { normalizeSearchQuery } from '@/features/social/discover/search-model';
 import { useTheme } from '@/hooks/use-theme';
 import { discoverFr } from '@/i18n/discover-fr';
 import { fr } from '@/i18n/fr';
@@ -39,9 +46,13 @@ import type { FeedPost, SearchResult } from '@/lib/types';
 
 /**
  * Découvrir : mosaïque Explorer plein écran (une seule grille continue, sans
- * rail ni section), et recherche unifiée (comptes, publications, hashtags) dès
- * qu'une requête est saisie. La saisie est débouncée et la réponse la plus
- * récente gagne, pour éviter qu'une ancienne requête écrase la nouvelle.
+ * rail ni section), et recherche unifiée (comptes, publications, hashtags)
+ * dès qu'une requête est saisie.
+ *
+ * La recherche imite Instagram : historique des recherches récentes au focus
+ * du champ, suggestions pendant la saisie, onglets de filtre sur les
+ * résultats, et suivi en ligne des comptes. La saisie est débouncée et la
+ * réponse la plus récente gagne.
  *
  * La grille et le visionneuse plein écran partagent une seule liste
  * (`useDiscoverFeed`) : une réaction, un signet ou une republication pris
@@ -71,6 +82,19 @@ export default function DiscoverScreen() {
   const requestId = useRef(0);
   const searching = normalizeSearchQuery(query) !== '';
   const offline = network.isConnected === false || network.isInternetReachable === false;
+  // Focus du champ : l'historique et les suggestions s'affichent à ce moment.
+  const [focused, setFocused] = useState(false);
+  // Historique des recherches récentes du compte.
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyOwner, setHistoryOwner] = useState<string | null>(user?.id ?? null);
+  if (user?.id !== historyOwner) {
+    // Changement de compte (ou déconnecté) : l'historique du précédent ne
+    // s'applique pas, on repart d'une liste vide (ajustement au render).
+    setHistoryOwner(user?.id ?? null);
+    setHistory([]);
+  }
+  // Onglet de filtre actif sur les résultats.
+  const [filter, setFilter] = useState<SearchFilter>('all');
 
   // Première page de la grille gardée sur l'appareil : les vignettes
   // s'affichent tout de suite, le réseau les remplace en arrière-plan.
@@ -104,13 +128,37 @@ export default function DiscoverScreen() {
   });
 
   const gridRef = useRef<DiscoverExploreGridHandle | null>(null);
-  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  // Visionneuse : liste affichée + index. Viennent de la grille (avec la
+  // position de vignette pour le retour) ou d'un résultat de recherche.
+  const [viewer, setViewer] = useState<{
+    items: FeedPost[];
+    index: number;
+    gridIndex?: number;
+  } | null>(null);
   const navigation = useNavigation();
+
+  // Chargement de l'historique au changement de compte. La liste démarre
+  // vide ; l'asynchrone remplit l'état, sans setState synchrone dans l'effet.
+  useEffect(() => {
+    const accountId = user?.id;
+    if (!accountId) {
+      return;
+    }
+    let active = true;
+    void hydrateSearchHistory(accountId).then(() => {
+      if (active) {
+        setHistory(readSearchHistory(accountId));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
 
   // Visionneuse plein écran : la barre d'onglets se masque, comme les
   // Reels du fil — le média prend toute la hauteur de l'écran.
   useEffect(() => {
-    const hidden = viewerIndex !== null;
+    const hidden = viewer !== null;
     navigation.setOptions({
       tabBarHidden: hidden,
       // Le conteneur du tab bar doit aussi se rétracter, sinon React
@@ -123,7 +171,7 @@ export default function DiscoverScreen() {
         tabBarStyle: undefined,
       } as never);
     };
-  }, [navigation, viewerIndex]);
+  }, [navigation, viewer]);
 
   useEffect(() => {
     if (!token) {
@@ -140,6 +188,9 @@ export default function DiscoverScreen() {
     // `status` a déjà été posé à la saisie (`onChangeText`), pas ici : un
     // setState synchrone dans un effet provoquerait des rendus en cascade.
     const timer = setTimeout(() => {
+      // L'historique retient la recherche effectivement exécutée.
+      const nextHistory = saveSearchHistory(user?.id ?? null, normalized);
+      setHistory(nextHistory);
       api
         .search(token, normalized)
         .then((value) => {
@@ -155,7 +206,7 @@ export default function DiscoverScreen() {
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [query, token, reloadKey]);
+  }, [query, token, reloadKey, user?.id]);
 
   const changeQuery = (value: string) => {
     setQuery(value);
@@ -167,11 +218,24 @@ export default function DiscoverScreen() {
     setReloadKey((value) => value + 1);
   };
 
+  const pickHistory = (entry: string) => {
+    setQuery(entry);
+    setStatus('loading');
+  };
+
+  const removeHistory = (entry: string) => {
+    setHistory(removeSearchHistory(user?.id ?? null, entry));
+  };
+
+  const clearHistory = () => {
+    setHistory(clearSearchHistory(user?.id ?? null));
+  };
+
   const closeViewer = () => {
     // Retour à la vignette ouverte, comme un retour d'écran publication.
-    setViewerIndex((current) => {
-      if (current !== null) {
-        gridRef.current?.scrollToIndex(current);
+    setViewer((current) => {
+      if (current?.gridIndex !== undefined) {
+        gridRef.current?.scrollToIndex(current.gridIndex);
       }
       return null;
     });
@@ -184,6 +248,20 @@ export default function DiscoverScreen() {
     return <Redirect href="/login" />;
   }
 
+  const filterLabels = {
+    all: fr.social.searchFilterAll,
+    users: fr.social.searchFilterUsers,
+    publications: fr.social.searchFilterPublications,
+    hashtags: fr.social.searchFilterHashtags,
+  };
+  const showUsers = filter === 'all' || filter === 'users';
+  const showPublications = filter === 'all' || filter === 'publications';
+  const showHashtags = filter === 'all' || filter === 'hashtags';
+  const visibleCount =
+    (showUsers ? result?.users.items.length ?? 0 : 0) +
+    (showPublications ? result?.publications.items.length ?? 0 : 0) +
+    (showHashtags ? result?.hashtags.items.length ?? 0 : 0);
+
   return (
     <ThemedView style={styles.screen}>
       <View style={[styles.header, { paddingTop: insets.top + Spacing.two }]}>
@@ -192,6 +270,8 @@ export default function DiscoverScreen() {
           <TextInput
             value={query}
             onChangeText={changeQuery}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
             placeholder={fr.social.discoverPlaceholder}
             placeholderTextColor={theme.textSecondary}
             style={[styles.input, { color: theme.text }]}
@@ -234,7 +314,17 @@ export default function DiscoverScreen() {
           ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          {status === 'loading' ? (
+          {focused && status !== 'ready' ? (
+            <SearchHistoryPanel
+              entries={history}
+              query={query}
+              onPick={pickHistory}
+              onRemove={removeHistory}
+              onClear={clearHistory}
+            />
+          ) : null}
+
+          {status === 'loading' && !focused ? (
             <View style={styles.centered}>
               <ActivityIndicator color={theme.accent} />
             </View>
@@ -254,7 +344,7 @@ export default function DiscoverScreen() {
           ) : null}
 
           {status === 'ready' && result ? (
-            totalResults(result) === 0 ? (
+            visibleCount === 0 ? (
               <EmptyState
                 icon={Compass}
                 title={fr.social.discoverNoResults}
@@ -262,32 +352,23 @@ export default function DiscoverScreen() {
               />
             ) : (
               <>
-                {result.users.items.length > 0 ? (
+                <SearchFilterTabs value={filter} onChange={setFilter} labels={filterLabels} />
+                <View style={styles.filterGap} />
+
+                {showUsers && result.users.items.length > 0 ? (
                   <View style={styles.section}>
                     <ThemedText style={styles.sectionTitle}>{fr.social.discoverUsers}</ThemedText>
                     {result.users.items.map((account) => (
-                      <Pressable
+                      <SearchUserRow
                         key={account.id}
-                        onPress={() => router.push(`/user/${account.id}`)}
-                        accessibilityRole="button"
-                        style={styles.row}>
-                        <Avatar name={account.displayName} uri={account.avatarUrl} size={Spacing.five} />
-                        <View style={styles.rowBody}>
-                          <ThemedText style={styles.rowTitle}>
-                            {account.displayName}
-                            {account.verified ? ' ✓' : ''}
-                          </ThemedText>
-                          <ThemedText type="small" themeColor="textSecondary">
-                            @{account.username}
-                            {account.privateAccount ? ' · privé' : ''}
-                          </ThemedText>
-                        </View>
-                      </Pressable>
+                        account={account}
+                        onOpenProfile={(id) => router.push(`/user/${id}`)}
+                      />
                     ))}
                   </View>
                 ) : null}
 
-                {result.publications.items.length > 0 ? (
+                {showPublications && result.publications.items.length > 0 ? (
                   <View style={styles.section}>
                     <ThemedText style={styles.sectionTitle}>
                       {fr.social.discoverPublications}
@@ -295,7 +376,12 @@ export default function DiscoverScreen() {
                     {result.publications.items.map((publication) => (
                       <Pressable
                         key={publication.id}
-                        onPress={() => router.push(`/post/${publication.id}`)}
+                        onPress={() =>
+                          setViewer({
+                            items: [hydrateSearchPublication(publication, hydrate)],
+                            index: 0,
+                          })
+                        }
                         accessibilityRole="button"
                         style={styles.publicationRow}>
                         <ThemedText type="small" style={styles.rowTitle}>
@@ -310,7 +396,7 @@ export default function DiscoverScreen() {
                   </View>
                 ) : null}
 
-                {result.hashtags.items.length > 0 ? (
+                {showHashtags && result.hashtags.items.length > 0 ? (
                   <View style={styles.section}>
                     <ThemedText style={styles.sectionTitle}>{fr.social.discoverHashtags}</ThemedText>
                     {result.hashtags.items.map((tag) => (
@@ -333,6 +419,15 @@ export default function DiscoverScreen() {
         </ScrollView>
       ) : (
         <>
+          {focused ? (
+            <SearchHistoryPanel
+              entries={history}
+              query={query}
+              onPick={pickHistory}
+              onRemove={removeHistory}
+              onClear={clearHistory}
+            />
+          ) : null}
           {feed.freshCount > 0 ? (
             <Pressable
               accessibilityRole="button"
@@ -366,7 +461,9 @@ export default function DiscoverScreen() {
             loadingMore={feed.loadingMore}
             moreError={feed.moreError}
             bottomInset={TabBarHeight + insets.bottom + Spacing.three}
-            onTilePress={(post: FeedPost, index: number) => setViewerIndex(index)}
+            onTilePress={(post: FeedPost, index: number) =>
+              setViewer({ items: feed.items, index, gridIndex: index })
+            }
             onTileDoubleTapLike={(post: FeedPost) => feed.actions.toggleLike(post)}
             onRefresh={feed.refresh}
             onLoadMore={feed.loadMore}
@@ -375,13 +472,13 @@ export default function DiscoverScreen() {
         </>
       )}
 
-      {viewerIndex !== null ? (
+      {viewer ? (
         <DiscoverViewer
-          items={feed.items}
-          initialIndex={viewerIndex}
-          hasMore={feed.cursor !== null}
-          onLoadMore={feed.loadMore}
-          onRefresh={feed.refresh}
+          items={viewer.items}
+          initialIndex={viewer.index}
+          hasMore={false}
+          onLoadMore={() => undefined}
+          onRefresh={() => undefined}
           actions={feed.actions}
           onClose={closeViewer}
         />
@@ -421,17 +518,6 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Radii.sm,
   },
-  freshPill: {
-    marginHorizontal: Spacing.three,
-    marginBottom: Spacing.two,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
-    borderRadius: Radii.full,
-    alignSelf: 'flex-start',
-  },
-  pressed: {
-    opacity: 0.7,
-  },
   notice: {
     marginHorizontal: Spacing.three,
     marginBottom: Spacing.two,
@@ -443,6 +529,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingTop: Spacing.two,
     gap: Spacing.three,
+  },
+  filterGap: {
+    height: Spacing.three,
   },
   centered: {
     paddingVertical: Spacing.five,
@@ -464,16 +553,6 @@ const styles = StyleSheet.create({
     ...Type.sectionTitle,
     marginBottom: Spacing.one,
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.threeHalf,
-    paddingVertical: Spacing.two,
-  },
-  rowBody: {
-    flex: 1,
-    gap: Spacing.half,
-  },
   rowTitle: {
     ...Type.body,
     fontWeight: '600',
@@ -494,5 +573,16 @@ const styles = StyleSheet.create({
   trendTag: {
     ...Type.body,
     fontWeight: '600',
+  },
+  freshPill: {
+    marginHorizontal: Spacing.three,
+    marginBottom: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radii.full,
+    alignSelf: 'flex-start',
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });
