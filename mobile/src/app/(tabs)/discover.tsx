@@ -332,19 +332,47 @@ export default function DiscoverScreen() {
           ) : null}
         </ScrollView>
       ) : (
-        <DiscoverExploreGrid
-          ref={gridRef}
-          items={feed.items}
-          status={feed.status}
-          refreshing={feed.refreshing}
-          loadingMore={feed.loadingMore}
-          moreError={feed.moreError}
-          bottomInset={TabBarHeight + insets.bottom + Spacing.three}
-          onTilePress={(post: FeedPost, index: number) => setViewerIndex(index)}
-          onRefresh={feed.refresh}
-          onLoadMore={feed.loadMore}
-          onRetryFirst={feed.retryFirst}
-        />
+        <>
+          {feed.freshCount > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                feed.freshCount > 1
+                  ? fr.social.freshPostsLabelPlural(feed.freshCount)
+                  : fr.social.freshPostsLabel(feed.freshCount)
+              }
+              onPress={() => {
+                // Remonte en haut et recharge, comme la pastille du fil.
+                gridRef.current?.scrollToIndex(0);
+                feed.refresh();
+              }}
+              style={({ pressed }) => [
+                styles.freshPill,
+                { backgroundColor: theme.backgroundSelected },
+                pressed && styles.pressed,
+              ]}>
+              <ThemedText type="smallBold" style={{ color: theme.accent }}>
+                {feed.freshCount > 1
+                  ? fr.social.freshPostsLabelPlural(feed.freshCount)
+                  : fr.social.freshPostsLabel(feed.freshCount)}
+              </ThemedText>
+            </Pressable>
+          ) : null}
+          <DiscoverExploreGrid
+            ref={gridRef}
+            items={feed.items}
+            status={feed.status}
+            refreshing={feed.refreshing}
+            loadingMore={feed.loadingMore}
+            moreError={feed.moreError}
+            bottomInset={TabBarHeight + insets.bottom + Spacing.three}
+            onTilePress={(post: FeedPost, index: number) => setViewerIndex(index)}
+            onTileDoubleTapLike={(post: FeedPost) => feed.actions.toggleLike(post)}
+            onRefresh={feed.refresh}
+            onLoadMore={feed.loadMore}
+            onRetryFirst={feed.retryFirst}
+          />
+        </>
       )}
 
       {viewerIndex !== null ? (
@@ -392,6 +420,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     borderRadius: Radii.sm,
+  },
+  freshPill: {
+    marginHorizontal: Spacing.three,
+    marginBottom: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radii.full,
+    alignSelf: 'flex-start',
+  },
+  pressed: {
+    opacity: 0.7,
   },
   notice: {
     marginHorizontal: Spacing.three,

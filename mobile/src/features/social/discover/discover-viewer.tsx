@@ -1,5 +1,5 @@
 import { router, useFocusEffect } from 'expo-router';
-import { X } from 'lucide-react-native';
+import { Volume2, VolumeX, X } from 'lucide-react-native';
 import { AppState, Pressable, StyleSheet, View } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -13,6 +13,7 @@ import {
   TopScrim,
   type FeedPagerActions,
 } from '../feed/pager/feed-pager';
+import { isVideoPost } from '../feed/pager/feed-media';
 import { OnMediaShadow } from '../feed/pager/feed-tokens';
 import { useReportPublication } from '../feed/use-report-publication';
 import { useAuth } from '@/lib/auth-context';
@@ -57,6 +58,10 @@ export function DiscoverViewer({
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
   const [height, setHeight] = useState(0);
+  // Son des reels : le pager le pilote, la barre du haut affiche l'état
+  // et permet de le basculer, comme Instagram.
+  const [muted, setMuted] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
   const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -208,6 +213,9 @@ export function DiscoverViewer({
         onLoadMore={onLoadMore}
         onRefresh={onRefresh}
         actions={pagerActions}
+        muted={muted}
+        onMuteChange={setMuted}
+        onActiveIndexChange={setActiveIndex}
       />
 
       <TopScrim />
@@ -217,6 +225,26 @@ export function DiscoverViewer({
         pointerEvents="box-none"
         style={[styles.topBar, { top: insets.top + Spacing.one }]}>
         <View style={styles.topBarInner}>
+          {isVideoPost(items[activeIndex] ?? items[0]) ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                muted ? fr.social.unmuteReel : fr.social.muteReel
+              }
+              onPress={() => setMuted((value) => !value)}
+              hitSlop={12}
+              style={({ pressed }) => [
+                styles.closeButton,
+                { backgroundColor: FeedSurface.glass },
+                pressed && styles.pressed,
+              ]}>
+              <Icon
+                icon={muted ? VolumeX : Volume2}
+                size={Spacing.four}
+                color={FeedSurface.onMedia}
+              />
+            </Pressable>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={fr.social.viewerClose}
@@ -285,6 +313,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
+    gap: Spacing.two,
     paddingHorizontal: Spacing.three,
   },
   closeButton: {
