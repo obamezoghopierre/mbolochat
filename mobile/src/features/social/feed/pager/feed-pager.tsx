@@ -146,6 +146,15 @@ export function FeedPager({
   onOpenReels,
   freshPosts = [],
   onShowFresh,
+  /**
+   * Contrôle du son (surcouche) : lorsque `muted` est fourni, le pager ne
+   * garde pas son état interne et signale chaque bascule via
+   * `onMuteChange`. Sans ces props, le son reste géré en interne.
+   */
+  muted: mutedProp,
+  onMuteChange,
+  /** Index de la page visible, pour que la surcouche puisse adapter sa barre. */
+  onActiveIndexChange,
 }: {
   items: FeedPost[];
   /** Hauteur de l'écran entier : un item = un écran. */
@@ -185,6 +194,12 @@ export function FeedPager({
   freshPosts?: FeedPost[];
   /** Tap sur la pastille : remonter en haut et recharger. */
   onShowFresh?: () => void;
+  /** Son actuel (contrôle externe). `undefined` = géré en interne. */
+  muted?: boolean;
+  /** Appelé à chaque bascule du son. */
+  onMuteChange?: (muted: boolean) => void;
+  /** Appelé quand la page visible change. */
+  onActiveIndexChange?: (index: number) => void;
 }) {
   const listRef = useRef<FlatList<FeedPost> | null>(null);
   const flow = mode === 'flow';
@@ -201,7 +216,17 @@ export function FeedPager({
   const tones = useTextPostTones();
   const [activeIndex, setActiveIndex] = useState(initialIndex);
 
-  const [muted, setMuted] = useState(false);
+  // Le son peut être contrôlé par la surcouche (bouton son du visionneuse
+  // Découvrir) ; sans contrôle, le pager garde son état interne.
+  const [internalMuted, setInternalMuted] = useState(false);
+  const muted = mutedProp ?? internalMuted;
+  const toggleMuted = useCallback(() => {
+    const next = !muted;
+    if (mutedProp === undefined) {
+      setInternalMuted(next);
+    }
+    onMuteChange?.(next);
+  }, [muted, mutedProp, onMuteChange]);
   // Un glissement sur la barre de progression doit geler le scroll vertical :
   // sinon le Pan du feed entre en concurrence avec celui de la barre.
   const [scrubbing, setScrubbing] = useState(false);
@@ -298,14 +323,20 @@ export function FeedPager({
     [flow],
   );
 
+  const lastActiveNotified = useRef(initialIndex);
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: { index?: number | null }[] }) => {
     const first = viewableItems[0];
       if (typeof first?.index === 'number') {
         setActiveIndex(first.index);
+        // La surcouche (bouton son) doit suivre la page visible.
+        if (first.index !== lastActiveNotified.current) {
+          lastActiveNotified.current = first.index;
+          onActiveIndexChange?.(first.index);
+        }
       }
     },
-    [],
+    [onActiveIndexChange],
   );
 
   /** Double-tap : réagit sans jamais retirer une réaction déjà posée. */
@@ -645,7 +676,7 @@ export function FeedPager({
                     onDoubleTapLike={doubleTap}
                     muted={muted}
                     scrubbing={scrubbing}
-                    onToggleSound={() => setMuted((value) => !value)}
+                    onToggleSound={toggleMuted}
                     onScrubStateChange={setScrubbing}
                   />
                 ) : videoMode === 'prefetch' ? (
@@ -674,7 +705,7 @@ export function FeedPager({
                   likeScale={likeScale}
                   onDoubleTapLike={doubleTap}
                   muted={muted}
-                  onToggleMuted={() => setMuted((value) => !value)}
+                  onToggleMuted={toggleMuted}
                   onOpenReels={
                     flow && onOpenReels && isVideoPost(item) ? () => onOpenReels(item) : undefined
                   }

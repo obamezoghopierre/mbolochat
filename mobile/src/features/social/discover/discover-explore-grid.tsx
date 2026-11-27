@@ -1,3 +1,4 @@
+import * as Haptics from 'expo-haptics';
 import { Compass, Images, Play } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import {
@@ -25,6 +26,8 @@ import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { DiscoverMetrics, MediaSurface, Radii, Spacing } from '@/constants/theme';
+import { HeartBurstOverlay } from '../feed/pager/heart-burst';
+import { compactCount, extraMediaCount } from '../feed/pager/feed-media';
 import { useTheme } from '@/hooks/use-theme';
 import { discoverFr } from '@/i18n/discover-fr';
 import { fr } from '@/i18n/fr';
@@ -35,6 +38,9 @@ import { buildExploreRows } from './discover-feed-model';
 
 /** Colonnes de la mosaïque, comme la grille Explorer. */
 const COLUMNS = 3;
+
+/** Délai maximal entre deux appuis pour qu'ils forment un double-tap. */
+const DOUBLE_TAP_MS = 250;
 
 /**
  * Grille Découvrir présentationnelle : une mosaïque plein écran de contenus
@@ -60,6 +66,8 @@ interface DiscoverExploreGridProps {
   bottomInset: number;
   /** Ouvre le visionneuse sur la publication et sa position. */
   onTilePress: (post: FeedPost, index: number) => void;
+  /** Double-tap sur une vignette : réagit sans ouvrir le visionneuse. */
+  onTileDoubleTapLike?: (post: FeedPost) => void;
   onRefresh: () => void;
   onLoadMore: () => void;
   onRetryFirst: () => void;
@@ -82,6 +90,7 @@ export const DiscoverExploreGrid = forwardRef<
     moreError,
     bottomInset,
     onTilePress,
+    onTileDoubleTapLike,
     onRefresh,
     onLoadMore,
     onRetryFirst,
@@ -202,6 +211,7 @@ export const DiscoverExploreGrid = forwardRef<
                 width={tileWidth}
                 height={row.height}
                 onPress={() => onTilePress(post, rowIndex * COLUMNS + position)}
+                onDoubleTapLike={onTileDoubleTapLike}
               />
             ))}
           </View>
@@ -240,17 +250,23 @@ export const DiscoverExploreGrid = forwardRef<
  * Vignette : couverture du média bord à bord, badges discrets (vidéo,
  * album, vues) posés sur l'image. Toutes les métadonnées restent dans la
  * publication, comme sur la grille Explorer.
+ *
+ * Double-tap = réagir sans ouvrir (cœur posé sous le doigt, comme dans
+ * le fil) ; appui simple = ouvrir le visionneuse. Le compteur d'album
+ * indique le nombre de médias supplémentaires, comme Instagram.
  */
 function PublicationTile({
   publication,
   width,
   height,
   onPress,
+  onDoubleTapLike,
 }: {
   publication: FeedPost;
   width: number;
   height: number;
   onPress: () => void;
+  onDoubleTapLike?: (post: FeedPost) => void;
 }) {
   const theme = useTheme();
   const cover = publication.media?.[0];
@@ -259,13 +275,64 @@ function PublicationTile({
   const isVideo = publication.kind === 'reel' || cover?.kind === 'video';
   const durationMs = cover?.kind === 'video' ? cover.durationMs : null;
   const views = publication.kind === 'reel' ? publication.counters.views : 0;
-  const multiMedia = (publication.media?.length ?? 0) > 1;
+  const extraMedia = extraMediaCount(publication);
+
+  // Double-tap : on attend un court instant après le premier appui pour
+  // savoir si un second arrive ; sinon on ouvre le visionneuse.
+  const lastPressAt = useRef(0);
+  const openTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pointRef = useRef<{ x: number; y: number } | null>(null);
+  const [burst, setBurst] = useState<{ key: number; point: { x: number; y: number } | null }>({
+    key: 0,
+    point: null,
+  });
+  useEffect(
+    () => () => {
+      if (openTimer.current) {
+        clearTimeout(openTimer.current);
+      }
+    },
+    [],
+  );
+
+  const handlePressIn = (event: { nativeEvent: { locationX: number; locationY: number } }) => {
+    pointRef.current = {
+      x: event.nativeEvent.locationX,
+      y: event.nativeEvent.locationY,
+    };
+  };
+
+  const handlePress = () => {
+    const now = Date.now();
+    const previous = lastPressAt.current;
+    lastPressAt.current = now;
+    if (now - previous < DOUBLE_TAP_MS) {
+      // Double-tap : on annule l'ouverture en attente et on réagit.
+      if (openTimer.current) {
+        clearTimeout(openTimer.current);
+        openTimer.current = undefined;
+      }
+      setBurst((current) => ({ key: current.key + 1, point: pointRef.current }));
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+      onDoubleTapLike?.(publication);
+      return;
+    }
+    if (openTimer.current) {
+      clearTimeout(openTimer.current);
+    }
+    openTimer.current = setTimeout(() => {
+      openTimer.current = undefined;
+      onPress();
+    }, DOUBLE_TAP_MS);
+  };
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={fr.social.readPublication(publication.author.displayName)}
-      onPress={onPress}
+      accessibilityHint={fr.social.tileDoubleTapHint}
+      onPressIn={handlePressIn}
+      onPress={handlePress}
       style={[
         styles.tile,
         {
@@ -275,17 +342,20 @@ function PublicationTile({
         },
       ]}>
       {imageUri ? (
-        <Image
-          source={{ uri: imageUri }}
-          style={StyleSheet.absoluteFill}
-          contentFit="cover"
-          transition={120}
-        />
+        <View style={styles.media}>
+          <Image
+            source={{ uri: imageUri }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            transition={120}
+          />
+        </View>
       ) : (
         <View style={styles.tileFallback}>
           <Icon icon={Compass} size={Spacing.four} color={theme.textSecondary} />
         </View>
       )}
+      <HeartBurstOverlay burstKey={burst.key} point={burst.point} />
       {isVideo ? (
         <View style={styles.tileTopRight}>
           <View style={[styles.tileBadge, { backgroundColor: MediaSurface.overlay }]}>
@@ -298,10 +368,13 @@ function PublicationTile({
           </View>
         </View>
       ) : null}
-      {multiMedia ? (
+      {extraMedia > 0 ? (
         <View style={styles.tileTopRight}>
           <View style={[styles.tileBadge, { backgroundColor: MediaSurface.overlay }]}>
             <Icon icon={Images} size={Spacing.three} color={MediaSurface.onSurface} />
+            <ThemedText type="small" style={{ color: MediaSurface.onSurface }}>
+              {compactCount(extraMedia)}
+            </ThemedText>
           </View>
         </View>
       ) : null}
@@ -361,8 +434,12 @@ const styles = StyleSheet.create({
     gap: DiscoverMetrics.tileGutter,
   },
   tile: {
-    overflow: 'hidden',
     borderRadius: Radii.sm,
+  },
+  media: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: Radii.sm,
+    overflow: 'hidden',
   },
   tileFallback: {
     position: 'absolute',

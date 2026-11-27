@@ -907,6 +907,12 @@ export const fr = {
     viewerClose: 'Fermer la publication',
     viewerEmpty: 'Aucune publication à afficher.',
     viewerLoadingMore: 'Chargement des publications suivantes…',
+    muteReel: 'Couper le son de la vidéo',
+    unmuteReel: 'Rétablir le son de la vidéo',
+    /** Vignette de la grille : double-tap pour réagir, appui pour ouvrir. */
+    tileDoubleTapHint: 'Double-appui pour réagir, appui pour ouvrir la publication',
+    freshPostsLabel: (count: number) => `${count} nouvelle publication`,
+    freshPostsLabelPlural: (count: number) => `${count} nouvelles publications`,
     reactionPickerTitle: 'Réagir',
     offlineNotice: 'Hors ligne : le fil reprendra à la reconnexion',
     videoErrorTitle: 'Cette vidéo n’a pas pu être lue',

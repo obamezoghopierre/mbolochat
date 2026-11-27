@@ -60,6 +60,8 @@ export interface UseDiscoverFeedResult {
   refreshing: boolean;
   loadingMore: boolean;
   moreError: boolean;
+  /** Publications arrivées depuis le dernier rafraîchissement. */
+  freshCount: number;
   actions: DiscoverFeedActions;
   /** Recharge la première page (défilement en haut de la grille). */
   refresh: () => void;
@@ -99,6 +101,9 @@ export function useDiscoverFeed({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState(false);
+  // Nombre de publications nouvelles affichées après un rafraîchissement,
+  // pour la pastille « nouvelles publications » de la grille.
+  const [freshCount, setFreshCount] = useState(0);
   // Identifiant de requête : la réponse la plus récente gagne (un
   // rafraîchissement pendant un « charger plus » ne mélange pas les pages).
   const requestSeq = useRef(0);
@@ -117,12 +122,12 @@ export function useDiscoverFeed({
     [onError],
   );
 
-  const requestFirst = useCallback(() => {
+  const requestFirst = useCallback((): Promise<DiscoverSectionPage | null> => {
     const seq = ++requestSeq.current;
     return loadDiscoverSection(token, 'popular', undefined, DISCOVER_PAGE_SIZE)
       .then((page) => {
         if (seq !== requestSeq.current) {
-          return;
+          return null;
         }
         // Le serveur peut renvoyer une publication déjà affichée (elle est
         // remontée par une interaction récente) : on déduplique par id.
@@ -135,12 +140,14 @@ export function useDiscoverFeed({
         setCursor(page.nextCursor);
         setMoreError(false);
         setStatus('ready');
+        return page;
       })
       .catch(() => {
         if (seq === requestSeq.current) {
           // Une grille déjà affichée (instantané) reste préférable à l'erreur.
           setStatus((current) => (current === 'ready' ? current : 'error'));
         }
+        return null;
       });
   }, [token, hydrate]);
 
@@ -149,8 +156,18 @@ export function useDiscoverFeed({
   }, [requestFirst]);
 
   const refresh = useCallback(() => {
+    const known = new Set(itemsRef.current.map((item) => item.id));
     setRefreshing(true);
-    void requestFirst().finally(() => setRefreshing(false));
+    void requestFirst()
+      .then((page) => {
+        // Compte les publications qui n'étaient pas dans la grille avant le
+        // rafraîchissement : c'est ce qui alimente la pastille « nouvelles
+        // publications », comme sur Instagram.
+        if (page) {
+          setFreshCount(page.items.filter((item) => !known.has(item.id)).length);
+        }
+      })
+      .finally(() => setRefreshing(false));
   }, [requestFirst]);
 
   const retryFirst = useCallback(() => {
@@ -405,6 +422,7 @@ export function useDiscoverFeed({
     refreshing,
     loadingMore,
     moreError,
+    freshCount,
     actions,
     refresh,
     loadMore,
