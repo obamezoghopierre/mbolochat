@@ -14,7 +14,7 @@ import { Avatar } from '@/components/avatar';
 import { EmptyState } from '@/components/empty-state';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Radii, Spacing, Type } from '@/constants/theme';
+import { Radii, Spacing, TabBarHeight, Type } from '@/constants/theme';
 import {
   countUnread,
   notificationLabel,
@@ -137,7 +137,7 @@ export default function NotificationsScreen() {
         contentContainerStyle={[
           styles.list,
           activity.items.length === 0 && styles.listEmpty,
-          { paddingBottom: insets.bottom + Spacing.five },
+          { paddingBottom: TabBarHeight + insets.bottom + Spacing.five },
         ]}
         ListEmptyComponent={<>{empty()}</>}
         refreshControl={

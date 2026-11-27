@@ -380,7 +380,6 @@ export function TextPage({
                 name={author.displayName}
                 uri={author.avatarUrl}
                 size={HEADER_AVATAR}
-                shape="circle"
               />
               <View style={styles.authorText}>
                 <View style={styles.authorLine}>
@@ -420,7 +419,7 @@ export function TextPage({
                   accessibilityRole="button"
                   accessibilityLabel={`Suivre ${author.displayName}`}
                   style={({ pressed }) => pressed && styles.pressed}>
-                  <ThemedText style={[styles.followText, { color: tones.accent }]}>
+                  <ThemedText style={[styles.followText, { color: FeedSurface.follow }]}>
                     {fr.social.follow}
                   </ThemedText>
                 </Pressable>
@@ -454,7 +453,7 @@ export function TextPage({
                 pressed && styles.pressed,
               ]}>
               <View style={styles.quotedHeader}>
-                <Avatar name={post.quoted.authorDisplayName} uri={null} size={20} shape="circle" />
+                <Avatar name={post.quoted.authorDisplayName} uri={null} size={20} />
                 <ThemedText
                   numberOfLines={1}
                   style={[styles.quotedAuthor, { color: tones.text }]}>

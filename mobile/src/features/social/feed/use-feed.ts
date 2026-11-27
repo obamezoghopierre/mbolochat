@@ -162,8 +162,13 @@ export function useFeed(
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [notice, setNotice] = useState<FeedNotice | null>(null);
-  const [freshCount, setFreshCount] = useState(0);
   const [cacheVersion, setCacheVersion] = useState(0);
+  // `createdAt` (horloge serveur) de la plus récente publication chargée au
+  // dernier rechargement : la pastille « nouvelles publications » ne compte
+  // que ce qui la dépasse. Sans cette base, un ancien post qui remonte dans
+  // le classement serait pris pour une nouveauté.
+  const [freshBaseline, setFreshBaseline] = useState<string | null>(null);
+  const [freshPosts, setFreshPosts] = useState<FeedPost[]>([]);
   const inFlight = useRef(false);
   const reloadRequested = useRef(false);
   const loadRef = useRef<((options: { reset: boolean }) => Promise<void>) | null>(null);
@@ -282,6 +287,12 @@ export function useFeed(
         setCursor(page.nextCursor);
         setNotice(null);
         setStatus('ready');
+        if (options.reset) {
+          const newest = newestPostDate(page.items);
+          if (newest) {
+            setFreshBaseline(newest);
+          }
+        }
       } catch (cause) {
         setNotice({
           message:
@@ -357,14 +368,17 @@ export function useFeed(
 
   const refresh = useCallback(() => {
     setRefreshing(true);
-    setFreshCount(0);
+    setFreshPosts([]);
     void load({ reset: true });
   }, [load]);
 
   /**
    * « Nouvelles publications », comme Instagram : relit discrètement la
-   * première page et compte ce qui n'est pas encore affiché. Rien n'est
-   * inséré sous les yeux de la personne ; le bouton invite à remonter.
+   * première page et retient ce qui n'est pas encore affiché **et** postérieur
+   * à la base du dernier chargement — les posts frais servent à la pastille
+   * d'avatars. Un ancien post reclassé dans le top n'y figure pas : il n'est
+   * pas nouveau, il était déjà vu ou éligible au fil. Rien n'est inséré sous
+   * les yeux de la personne ; le bouton invite à remonter.
    */
   const checkFresh = useCallback(async () => {
     if (!token || format || status !== 'ready' || inFlight.current) {
@@ -373,11 +387,19 @@ export function useFeed(
     try {
       const page = await api.feed(token, tab, undefined);
       const known = new Set(itemsRef.current.map((post) => post.id));
-      setFreshCount(page.items.filter((post) => !known.has(post.id)).length);
+      // Fil restauré sans rechargement : la base est la plus récente
+      // publication déjà chargée, même règle que après un refresh.
+      const baseline = freshBaseline ?? newestPostDate(itemsRef.current);
+      const fresh = baseline
+        ? page.items.filter(
+            (post) => !known.has(post.id) && post.createdAt > baseline,
+          )
+        : [];
+      setFreshPosts(fresh);
     } catch {
       // Silencieux : ce n'est qu'une invitation.
     }
-  }, [format, status, tab, token]);
+  }, [freshBaseline, format, status, tab, token]);
 
   const loadMore = useCallback(() => {
     if (cursor && status === 'ready' && !loadingMore) {
@@ -667,7 +689,7 @@ export function useFeed(
     hasMore: cursor !== null,
     refresh,
     loadMore,
-    freshCount,
+    freshPosts,
     checkFresh,
     toggleLike,
     setReaction,
@@ -683,6 +705,17 @@ export function useFeed(
     dismissNotice: () => setNotice(null),
     retry: () => void load({ reset: true }),
   };
+}
+
+/** `createdAt` le plus récent d'une liste, au format ISO comparables. */
+function newestPostDate(posts: FeedPost[]): string | null {
+  let newest: string | null = null;
+  for (const post of posts) {
+    if (!newest || post.createdAt > newest) {
+      newest = post.createdAt;
+    }
+  }
+  return newest;
 }
 
 function restorePublication(items: FeedPost[], post: FeedPost, index: number): FeedPost[] {

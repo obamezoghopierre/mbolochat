@@ -46,7 +46,7 @@ interface AvatarProps {
   gender?: Gender | null;
   /** Les groupes gardent les initiales ; les utilisateurs ont la mascotte. */
   variant?: 'user' | 'group';
-  /** 'circle' (défaut) ou 'rounded' : carré à coins arrondis. */
+  /** 'rounded' (défaut) : carré à coins arrondis ; 'circle' : avatar rond. */
   shape?: 'circle' | 'rounded';
   /** Emoji d'identité d'un groupe, affiché quand il n'y a pas de photo. */
   emoji?: string | null;
@@ -65,7 +65,7 @@ export function Avatar({
   style,
   gender,
   variant = 'user',
-  shape = 'circle',
+  shape = 'rounded',
   emoji,
   color,
 }: AvatarProps) {

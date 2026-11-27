@@ -351,7 +351,6 @@ export function ImagePage({
                 name={author.displayName}
                 uri={resolveMediaUrl(author.avatarUrl)}
                 size={HEADER_AVATAR}
-                shape="circle"
               />
               <View style={styles.authorText}>
                 <View style={styles.authorLine}>
@@ -386,7 +385,7 @@ export function ImagePage({
                   accessibilityRole="button"
                   accessibilityLabel={`Suivre ${author.displayName}`}
                   style={({ pressed }) => pressed && styles.pressed}>
-                  <ThemedText style={[styles.followText, { color: tones.accent }]}>
+                  <ThemedText style={[styles.followText, { color: FeedSurface.follow }]}>
                     {fr.social.follow}
                   </ThemedText>
                 </Pressable>
@@ -401,6 +400,25 @@ export function ImagePage({
               </Pressable>
             </View>
           </View>
+          {caption ? (
+            <Pressable
+              onPress={() => setExpanded((value) => !value)}
+              disabled={!captionTruncated && !expanded}
+              accessibilityRole={captionTruncated || expanded ? 'button' : undefined}>
+              <ThemedText
+                numberOfLines={expanded ? undefined : CAPTION_LINES}
+                style={[styles.caption, { color: tones.text }]}>
+                {renderTokens(caption, [styles.caption, styles.token, { color: tones.accent }], {
+                  interactive: true,
+                })}
+              </ThemedText>
+              {captionTruncated && !expanded ? (
+                <ThemedText style={[styles.caption, { color: tones.textSoft }]}>
+                  {fr.social.seeMore}
+                </ThemedText>
+              ) : null}
+            </Pressable>
+          ) : null}
         </View>
 
         {/* Photo pleine largeur au ratio d'origine (borné). */}
@@ -482,7 +500,7 @@ export function ImagePage({
         </GestureDetector>
 
         {/* Pied : actions, points du carrousel au centre, « Aimé par »,
-            légende repliée, commentaires. Masqué sous la feuille de commentaires. */}
+            commentaires. Masqué sous la feuille de commentaires. */}
         {interactive ? (
           <View
             style={styles.footer}
@@ -525,28 +543,6 @@ export function ImagePage({
               </View>
             ) : null}
             <LikedByLine post={post} color={tones.text} />
-            {caption ? (
-              <Pressable
-                onPress={() => setExpanded((value) => !value)}
-                disabled={!captionTruncated && !expanded}
-                accessibilityRole={captionTruncated || expanded ? 'button' : undefined}>
-                <ThemedText
-                  numberOfLines={expanded ? undefined : CAPTION_LINES}
-                  style={[styles.caption, { color: tones.text }]}>
-                  <ThemedText style={[styles.caption, styles.captionAuthor, { color: tones.text }]}>
-                    {author.displayName}{' '}
-                  </ThemedText>
-                  {renderTokens(caption, [styles.caption, styles.token, { color: tones.accent }], {
-                    interactive: true,
-                  })}
-                </ThemedText>
-                {captionTruncated && !expanded ? (
-                  <ThemedText style={[styles.caption, { color: tones.textSoft }]}>
-                    {fr.social.seeMore}
-                  </ThemedText>
-                ) : null}
-              </Pressable>
-            ) : null}
             {post.counters.comments > 0 ? (
               <Pressable
                 onPress={actions.onOpenComments}
@@ -732,9 +728,6 @@ const styles = StyleSheet.create({
   },
   caption: {
     ...Type.caption,
-  },
-  captionAuthor: {
-    fontWeight: '700',
   },
   token: {
     fontWeight: '700',

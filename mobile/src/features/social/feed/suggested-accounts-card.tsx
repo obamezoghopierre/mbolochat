@@ -74,7 +74,7 @@ export function SuggestedAccountsCard({ token }: { token: string }) {
                 onPress={() => router.push(`/user/${account.id}`)}
                 accessibilityRole="button"
                 style={styles.identity}>
-                <Avatar name={account.displayName} uri={resolveMediaUrl(account.avatarUrl)} size={64} shape="circle" />
+                <Avatar name={account.displayName} uri={resolveMediaUrl(account.avatarUrl)} size={64} />
                 <View style={styles.nameRow}>
                   <ThemedText numberOfLines={1} style={[styles.name, { color: tones.text }]}>
                     {account.displayName}

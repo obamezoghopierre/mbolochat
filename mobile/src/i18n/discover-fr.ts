@@ -1,48 +1,15 @@
-type DiscoverSectionKey =
-  | 'nearbyFriends'
-  | 'popular'
-  | 'successful'
-  | 'trendingHashtags'
-  | 'suggestedAccounts';
-
+/**
+ * Libellés de l'onglet Découvrir (mosaïque Explorer + recherche).
+ * Les textes de recherche générique restent dans `fr.ts` (`social.discover*`).
+ */
 export const discoverFr = {
-  title: 'Découvrir',
-  nearbyTitle: 'Autour de toi',
-  popularTitle: 'Populaire sur MboloChat',
-  successfulTitle: 'À succès cette semaine',
-  hashtagsTitle: 'Tendances',
-  accountsTitle: 'Suggestions pour toi',
-  seeAll: 'Voir tout',
-  seeSection: (title: string) => `Voir toute la section ${title}`,
-  back: 'Retour à Découvrir',
-  refresh: 'Actualiser Découvrir',
+  /** Ferme le champ de recherche et revient à la grille. */
+  clearSearch: 'Effacer la recherche',
   retry: 'Réessayer',
-  loading: 'Chargement de Découvrir…',
+  sectionError: 'Impossible de charger la suite. Réessaie.',
+  offline: 'Hors ligne — la grille ne peut pas être actualisée.',
   errorTitle: 'Découvrir est indisponible',
   errorBody: 'Vérifie ta connexion, puis réessaie.',
-  offline: 'Hors ligne — les sélections ne peuvent pas être actualisées.',
-  emptyNearby: 'Aucune publication récente de tes amis dans ta ville.',
-  cityUnknown: 'Ajoute une ville à ton profil pour voir les publications de tes amis proches.',
-  emptyPopular: 'Aucune publication populaire pour le moment.',
-  emptySuccessful: 'Les publications les plus actives de la semaine apparaîtront ici.',
-  emptyHashtags: 'Aucune tendance pour le moment.',
-  emptyAccounts: 'Les suggestions de comptes apparaîtront ici.',
-  cardText: 'Publication texte',
-  video: 'Vidéo',
-  accountVerified: 'Compte vérifié',
-  follow: 'Suivre',
-  following: 'Abonné',
-  followLoading: 'Suivi…',
-  followError: 'Impossible de suivre ce compte. Réessaie.',
-  publicationStats: (likes: string, comments: string) => `${likes} J’aime · ${comments} commentaires`,
-  uses: (count: string) => `${count} publications`,
-  followers: (count: string) => `${count} abonnés`,
-  openHashtag: 'Ouvrir les publications du hashtag',
-  sectionTitles: {
-    nearbyFriends: 'Autour de toi',
-    popular: 'Populaire sur MboloChat',
-    successful: 'À succès cette semaine',
-    trendingHashtags: 'Tendances',
-    suggestedAccounts: 'Suggestions pour toi',
-  } satisfies Record<DiscoverSectionKey, string>,
+  emptyAllTitle: 'Rien à découvrir pour le moment',
+  emptyAllBody: 'Reviens plus tard : de nouvelles publications arriveront.',
 } as const;

@@ -46,6 +46,7 @@ export function AboutAccountSheet({
       return;
     }
     let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setProfile(null);
     setFailed(false);
     api
@@ -78,7 +79,6 @@ export function AboutAccountSheet({
               name={profile.displayName}
               uri={resolveMediaUrl(profile.avatarUrl)}
               size={76}
-              shape="circle"
             />
             <View style={styles.nameRow}>
               <ThemedText style={styles.name}>{profile.displayName}</ThemedText>

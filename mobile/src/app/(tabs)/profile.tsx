@@ -8,7 +8,7 @@ import { ProfileAction, ProfileHeader } from '@/components/profile-view';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Spacing } from '@/constants/theme';
+import { Spacing, TabBarHeight } from '@/constants/theme';
 import { RepostsSection } from '@/features/social/feed/reposts-section';
 import { useTheme } from '@/hooks/use-theme';
 import { fr } from '@/i18n/fr';
@@ -79,7 +79,10 @@ export default function ProfileScreen() {
   return (
     <ThemedView style={styles.container}>
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.four }]}
+        contentContainerStyle={[
+          styles.content,
+          { paddingBottom: TabBarHeight + insets.bottom + Spacing.four },
+        ]}
         keyboardShouldPersistTaps="handled">
         {profile ? (
           <ProfileHeader

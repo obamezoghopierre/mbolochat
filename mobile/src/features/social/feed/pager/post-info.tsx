@@ -79,7 +79,6 @@ export const PostInfoBlock = memo(function PostInfoBlock({
               name={post.author.displayName}
               uri={resolveMediaUrl(post.author.avatarUrl)}
               size={AUTHOR_AVATAR}
-              shape="circle"
             />
           )}
           <ThemedText numberOfLines={1} style={[styles.authorName, OnMediaShadow]}>
@@ -99,8 +98,10 @@ export const PostInfoBlock = memo(function PostInfoBlock({
             hitSlop={Spacing.four}
             accessibilityRole="button"
             accessibilityLabel={`Suivre ${post.author.displayName}`}
-            style={({ pressed }) => [styles.followOutline, pressed && styles.pressed]}>
-            <ThemedText style={[feedText.pill, styles.followText]}>{fr.social.follow}</ThemedText>
+            style={({ pressed }) => [styles.followTextButton, pressed && styles.pressed]}>
+            <ThemedText style={[feedText.pill, { color: FeedSurface.follow }]}>
+              {fr.social.follow}
+            </ThemedText>
           </Pressable>
         )}
       </View>
@@ -233,6 +234,11 @@ const styles = StyleSheet.create({
   },
   followText: {
     color: FeedSurface.onMedia,
+  },
+  // « Suivre » actif : texte jaune de la marque, comme les suggestions.
+  followTextButton: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half,
   },
   token: {
     ...feedText.caption,

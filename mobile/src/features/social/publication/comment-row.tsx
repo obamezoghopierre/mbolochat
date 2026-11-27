@@ -376,7 +376,6 @@ export function CommentRow({
         name={comment.author.displayName}
         uri={comment.author.avatarUrl}
         size={indented ? 26 : 34}
-        shape="circle"
       />
       <View style={styles.body}>
         {comment.pinned ? (

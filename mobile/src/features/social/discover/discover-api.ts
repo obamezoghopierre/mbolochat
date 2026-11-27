@@ -1,4 +1,4 @@
-import { ApiError, refreshAccessToken, type SuggestedAccount } from '@/lib/api';
+import { ApiError, refreshAccessToken } from '@/lib/api';
 import { API_URL } from '@/lib/config';
 import type { PublicationMedia, SocialAuthor } from '@/lib/types';
 
@@ -18,46 +18,47 @@ export interface DiscoverPublication {
   };
 }
 
-export interface DiscoverResponse {
-  cityKnown: boolean;
-  sections: {
-    nearbyFriends: DiscoverPublication[];
-    popular: DiscoverPublication[];
-    successful: DiscoverPublication[];
-    trendingHashtags: Array<{
-      id: string;
-      tag: string;
-      usageCount: number;
-      trendScore: number;
-    }>;
-    suggestedAccounts: SuggestedAccount[];
-  };
-}
+/** Sections paginables de `GET /discover/sections/:section`. */
+export type DiscoverPagedSection = 'popular' | 'successful' | 'breakout' | 'nearby-friends';
 
-export type DiscoverSectionKey = keyof DiscoverResponse['sections'];
+export interface DiscoverSectionPage {
+  items: DiscoverPublication[];
+  /** Curseur opaque de la page suivante, `null` en fin de liste. */
+  nextCursor: string | null;
+}
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
-async function requestDiscover(token: string, retried = false): Promise<DiscoverResponse> {
+async function requestSection(
+  token: string,
+  section: DiscoverPagedSection,
+  query: string,
+  retried = false,
+): Promise<DiscoverSectionPage> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response: Response;
 
   try {
-    response = await fetch(`${API_URL}/discover`, {
+    response = await fetch(`${API_URL}/discover/sections/${section}?${query}`, {
       headers: { Authorization: `Bearer ${token}` },
       credentials: 'include',
       signal: controller.signal,
     });
   } catch {
-    throw new ApiError(0, 'Impossible de charger Découvrir. Vérifie ta connexion.');
+    throw new ApiError(0, 'Impossible de charger la section. Vérifie ta connexion.');
   } finally {
     clearTimeout(timeout);
   }
 
   if (response.status === 401 && !retried) {
     try {
-      return await requestDiscover(await refreshAccessToken(), true);
+      return await requestSection(
+        await refreshAccessToken(),
+        section,
+        query,
+        true,
+      );
     } catch {
       // La réponse initiale reste la source de l'erreur ci-dessous.
     }
@@ -77,12 +78,22 @@ async function requestDiscover(token: string, retried = false): Promise<Discover
   }
 
   try {
-    return (await response.json()) as DiscoverResponse;
+    return (await response.json()) as DiscoverSectionPage;
   } catch {
-    throw new ApiError(0, 'Réponse Découvrir invalide. Réessaie.');
+    throw new ApiError(0, 'Réponse de section invalide. Réessaie.');
   }
 }
 
-export function loadDiscover(token: string): Promise<DiscoverResponse> {
-  return requestDiscover(token);
+/** Page d'une section Découvrir ; `cursor` absent pour la première page. */
+export function loadDiscoverSection(
+  token: string,
+  section: DiscoverPagedSection,
+  cursor?: string,
+  limit = 20,
+): Promise<DiscoverSectionPage> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cursor) {
+    params.set('cursor', cursor);
+  }
+  return requestSection(token, section, params.toString());
 }

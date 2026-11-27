@@ -62,6 +62,8 @@ const TABS: { id: TopTab; label: string }[] = [
 
 const DEFAULT_TAB: FeedTab = 'for-you';
 const NOTICE_DURATION = 2600;
+/** Largeur du voyant d'onglet : partagée entre le style et le centrage animé. */
+const TAB_UNDERLINE_WIDTH = 18;
 
 /**
  * Fil social plein écran :
@@ -82,6 +84,10 @@ export function FeedScreen() {
   // s'efface, comme sur Instagram.
   const [reelsOpen, setReelsOpen] = useState(false);
   const pager = useRef<ScrollViewInstance | null>(null);
+  // Position horizontale du pager, lue sur le thread UI : l'indicateur des
+  // onglets la suit en continu pendant le swipe (comme TikTok), au lieu de
+  // sauter à la fin de l'animation.
+  const pagerScrollX = useMemo(() => new Animated.Value(0), []);
   const navigation = useNavigation();
   // Démarrage : « Pour toi » charge seul ; Local et Abonnements suivent une
   // fois l'accueil affiché (première requête = celle qu'on regarde).
@@ -178,7 +184,8 @@ export function FeedScreen() {
 
   useEffect(() => {
     pager.current?.scrollTo({ x: initialIndex * width, animated: false });
-  }, [initialIndex, width]);
+    pagerScrollX.setValue(initialIndex * width);
+  }, [initialIndex, pagerScrollX, width]);
 
   // Barres toujours visibles quand on change de fil, ouvre les Reels ou les
   // commentaires, ou quitte l'écran : le masquage ne vaut que pendant le
@@ -214,7 +221,7 @@ export function FeedScreen() {
   return (
     <View style={styles.screen}>
       <ReAnimated.View style={[styles.screen, feedTransformStyle, feedRadiusStyle]}>
-      <ScrollView
+      <Animated.ScrollView
         ref={pager}
         testID="feed-horizontal-pager"
         horizontal
@@ -222,6 +229,10 @@ export function FeedScreen() {
         showsHorizontalScrollIndicator={false}
         bounces={false}
         directionalLockEnabled
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { x: pagerScrollX } } }],
+          { useNativeDriver: true },
+        )}
         onMomentumScrollEnd={onPagerSettled}
         style={styles.screen}>
         {TABS.map((entry) => (
@@ -247,13 +258,19 @@ export function FeedScreen() {
             )}
           </View>
         ))}
-      </ScrollView>
+      </Animated.ScrollView>
       </ReAnimated.View>
 
       {/* Barre du haut FIXE : posée une seule fois au-dessus du pager, elle ne
           glisse pas pendant le swipe horizontal. */}
       {commentsPost || reelsOpen ? null : (
-        <FeedTopBar tab={tab} onTabChange={changeTab} topInset={insets.top} />
+        <FeedTopBar
+          tab={tab}
+          onTabChange={changeTab}
+          topInset={insets.top}
+          pageWidth={width}
+          scrollX={pagerScrollX}
+        />
       )}
 
       {commentsPost ? (
@@ -272,10 +289,16 @@ function FeedTopBar({
   tab,
   onTabChange,
   topInset,
+  pageWidth,
+  scrollX,
 }: {
   tab: TopTab;
   onTabChange: (tab: TopTab) => void;
   topInset: number;
+  /** Largeur d'une page du pager : le scrollX est exprimé en multiples de page. */
+  pageWidth: number;
+  /** Position horizontale du pager, lue sur le thread UI par l'indicateur. */
+  scrollX: Animated.Value;
 }) {
   // Fil libre façon Instagram : bandeau opaque à la teinte des cartes, les
   // posts défilent dessous.
@@ -288,6 +311,101 @@ function FeedTopBar({
     transform: [{ translateY: -barHeight * feedChromeHidden.value }],
   }));
   const openCreate = useCallback(() => router.push('/create'), []);
+
+  // Rangée d'onglets scrollable (façon TikTok) : les libellés défilent et
+  // l'onglet actif se centre, mais « + » et la loupe restent fixes — ils sont
+  // HORS du ScrollView. `scrollEnabled` n'est vrai que si le contenu déborde :
+  // sinon le ScrollView capterait le pan horizontal et empêcherait le pager
+  // du fil de changer d'onglet (barre TikTok non-scrolle = gestes au feed).
+  const strip = useRef<ScrollViewInstance | null>(null);
+  const viewportW = useRef(0);
+  const contentW = useRef(0);
+  const tabLayouts = useRef(new Map<TopTab, { x: number; width: number }>());
+  const [canScroll, setCanScroll] = useState(false);
+  const [snapOffsets, setSnapOffsets] = useState<number[]>([]);
+  // Centres horizontaux des onglets, dans les coordonnées de la rangée :
+  // l'indicateur interpolé entre eux suit le pager en continu.
+  const [tabCenters, setTabCenters] = useState<number[] | null>(null);
+
+  const updateMetrics = useCallback(() => {
+    const vw = viewportW.current;
+    const cw = contentW.current;
+    if (!vw || !cw) {
+      return;
+    }
+    setCanScroll(cw > vw);
+    const maxX = Math.max(0, cw - vw);
+    const offsets = TABS.map((entry) => {
+      const layout = tabLayouts.current.get(entry.id);
+      if (!layout) {
+        return 0;
+      }
+      return Math.min(Math.max(layout.x + layout.width / 2 - vw / 2, 0), maxX);
+    }).sort((a, b) => a - b);
+    setSnapOffsets(offsets);
+  }, []);
+
+  // Centre l'onglet actif dans la bande visible, comme TikTok.
+  const centerTab = useCallback(
+    (id: TopTab, animated: boolean) => {
+      const vw = viewportW.current;
+      const layout = tabLayouts.current.get(id);
+      if (!vw || !layout) {
+        return;
+      }
+      const maxX = Math.max(0, contentW.current - vw);
+      const x = Math.min(Math.max(layout.x + layout.width / 2 - vw / 2, 0), maxX);
+      strip.current?.scrollTo({ x, animated });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    centerTab(tab, true);
+  }, [centerTab, tab]);
+
+  const onStripLayout = useCallback(
+    (event: { nativeEvent: { layout: { width: number } } }) => {
+      viewportW.current = event.nativeEvent.layout.width;
+      updateMetrics();
+      centerTab(tab, false);
+    },
+    [centerTab, tab, updateMetrics],
+  );
+
+  const onStripContentSize = useCallback(
+    (width: number) => {
+      contentW.current = width;
+      updateMetrics();
+    },
+    [updateMetrics],
+  );
+
+  const measureTab = useCallback((id: TopTab, x: number, width: number) => {
+    tabLayouts.current.set(id, { x, width });
+    if (tabLayouts.current.size === TABS.length) {
+      setTabCenters(
+        TABS.map((entry) => {
+          const layout = tabLayouts.current.get(entry.id);
+          return layout ? layout.x + layout.width / 2 : 0;
+        }),
+      );
+    }
+  }, []);
+
+  // Indicateur unique glissant d'un onglet à l'autre : scrollX du pager (en
+  // pixels) → position entre les centres mesurés. `clamp` évite le dépassement
+  // en cas de rebond.
+  const indicatorX = useMemo(() => {
+    if (!tabCenters || pageWidth <= 0) {
+      return null;
+    }
+    return scrollX.interpolate({
+      inputRange: TABS.map((_, index) => index * pageWidth),
+      outputRange: tabCenters.map((center) => center - TAB_UNDERLINE_WIDTH / 2),
+      extrapolate: 'clamp',
+    });
+  }, [pageWidth, scrollX, tabCenters]);
 
   return (
     <>
@@ -302,32 +420,63 @@ function FeedTopBar({
         style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
         pointerEvents="box-none">
         <View style={styles.topBarSide} />
-        <View style={styles.tabs} accessibilityRole="tablist">
-          {TABS.map((entry) => {
-            const active = entry.id === tab;
-            return (
-              <Pressable
-                key={entry.id}
-                onPress={() => onTabChange(entry.id)}
-                hitSlop={8}
-                accessibilityRole="tab"
-                accessibilityState={{ selected: active }}
-                style={styles.tab}>
-                <ThemedText
-                  numberOfLines={1}
-                  style={[
-                    styles.tabLabel,
-                    { color: tab === 'reels' ? FeedSurface.onMediaFaint : tones.textFaint },
-                    active && styles.tabLabelActive,
-                    tab === 'reels' && OnMediaShadow,
-                  ]}>
-                  {entry.label}
-                </ThemedText>
-                <View style={[styles.tabUnderline, active && styles.tabUnderlineActive]} />
-              </Pressable>
-            );
-          })}
-        </View>
+        <ScrollView
+          ref={strip}
+          horizontal
+          scrollEnabled={canScroll}
+          showsHorizontalScrollIndicator={false}
+          snapToOffsets={snapOffsets}
+          decelerationRate="fast"
+          onLayout={onStripLayout}
+          onContentSizeChange={onStripContentSize}
+          contentContainerStyle={styles.tabsContent}
+          style={styles.tabsScroll}>
+          <View style={styles.tabsRow} accessibilityRole="tablist">
+            {TABS.map((entry) => {
+              const active = entry.id === tab;
+              return (
+                <Pressable
+                  key={entry.id}
+                  onPress={() => onTabChange(entry.id)}
+                  onLayout={(event) =>
+                    measureTab(
+                      entry.id,
+                      event.nativeEvent.layout.x,
+                      event.nativeEvent.layout.width,
+                    )
+                  }
+                  hitSlop={8}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  style={styles.tab}>
+                  <ThemedText
+                    numberOfLines={1}
+                    style={[
+                      styles.tabLabel,
+                      { color: tab === 'reels' ? FeedSurface.onMediaFaint : tones.textFaint },
+                      active && styles.tabLabelActive,
+                      tab === 'reels' && OnMediaShadow,
+                    ]}>
+                    {entry.label}
+                  </ThemedText>
+                  <View style={styles.tabUnderline} />
+                </Pressable>
+              );
+            })}
+            {/* Voyant unique qui glisse avec le pager : il prend la place des
+                anciens underline par onglet, qui sautaient à la fin du swipe. */}
+            {indicatorX ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.tabUnderline,
+                  styles.tabIndicator,
+                  { transform: [{ translateX: indicatorX }] },
+                ]}
+              />
+            ) : null}
+          </View>
+        </ScrollView>
         <View style={[styles.topBarSide, styles.topBarSideRight]}>
           <Pressable
             onPress={openSearch}
@@ -521,7 +670,13 @@ function FeedSurfaceView({
       style={styles.container}
       onLayout={(event) => setScreenHeight(event.nativeEvent.layout.height)}>
       {feed.items.length === 0 ? (
-        <View style={styles.emptyFill}>
+        // Centré entre la barre du haut et la barre d'onglets flottante :
+        // sans ces marges, le bas (suggestions) passe sous la navigation.
+        <View
+          style={[
+            styles.emptyFill,
+            { paddingTop: topInset + FLOW_TOP_BAR, paddingBottom: barInset },
+          ]}>
           {renderEmpty(feed, tab)}
           {/* Fil vide (nouveau compte) : des comptes à suivre pour démarrer. */}
           {feed.status === 'ready' && token ? (
@@ -543,7 +698,7 @@ function FeedSurfaceView({
           onLoadMore={feed.loadMore}
           onRefresh={feed.refresh}
           onOpenReels={(post) => setReelsFrom(post.id)}
-          freshCount={feed.freshCount}
+          freshPosts={feed.freshPosts}
           onShowFresh={feed.refresh}
           actions={pagerActions}
         />
@@ -668,7 +823,16 @@ function ReelsTabView({
           actions={actions}
         />
       ) : (
-        <View style={styles.emptyFill}>{renderReelsEmpty(videos)}</View>
+        <View
+          style={[
+            styles.emptyFill,
+            {
+              paddingTop: insets.top + FLOW_TOP_BAR,
+              paddingBottom: TabBarHeight + insets.bottom,
+            },
+          ]}>
+          {renderReelsEmpty(videos)}
+        </View>
       )}
       {items.length > 0 && videos.loadingMore ? (
         <View style={[styles.footer, { bottom: TabBarHeight + insets.bottom + Spacing.five }]}>
@@ -778,7 +942,14 @@ function ReelsLayer({
         actions={actions}
       />
       {items.length === 0 ? (
-        <View style={[styles.emptyFill, styles.reelsEmpty]}>{renderReelsEmpty(videos)}</View>
+        <View
+          style={[
+            styles.emptyFill,
+            styles.reelsEmpty,
+            { paddingBottom: barInset },
+          ]}>
+          {renderReelsEmpty(videos)}
+        </View>
       ) : null}
       {items.length > 0 && videos.loadingMore ? (
         <View style={[styles.footer, { bottom: barInset + Spacing.five }]}>
@@ -986,22 +1157,31 @@ const styles = StyleSheet.create({
   topBarSideRight: {
     alignItems: 'flex-end',
   },
-  // `flexShrink` + gaps resserrés : avec une police agrandie, les onglets se
-  // compriment autour de la loupe au lieu de la recouvrir.
-  tabs: {
+  // Rangée d'onglets scrollable entre les deux boutons fixes : le ScrollView
+  // prend toute la place restante, les libellés dépassent et se coupent au
+  // bord sans jamais passer sous « + » ou la loupe.
+  tabsScroll: {
     flex: 1,
+    alignSelf: 'stretch',
+  },
+  // `flexGrow` + `justifyContent: 'center'` : les onglets restent centrés
+  // quand tout tient à l'écran, et le conteneur s'élargit pour défiler
+  // quand ça déborde (façon barre TikTok).
+  tabsContent: {
+    flexGrow: 1,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Spacing.two,
-    flexShrink: 1,
     paddingHorizontal: Spacing.one,
   },
   tab: {
     alignItems: 'center',
     paddingVertical: Spacing.one,
-    flexShrink: 1,
-    minWidth: 0,
   },
   tabLabel: {
     ...Type.body,
@@ -1016,11 +1196,18 @@ const styles = StyleSheet.create({
   tabUnderline: {
     marginTop: Spacing.one,
     height: 2,
-    width: 18,
+    width: TAB_UNDERLINE_WIDTH,
     borderRadius: 1,
     backgroundColor: 'transparent',
   },
-  tabUnderlineActive: {
+  // Voyant glissant : calqué sur la place de l'underline (même hauteur, même
+  // retrait bas) mais positionné en absolu dans la rangée et transléaté par
+  // l'animation du pager.
+  tabIndicator: {
+    position: 'absolute',
+    left: 0,
+    bottom: Spacing.one,
+    marginTop: 0,
     backgroundColor: TabBarSurface.active,
   },
   roundButton: {

@@ -53,7 +53,6 @@ export function LikedByLine({
           name={likedBy.displayName}
           uri={likedBy.avatarUrl}
           size={LIKED_BY_AVATAR}
-          shape="circle"
         />
       ) : null}
       <ThemedText

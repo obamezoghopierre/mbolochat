@@ -10,6 +10,10 @@ import {
   clearFeedSnapshots,
   hydrateFeedSnapshots,
 } from '@/features/social/feed/feed-snapshot';
+import {
+  clearDiscoverSnapshot,
+  hydrateDiscoverSnapshot,
+} from '@/features/social/discover/discover-snapshot';
 import { sweepSecureMedia } from '@/features/e2ee/mediaStore';
 import { resetE2eeInitState } from '@/features/e2ee/initState';
 import { getActiveE2eeUser, setActiveE2eeUser } from '@/features/e2ee/activeUser';
@@ -96,6 +100,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await cache.prepareForUser(cachedUser.id);
         // Fil de la dernière visite : prêt avant le premier rendu de l'accueil.
         await hydrateFeedSnapshots(cachedUser.id);
+        await hydrateDiscoverSnapshot(cachedUser.id);
         await activateLocalStore(cachedUser.id).catch(() => undefined);
         if (!cancelled) {
           setToken(getCachedAccessToken() ?? accessToken);
@@ -170,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               await bindE2eeUser(me.id);
               await cache.prepareForUser(me.id);
               await hydrateFeedSnapshots(me.id);
+              await hydrateDiscoverSnapshot(me.id);
               await activateLocalStore(me.id).catch(() => undefined);
               // `me` a pu rafraîchir le jeton : l'état doit garder le plus récent.
               setToken(getCachedAccessToken() ?? stored);
@@ -196,6 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 await bindE2eeUser(me.id);
                 await cache.prepareForUser(me.id);
                 await hydrateFeedSnapshots(me.id);
+                await hydrateDiscoverSnapshot(me.id);
                 await activateLocalStore(me.id).catch(() => undefined);
                 setToken(refreshed.accessToken);
                 setUser(me);
@@ -225,6 +232,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               await bindE2eeUser(me.id);
               await cache.prepareForUser(me.id);
               await hydrateFeedSnapshots(me.id);
+              await hydrateDiscoverSnapshot(me.id);
               await activateLocalStore(me.id).catch(() => undefined);
               setToken(refreshed.accessToken);
               setUser(me);
@@ -259,6 +267,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await bindE2eeUser(newUser.id);
         await cache.prepareForUser(newUser.id);
         await hydrateFeedSnapshots(newUser.id);
+        await hydrateDiscoverSnapshot(newUser.id);
         await activateLocalStore(newUser.id).catch(() => undefined);
         await storeTokens(newToken, newRefresh);
         await storeCachedUser(newUser);
@@ -313,6 +322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (user) {
           void purgeTextDrafts(user.id);
           void clearFeedSnapshots(user.id);
+          void clearDiscoverSnapshot(user.id);
         }
       },
     }),

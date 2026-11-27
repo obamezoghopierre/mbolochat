@@ -85,7 +85,6 @@ export const FeedActionRail = memo(function FeedActionRail({
               name={post.author.displayName}
               uri={resolveMediaUrl(post.author.avatarUrl)}
               size={RAIL_AVATAR}
-              shape="circle"
             />
           </View>
         </Pressable>

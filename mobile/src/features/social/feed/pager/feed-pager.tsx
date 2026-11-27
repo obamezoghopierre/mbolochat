@@ -39,9 +39,11 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
+import ReAnimated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ActionSheet, type SheetAction } from '@/components/action-sheet';
+import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
 import { FeedSurface, Radii, Spacing } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
@@ -49,7 +51,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { copyToClipboard } from '@/lib/clipboard';
 import { postDeepLink, postShareLink } from '@/lib/deep-link';
-import { trackFeedScroll } from '@/lib/feed-chrome';
+import { feedChromeHidden, trackFeedScroll } from '@/lib/feed-chrome';
 import { setFeedPageIsLight } from '@/lib/feed-page-tone';
 import { setPendingPostShare } from '@/lib/pending-post-share';
 import { sendPostToMany } from '@/lib/send-post-to-many';
@@ -98,6 +100,10 @@ export interface FeedPagerActions {
 }
 
 const TOAST_DURATION = 1600;
+/** Côté des avatars de la pastille « nouvelles publications ». */
+const FRESH_AVATAR_SIZE = 26;
+/** Publications d'auteurs distincts montrées dans la pastille. */
+const FRESH_AVATARS_SHOWN = 3;
 /** Position de la carte « Suggestions pour toi » dans le fil libre. */
 const SUGGESTIONS_AFTER = 4;
 /** Barre d'onglets du haut sous la zone sûre, dans le fil libre. */
@@ -138,7 +144,7 @@ export function FeedPager({
   mode = 'pager',
   initialIndex = 0,
   onOpenReels,
-  freshCount = 0,
+  freshPosts = [],
   onShowFresh,
 }: {
   items: FeedPost[];
@@ -175,9 +181,9 @@ export function FeedPager({
   initialIndex?: number;
   /** Fil libre : ouvre le plein écran Reels sur cette vidéo. */
   onOpenReels?: (post: FeedPost) => void;
-  /** Publications arrivées depuis le chargement (bouton « Nouvelles »). */
-  freshCount?: number;
-  /** Tap sur le bouton : remonter en haut et recharger. */
+  /** Publications arrivées depuis le chargement (pastille d'avatars). */
+  freshPosts?: FeedPost[];
+  /** Tap sur la pastille : remonter en haut et recharger. */
   onShowFresh?: () => void;
 }) {
   const listRef = useRef<FlatList<FeedPost> | null>(null);
@@ -447,11 +453,12 @@ export function FeedPager({
     () => setRepostTarget(null),
     // eslint-disable-next-line react-hooks/refs
     repostWithUndo,
+    user?.id ?? null,
   );
 
+  // Le constructeur est pur ; ses callbacks ne lisent des refs qu'au tap.
+  /* eslint-disable react-hooks/refs */
   const menuActions = useMemo<SheetAction[]>(
-    // Le constructeur est pur ; ses callbacks ne lisent des refs qu'au tap.
-    // eslint-disable-next-line react-hooks/refs
     () =>
       menuTarget
         ? postMenuActions(menuTarget, {
@@ -473,6 +480,7 @@ export function FeedPager({
         : [],
     [actions, copyLink, menuTarget, openProfile, setAuthorOption, togglePin, unfollowAuthor, user?.id],
   );
+  /* eslint-enable react-hooks/refs */
 
   if (height <= 0) {
     return <View style={styles.flex} />;
@@ -744,21 +752,17 @@ export function FeedPager({
         </View>
       ) : null}
 
-      {/* « Nouvelles publications » : pastille en haut du fil libre. */}
-      {flow && freshCount > 0 && onShowFresh ? (
-        <View style={[styles.freshWrap, { top: insets.top + FLOW_TOP_BAR + Spacing.two }]} pointerEvents="box-none">
-          <Pressable
-            onPress={() => {
-              listRef.current?.scrollToOffset({ offset: 0, animated: true });
-              onShowFresh();
-            }}
-            accessibilityRole="button"
-            style={({ pressed }) => [styles.freshPill, pressed && { opacity: 0.8 }]}>
-            <ThemedText type="small" style={styles.freshText}>
-              {fr.social.freshPosts(freshCount)}
-            </ThemedText>
-          </Pressable>
-        </View>
+      {/* « Nouvelles publications » : pile d'avatars d'auteurs en haut du
+          fil libre, façon X — le survol des photos suffit, le compte reste
+          dans le label d'accessibilité. */}
+      {flow && freshPosts.length > 0 && onShowFresh ? (
+        <FreshPostsPill
+          posts={freshPosts}
+          onPress={() => {
+            listRef.current?.scrollToOffset({ offset: 0, animated: true });
+            onShowFresh();
+          }}
+        />
       ) : null}
 
       {toast ? (
@@ -851,19 +855,24 @@ export function FeedPager({
                 shareTarget
                   ? [
                       // Republier / Citer en tête, comme la feuille Partager
-                      // de TikTok (le rail n'a plus de bouton dédié).
-                      {
-                        key: 'repost',
-                        label: shareTarget.viewer.reposted
-                          ? fr.social.unrepostLabel
-                          : fr.social.repostLabel,
-                        icon: Repeat2,
-                        onPress: () => {
-                          const target = shareTarget;
-                          setShareTarget(null);
-                          repostWithUndo(target);
-                        },
-                      },
+                      // de TikTok (le rail n'a plus de bouton dédié). Sa
+                      // propre publication ne peut pas être republiée (400).
+                      ...(shareTarget.author.id !== (user?.id ?? null)
+                        ? [
+                            {
+                              key: 'repost',
+                              label: shareTarget.viewer.reposted
+                                ? fr.social.unrepostLabel
+                                : fr.social.repostLabel,
+                              icon: Repeat2,
+                              onPress: () => {
+                                const target = shareTarget;
+                                setShareTarget(null);
+                                repostWithUndo(target);
+                              },
+                            },
+                          ]
+                        : []),
                       {
                         key: 'quote',
                         label: fr.social.quoteLabel,
@@ -1126,13 +1135,18 @@ function REPOST_ACTIONS(
   actions: FeedPagerActions,
   close: () => void,
   repost: (post: FeedPost) => void,
+  viewerId: string | null,
 ): SheetAction[] {
   if (!target) {
     return [];
   }
+  // L'API refuse la republication de sa propre publication (400) : on ne
+  // propose que « Citer », qui reste autorisée.
+  const canRepost = target.author.id !== viewerId;
   const reposted = target.viewer.reposted === true;
-  return [
-    {
+  const list: SheetAction[] = [];
+  if (canRepost) {
+    list.push({
       key: 'repost',
       label: reposted ? fr.social.unrepostLabel : fr.social.repostLabel,
       icon: Repeat2,
@@ -1141,17 +1155,18 @@ function REPOST_ACTIONS(
         close();
         repost(target);
       },
+    });
+  }
+  list.push({
+    key: 'quote',
+    label: fr.social.quoteLabel,
+    icon: Quote,
+    onPress: () => {
+      close();
+      router.push(`/quote/${target.id}`);
     },
-    {
-      key: 'quote',
-      label: fr.social.quoteLabel,
-      icon: Quote,
-      onPress: () => {
-        close();
-        router.push(`/quote/${target.id}`);
-      },
-    },
-  ];
+  });
+  return list;
 }
 
 /** Actions du sélecteur de réaction, construites pour la publication ciblée. */
@@ -1193,6 +1208,68 @@ function VideoPoster({ post, height }: { post: FeedPost; height: number }) {
       ) : (
         <View style={styles.surface} />
       )}
+    </View>
+  );
+}
+
+/** Auteurs distincts des publications fraîches, dans l'ordre d'arrivée. */
+function freshUniqueAuthors(posts: FeedPost[]): FeedPost['author'][] {
+  const seen = new Set<string>();
+  const authors: FeedPost['author'][] = [];
+  for (const post of posts) {
+    if (!seen.has(post.author.id)) {
+      seen.add(post.author.id);
+      authors.push(post.author);
+    }
+  }
+  return authors;
+}
+
+/**
+ * Pastille « nouvelles publications » du fil libre : pile d'avatars d'auteurs
+ * (les trois premiers, puis « +N » comme sur X), calque fixe sous la barre du
+ * haut. Elle monte de la hauteur de la barre quand celle-ci se cache au
+ * scroll et redescend quand elle revient — même valeur partagée
+ * `feedChromeHidden`, même timing, sur le thread UI.
+ */
+function FreshPostsPill({ posts, onPress }: { posts: FeedPost[]; onPress: () => void }) {
+  const insets = useSafeAreaInsets();
+  const slideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: -FLOW_TOP_BAR * feedChromeHidden.value }],
+  }));
+  const authors = freshUniqueAuthors(posts);
+  const shown = authors.slice(0, FRESH_AVATARS_SHOWN);
+  const overflow = authors.length - shown.length;
+  return (
+    <View
+      style={[styles.freshWrap, { top: insets.top + FLOW_TOP_BAR + Spacing.two }]}
+      pointerEvents="box-none">
+      <ReAnimated.View style={slideStyle}>
+        <Pressable
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={fr.social.freshPosts(posts.length)}
+          style={({ pressed }) => [styles.freshPile, pressed && { opacity: 0.8 }]}>
+          {shown.map((author, index) => (
+            <Avatar
+              key={author.id}
+              name={author.displayName}
+              uri={author.avatarUrl}
+              size={FRESH_AVATAR_SIZE}
+              style={index > 0 ? styles.freshAvatarOverlap : undefined}
+            />
+          ))}
+          {overflow > 0 ? (
+            <View
+              style={[styles.freshAvatarOverlap, styles.freshOverflow]}
+              accessibilityElementsHidden>
+              <ThemedText type="small" style={styles.freshOverflowText}>
+                {`+${overflow}`}
+              </ThemedText>
+            </View>
+          ) : null}
+        </Pressable>
+      </ReAnimated.View>
     </View>
   );
 }
@@ -1283,13 +1360,35 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   freshWrap: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
-  freshPill: {
-    backgroundColor: FeedSurface.follow,
+  // Pastille discrète sous la barre du haut : les avatars se chevauchent,
+  // le contour reprend la couleur de la pastille pour un rendu net.
+  freshPile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.8)',
     borderRadius: Radii.full,
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
   },
-  freshText: { color: FeedSurface.onFollow, fontWeight: '700' },
+  freshAvatarOverlap: {
+    marginLeft: -Spacing.two,
+    borderWidth: 2,
+    borderColor: 'rgba(0,0,0,0.8)',
+  },
+  // Bulle « +N » : même empreinte qu'un avatar, teinte accent comme l'ancienne
+  // pastille, pour signaler les auteurs au-delà des trois premiers.
+  freshOverflow: {
+    width: FRESH_AVATAR_SIZE,
+    height: FRESH_AVATAR_SIZE,
+    borderRadius: Radii.full,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: FeedSurface.follow,
+  },
+  freshOverflowText: {
+    color: FeedSurface.onFollow,
+    fontWeight: '700',
+  },
   toastRow: {
     flexDirection: 'row',
     alignItems: 'center',

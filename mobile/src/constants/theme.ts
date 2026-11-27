@@ -245,11 +245,14 @@ export const FeedMetrics = {
 
 /** Mesures des rails de l'écran Découvrir. */
 export const DiscoverMetrics = {
-  publicationCardWidth: 232,
-  publicationMediaHeight: 142,
   accountCardWidth: 188,
   accountAvatar: 48,
   searchHeight: 44,
+  /** Tuile-sujet de la section Tendances (badge + libellé + volume). */
+  topicTileWidth: 76,
+  topicBadgeSize: 56,
+  /** Gouttière entre deux vignettes de la mosaïque Découvrir (bord à bord). */
+  tileGutter: 2,
 } as const;
 
 /**
