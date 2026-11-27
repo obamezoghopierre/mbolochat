@@ -4,7 +4,7 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Bookmark, ChevronRight } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { ProfileAction, ProfileHeader } from '@/components/profile-view';
+import { ProfileAction, ProfileHeader, ProfileStats } from '@/components/profile-view';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -76,6 +76,11 @@ export default function ProfileScreen() {
     return <Redirect href="/login" />;
   }
 
+  const openConnections = (kind: 'followers' | 'following') => {
+    if (!profile) return;
+    router.push({ pathname: '/profile/connections/[id]', params: { id: profile.id, kind } });
+  };
+
   return (
     <ThemedView style={styles.container}>
       <ScrollView
@@ -93,7 +98,7 @@ export default function ProfileScreen() {
               !profile.birthdateSet ? (
                 <View style={styles.actions}>
                   <ProfileAction
-                    label="Renseigner ma date de naissance"
+                    label={fr.profile.birthdateOnce}
                     onPress={() => router.push('/profile/birthdate')}
                   />
                 </View>
@@ -102,7 +107,16 @@ export default function ProfileScreen() {
           />
         ) : null}
 
-        {/* Enregistrés : privé, comme Instagram (visible sur son propre profil). */}
+        {profile?.social ? (
+          <ProfileStats
+            followers={profile.social.followerCount}
+            following={profile.social.followingCount}
+            publications={profile.social.publicationCount}
+            onPressFollowers={() => openConnections('followers')}
+            onPressFollowing={() => openConnections('following')}
+          />
+        ) : null}
+
         <Pressable
           onPress={() => router.push('/saved')}
           accessibilityRole="button"

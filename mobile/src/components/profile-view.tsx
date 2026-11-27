@@ -4,8 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Radii, Scrim, Spacing } from '@/constants/theme';
+import { Radii, Scrim, Spacing, Type } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { fr } from '@/i18n/fr';
 import type { UserProfile } from '@/lib/types';
@@ -23,7 +22,7 @@ interface ProfileHeaderProps {
   avatarBusy?: boolean;
 }
 
-/** En-tête sobre : avatar, nom, @pseudo, ville · âge, bio, actions. */
+/** En-tête partagé : avatar, identité, informations et actions. */
 export function ProfileHeader({
   profile,
   actions,
@@ -68,7 +67,7 @@ export function ProfileHeader({
           {onPressEdit ? (
             <Pressable
               onPress={onPressEdit}
-              hitSlop={8}
+              hitSlop={Spacing.one}
               accessibilityRole="button"
               accessibilityLabel={fr.profile.edit}>
               <Pencil size={20} color={theme.textSecondary} />
@@ -96,6 +95,51 @@ export function ProfileHeader({
   );
 }
 
+export function ProfileStats({
+  followers,
+  following,
+  publications,
+  onPressFollowers,
+  onPressFollowing,
+}: {
+  followers: number;
+  following: number;
+  publications: number;
+  onPressFollowers?: () => void;
+  onPressFollowing?: () => void;
+}) {
+  return (
+    <View style={styles.stats} accessibilityRole="summary">
+      <Stat label={fr.social.followers} value={followers} onPress={onPressFollowers} />
+      <Stat label={fr.social.following} value={following} onPress={onPressFollowing} />
+      <Stat label={fr.social.publications} value={publications} />
+    </View>
+  );
+}
+
+function Stat({ label, value, onPress }: { label: string; value: number; onPress?: () => void }) {
+  const content = (
+    <>
+      <ThemedText style={styles.statValue}>{value}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+    </>
+  );
+  return onPress ? (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${value} ${label}`}
+      style={({ pressed }) => [styles.stat, pressed && { opacity: 0.7 }]}
+    >
+      {content}
+    </Pressable>
+  ) : (
+    <View style={styles.stat}>{content}</View>
+  );
+}
+
 interface ProfileActionProps {
   label: string;
   onPress: () => void;
@@ -119,6 +163,7 @@ export function ProfileAction({
     <Pressable
       onPress={onPress}
       disabled={loading}
+      accessibilityRole="button"
       style={({ pressed }) => [
         styles.action,
         {
@@ -141,28 +186,6 @@ export function ProfileAction({
   );
 }
 
-interface PhotoGridProps {
-  photos: { id: string; url: string }[];
-}
-
-/** Grille de photos ; rien du tout quand il n'y a rien à montrer. */
-export function PhotoGrid({ photos }: PhotoGridProps) {
-  const theme = useTheme();
-  if (photos.length === 0) {
-    return null;
-  }
-  return (
-    <View style={styles.grid}>
-      {photos.map((photo) => (
-        <ThemedView
-          key={photo.id}
-          style={[styles.gridItem, { backgroundColor: theme.backgroundElement }]}
-        />
-      ))}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
@@ -170,7 +193,7 @@ const styles = StyleSheet.create({
     gap: Spacing.four,
     paddingTop: Spacing.two,
   },
-  identity: { flex: 1, alignItems: 'flex-start', gap: 2, minWidth: 0 },
+  identity: { flex: 1, alignItems: 'flex-start', gap: Spacing.half, minWidth: 0 },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -178,17 +201,8 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     maxWidth: '100%',
   },
-  name: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-  bio: {
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: Spacing.one,
-  },
+  name: { ...Type.screenTitle, flexShrink: 1 },
+  bio: { ...Type.body, marginTop: Spacing.one },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -196,17 +210,13 @@ const styles = StyleSheet.create({
     marginTop: Spacing.two,
   },
   action: {
-    minHeight: 40,
+    minHeight: Spacing.five + Spacing.two,
     paddingHorizontal: Spacing.four,
     borderRadius: Radii.md,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  actionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    lineHeight: 18,
-  },
+  actionLabel: { ...Type.caption },
   avatarOverlay: {
     position: 'absolute',
     top: 0,
@@ -217,13 +227,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: Scrim,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 2,
-  },
-  gridItem: {
-    width: '33.33%',
-    aspectRatio: 1,
-  },
+  stats: { flexDirection: 'row', gap: Spacing.three },
+  stat: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: Spacing.half, minHeight: Spacing.five },
+  statValue: { ...Type.sectionTitle },
 });
