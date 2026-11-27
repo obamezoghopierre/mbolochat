@@ -1,156 +1,155 @@
-import { router } from 'expo-router';
 import { Compass, Images, Play } from 'lucide-react-native';
 import { Image } from 'expo-image';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
-  FlatList,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   RefreshControl,
+  ScrollView,
+  type ScrollViewInstance,
   StyleSheet,
-  useWindowDimensions,
   View,
+  useWindowDimensions,
 } from 'react-native';
 
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { DiscoverMetrics, MediaSurface, Radii, Spacing } from '@/constants/theme';
-import {
-  loadDiscoverSection,
-  type DiscoverPublication,
-  type DiscoverSectionPage,
-} from '@/features/social/discover/discover-api';
-import { saveDiscoverSnapshot } from '@/features/social/discover/discover-snapshot';
 import { useTheme } from '@/hooks/use-theme';
 import { discoverFr } from '@/i18n/discover-fr';
 import { fr } from '@/i18n/fr';
 import { formatCompactCount } from '@/lib/format';
 import { resolveMediaUrl } from '@/lib/media-url';
+import type { FeedPost } from '@/lib/types';
+import { buildExploreRows } from './discover-feed-model';
 
 /** Colonnes de la mosaïque, comme la grille Explorer. */
 const COLUMNS = 3;
-/** Vignettes par page ; l'API borne à 50. */
-const PAGE_SIZE = 30;
 
-/** Largeur d'une vignette : largeur écran moins les gouttières, divisée par 3. */
-function useTileSize(): number {
-  const { width } = useWindowDimensions();
-  return (width - (COLUMNS - 1) * DiscoverMetrics.tileGutter) / COLUMNS;
-}
-
-/** Durée « m:ss » d'une vidéo, pour le badge de la vignette. */
-function formatTileDuration(durationMs: number): string {
-  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+/**
+ * Grille Découvrir présentationnelle : une mosaïque plein écran de contenus
+ * média, sans rail ni section.
+ *
+ * L'état (liste, pagination, rafraîchissement) est géré par
+ * `useDiscoverFeed` au niveau de l'écran, pour que la grille et le
+ * visionneuse partagent la même liste : une interaction dans le
+ * visionneuse met à jour la vignette au retour.
+ */
+export interface DiscoverExploreGridHandle {
+  /** Défile jusqu'à la vignette d'index (retour après le visionneuse). */
+  scrollToIndex: (index: number) => void;
 }
 
 interface DiscoverExploreGridProps {
-  token: string;
-  /** Compte courant : clé de l'instantané local. */
-  userId: string | null;
-  /** Première page mise en cache, affichée avant le réseau. */
-  initialPage: DiscoverSectionPage | null;
+  items: FeedPost[];
+  status: 'loading' | 'ready' | 'error';
+  refreshing: boolean;
+  loadingMore: boolean;
+  moreError: boolean;
   /** Marge basse à réserver (barre d'onglets + zone sûre). */
   bottomInset: number;
+  /** Ouvre le visionneuse sur la publication et sa position. */
+  onTilePress: (post: FeedPost, index: number) => void;
+  onRefresh: () => void;
+  onLoadMore: () => void;
+  onRetryFirst: () => void;
 }
 
 /**
- * Mosaïque plein écran de Découvrir : une seule grille continue de contenus
- * média (jamais de publications texte, filtrées côté API), sans titre de
- * section ni « Voir tout ». Le tap ouvre la publication ; le défilement
- * charge la page suivante (curseur de session figé côté serveur).
+ * Mosaïque plein écran de Découvrir, comme la grille Explorer d'Instagram :
+ * rangées de trois vignettes aux hauteurs variées (dont des rangées
+ * doubles), défilement continu, pas de titre de section ni « Voir tout ».
  */
-export function DiscoverExploreGrid({
-  token,
-  userId,
-  initialPage,
-  bottomInset,
-}: DiscoverExploreGridProps) {
+export const DiscoverExploreGrid = forwardRef<
+  DiscoverExploreGridHandle,
+  DiscoverExploreGridProps
+>(function DiscoverExploreGrid(
+  {
+    items,
+    status,
+    refreshing,
+    loadingMore,
+    moreError,
+    bottomInset,
+    onTilePress,
+    onRefresh,
+    onLoadMore,
+    onRetryFirst,
+  },
+  ref,
+) {
   const theme = useTheme();
-  const tileSize = useTileSize();
+  const { width, height: viewportHeight } = useWindowDimensions();
+  // Largeur d'une vignette : largeur écran moins les gouttières, divisée par 3.
+  const tileWidth =
+    (width - (COLUMNS - 1) * DiscoverMetrics.tileGutter) / COLUMNS;
+  const rows = buildExploreRows(items, tileWidth);
 
-  const [items, setItems] = useState<DiscoverPublication[]>(
-    initialPage?.items ?? [],
-  );
-  const [cursor, setCursor] = useState<string | null>(
-    initialPage?.nextCursor ?? null,
-  );
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
-    initialPage ? 'ready' : 'loading',
-  );
-  const [refreshing, setRefreshing] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [moreError, setMoreError] = useState(false);
-  // Identifiant de requête : la réponse la plus récente gagne (un
-  // rafraîchissement pendant un « charger plus » ne mélange pas les pages).
-  const requestSeq = useRef(0);
+  // Marge de déclenchement du « charger plus » avant la fin du contenu.
+  const END_REACH_MARGIN = 700;
+  const scrollRef = useRef<ScrollViewInstance | null>(null);
+  // Hauteur du contenu, pour déclencher le « charger plus » avant la fin.
+  const [contentHeight, setContentHeight] = useState(0);
 
-  // Aucun setState synchrone ici : seuls les callbacks réseau en posent.
-  const requestFirst = useCallback(() => {
-    const seq = ++requestSeq.current;
-    return loadDiscoverSection(token, 'popular', undefined, PAGE_SIZE)
-      .then((page) => {
-        if (seq !== requestSeq.current) {
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToIndex: (index: number) => {
+        const row = Math.floor(index / COLUMNS);
+        if (row <= 0) {
+          scrollRef.current?.scrollTo({ y: 0, animated: false });
           return;
         }
-        setItems(page.items);
-        setCursor(page.nextCursor);
-        setMoreError(false);
-        setStatus('ready');
-        saveDiscoverSnapshot(userId, page);
-      })
-      .catch(() => {
-        if (seq === requestSeq.current) {
-          // Une grille déjà affichée (instantané) reste préférable à l'erreur.
-          setStatus((current) => (current === 'ready' ? current : 'error'));
-        }
-      });
-  }, [token, userId]);
+        // Hauteur cumulée des rangées précédentes + gouttières.
+        const offset =
+          rows
+            .slice(0, row)
+            .reduce((total, entry) => total + entry.height, 0) +
+          row * DiscoverMetrics.tileGutter;
+        scrollRef.current?.scrollTo({ y: Math.max(0, offset), animated: false });
+      },
+    }),
+    [rows],
+  );
 
-  useEffect(() => {
-    void requestFirst();
-  }, [requestFirst]);
-
-  const refresh = () => {
-    setRefreshing(true);
-    void requestFirst().finally(() => setRefreshing(false));
-  };
-
-  const retryFirst = () => {
-    setStatus('loading');
-    void requestFirst();
-  };
-
-  const loadMore = async () => {
-    if (!cursor || loadingMore || refreshing) {
-      return;
-    }
-    const seq = requestSeq.current;
-    setLoadingMore(true);
-    setMoreError(false);
-    try {
-      const page = await loadDiscoverSection(token, 'popular', cursor, PAGE_SIZE);
-      if (seq !== requestSeq.current) {
+  const onScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, layoutMeasurement } = event.nativeEvent;
+      if (contentHeight === 0) {
         return;
       }
-      setItems((current) => {
-        const known = new Set(current.map((item) => item.id));
-        return [...current, ...page.items.filter((item) => !known.has(item.id))];
-      });
-      setCursor(page.nextCursor);
-    } catch {
-      if (seq === requestSeq.current) {
-        setMoreError(true);
+      if (
+        contentOffset.y + layoutMeasurement.height >=
+        contentHeight - END_REACH_MARGIN
+      ) {
+        onLoadMore();
       }
-    } finally {
-      if (seq === requestSeq.current) {
-        setLoadingMore(false);
-      }
+    },
+    [contentHeight, onLoadMore],
+  );
+
+  // Contenu plus court que l'écran : on charge la page suivante d'emblée,
+  // sinon la fin du défilement n'est jamais atteinte.
+  useEffect(() => {
+    if (
+      contentHeight > 0 &&
+      contentHeight <= viewportHeight &&
+      status === 'ready' &&
+      items.length > 0
+    ) {
+      onLoadMore();
     }
-  };
+  }, [contentHeight, viewportHeight, status, items.length, onLoadMore]);
 
   if (status === 'error') {
     return (
@@ -162,7 +161,7 @@ export function DiscoverExploreGrid({
         />
         <Pressable
           accessibilityRole="button"
-          onPress={retryFirst}
+          onPress={onRetryFirst}
           style={styles.retryButton}>
           <ThemedText type="smallBold" style={{ color: theme.accent }}>
             {discoverFr.retry}
@@ -173,88 +172,105 @@ export function DiscoverExploreGrid({
   }
 
   return (
-    <FlatList
-      data={items}
-      keyExtractor={(item) => item.id}
-      numColumns={COLUMNS}
-      columnWrapperStyle={styles.row}
-      contentContainerStyle={{ paddingBottom: bottomInset, gap: DiscoverMetrics.tileGutter }}
+    <ScrollView
+      ref={scrollRef}
+      contentContainerStyle={[
+        styles.content,
+        { paddingBottom: bottomInset, gap: DiscoverMetrics.tileGutter },
+      ]}
       showsVerticalScrollIndicator={false}
-      initialNumToRender={COLUMNS * 4}
-      maxToRenderPerBatch={COLUMNS * 4}
-      windowSize={9}
-      onEndReached={() => void loadMore()}
-      onEndReachedThreshold={0.7}
+      onScroll={onScroll}
+      onContentSizeChange={(_width, nextHeight) => setContentHeight(nextHeight)}
+      scrollEventThrottle={32}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
-          onRefresh={refresh}
+          onRefresh={onRefresh}
           tintColor={theme.accent}
           colors={[theme.accent]}
         />
-      }
-      ListEmptyComponent={
-        status === 'loading' ? <GridSkeleton tileSize={tileSize} /> : (
-          <EmptyState
-            icon={Compass}
-            title={discoverFr.emptyAllTitle}
-            description={discoverFr.emptyAllBody}
-          />
-        )
-      }
-      ListFooterComponent={
-        loadingMore ? (
+      }>
+      {status === 'loading' && items.length === 0 ? (
+        <GridSkeleton tileWidth={tileWidth} />
+      ) : (
+        rows.map((row, rowIndex) => (
+          <View key={row.key} style={styles.row}>
+            {row.items.map((post, position) => (
+              <PublicationTile
+                key={post.id}
+                publication={post}
+                width={tileWidth}
+                height={row.height}
+                onPress={() => onTilePress(post, rowIndex * COLUMNS + position)}
+              />
+            ))}
+          </View>
+        ))
+      )}
+
+      {status === 'ready' && items.length === 0 ? (
+        <EmptyState
+          icon={Compass}
+          title={discoverFr.emptyAllTitle}
+          description={discoverFr.emptyAllBody}
+        />
+      ) : null}
+
+      <View style={styles.sentinel}>
+        {loadingMore ? (
           <View style={styles.footer}>
             <ActivityIndicator color={theme.accent} />
           </View>
         ) : moreError ? (
           <Pressable
             accessibilityRole="button"
-            onPress={() => void loadMore()}
+            onPress={onLoadMore}
             style={styles.footer}>
             <ThemedText type="smallBold" style={{ color: theme.accent }}>
               {discoverFr.sectionError}
             </ThemedText>
           </Pressable>
-        ) : undefined
-      }
-      renderItem={({ item }) => (
-        <PublicationTile publication={item} size={tileSize} />
-      )}
-    />
+        ) : null}
+      </View>
+    </ScrollView>
   );
-}
+});
 
 /**
- * Vignette : couverture du média bord à bord, badges discrets (vidéo, album,
- * vues) posés sur l'image. Toutes les métadonnées restent dans la publication.
+ * Vignette : couverture du média bord à bord, badges discrets (vidéo,
+ * album, vues) posés sur l'image. Toutes les métadonnées restent dans la
+ * publication, comme sur la grille Explorer.
  */
 function PublicationTile({
   publication,
-  size,
+  width,
+  height,
+  onPress,
 }: {
-  publication: DiscoverPublication;
-  size: number;
+  publication: FeedPost;
+  width: number;
+  height: number;
+  onPress: () => void;
 }) {
   const theme = useTheme();
-  const cover = publication.media[0];
-  const imageUrl = cover?.posterUrl ?? cover?.lowUrl ?? cover?.url;
+  const cover = publication.media?.[0];
+  const imageUrl = cover?.posterUrl ?? cover?.lowUrl ?? cover?.url ?? null;
   const imageUri = imageUrl ? resolveMediaUrl(imageUrl) : null;
   const isVideo = publication.kind === 'reel' || cover?.kind === 'video';
   const durationMs = cover?.kind === 'video' ? cover.durationMs : null;
   const views = publication.kind === 'reel' ? publication.counters.views : 0;
-  const multiMedia = publication.media.length > 1;
+  const multiMedia = (publication.media?.length ?? 0) > 1;
 
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={fr.social.readPublication(publication.author.displayName)}
-      onPress={() => router.push(`/post/${publication.id}`)}
+      onPress={onPress}
       style={[
         styles.tile,
         {
-          width: size,
-          height: size,
+          width,
+          height,
           backgroundColor: theme.backgroundSelected,
         },
       ]}>
@@ -290,7 +306,12 @@ function PublicationTile({
         </View>
       ) : null}
       {views > 0 ? (
-        <View style={[styles.tileBadge, styles.tileBottomLeft, { backgroundColor: MediaSurface.overlay }]}>
+        <View
+          style={[
+            styles.tileBadge,
+            styles.tileBottomLeft,
+            { backgroundColor: MediaSurface.overlay },
+          ]}>
           <ThemedText type="small" style={{ color: MediaSurface.onSurface }}>
             {formatCompactCount(views)}
           </ThemedText>
@@ -300,8 +321,16 @@ function PublicationTile({
   );
 }
 
+/** Durée « m:ss » d'une vidéo, pour le badge de la vignette. */
+function formatTileDuration(durationMs: number): string {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 /** Grille fantôme du premier chargement (pas d'instantané). */
-function GridSkeleton({ tileSize }: { tileSize: number }) {
+function GridSkeleton({ tileWidth }: { tileWidth: number }) {
   const theme = useTheme();
   return (
     <View style={styles.skeleton}>
@@ -311,8 +340,8 @@ function GridSkeleton({ tileSize }: { tileSize: number }) {
             <View
               key={cell}
               style={{
-                width: tileSize,
-                height: tileSize,
+                width: tileWidth,
+                height: tileWidth,
                 backgroundColor: theme.backgroundSelected,
               }}
             />
@@ -324,12 +353,16 @@ function GridSkeleton({ tileSize }: { tileSize: number }) {
 }
 
 const styles = StyleSheet.create({
+  content: {
+    paddingHorizontal: Spacing.one,
+  },
   row: {
     flexDirection: 'row',
     gap: DiscoverMetrics.tileGutter,
   },
   tile: {
     overflow: 'hidden',
+    borderRadius: Radii.sm,
   },
   tileFallback: {
     position: 'absolute',
@@ -360,6 +393,7 @@ const styles = StyleSheet.create({
   },
   skeleton: {
     gap: DiscoverMetrics.tileGutter,
+    paddingVertical: Spacing.one,
   },
   centeredBlock: {
     flex: 1,
@@ -368,12 +402,15 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingHorizontal: Spacing.three,
   },
+  retryButton: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+  },
   footer: {
     alignItems: 'center',
     paddingVertical: Spacing.four,
   },
-  retryButton: {
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.two,
+  sentinel: {
+    minHeight: 1,
   },
 });

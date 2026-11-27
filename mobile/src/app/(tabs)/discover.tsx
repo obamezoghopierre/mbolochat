@@ -1,4 +1,4 @@
-import { Redirect, router, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Compass, Search, X } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -18,8 +18,13 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Radii, Spacing, TabBarHeight, Type } from '@/constants/theme';
-import { DiscoverExploreGrid } from '@/features/social/discover/discover-explore-grid';
+import { DiscoverViewer } from '@/features/social/discover/discover-viewer';
+import {
+  DiscoverExploreGrid,
+  type DiscoverExploreGridHandle,
+} from '@/features/social/discover/discover-explore-grid';
 import { readDiscoverSnapshot } from '@/features/social/discover/discover-snapshot';
+import { useDiscoverFeed } from '@/features/social/discover/use-discover-feed';
 import {
   normalizeSearchQuery,
   totalResults,
@@ -30,13 +35,17 @@ import { fr } from '@/i18n/fr';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { formatListTimestamp } from '@/lib/format';
-import type { SearchResult } from '@/lib/types';
+import type { FeedPost, SearchResult } from '@/lib/types';
 
 /**
  * Découvrir : mosaïque Explorer plein écran (une seule grille continue, sans
  * rail ni section), et recherche unifiée (comptes, publications, hashtags) dès
  * qu'une requête est saisie. La saisie est débouncée et la réponse la plus
  * récente gagne, pour éviter qu'une ancienne requête écrase la nouvelle.
+ *
+ * La grille et le visionneuse plein écran partagent une seule liste
+ * (`useDiscoverFeed`) : une réaction, un signet ou une republication pris
+ * dans le visionneuse met à jour la vignette au retour.
  */
 export default function DiscoverScreen() {
   const { token, loading, user } = useAuth();
@@ -69,6 +78,52 @@ export default function DiscoverScreen() {
     () => (user?.id ? readDiscoverSnapshot(user.id) : null),
     [user],
   );
+
+  // L'API de la grille ne renvoie pas l'état du lecteur : la grille démarre
+  // sans réaction ni signet, et le visionneuse récupère le détail exact de
+  // la publication ouverte.
+  const hydrate = useMemo(
+    () => ({ viewer: { reaction: null, followingAuthor: false } }),
+    [],
+  );
+
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+    const timer = setTimeout(() => setNotice(null), 2600);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const feed = useDiscoverFeed({
+    token: token ?? '',
+    initialPage,
+    hydrate,
+    onError: setNotice,
+  });
+
+  const gridRef = useRef<DiscoverExploreGridHandle | null>(null);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const navigation = useNavigation();
+
+  // Visionneuse plein écran : la barre d'onglets se masque, comme les
+  // Reels du fil — le média prend toute la hauteur de l'écran.
+  useEffect(() => {
+    const hidden = viewerIndex !== null;
+    navigation.setOptions({
+      tabBarHidden: hidden,
+      // Le conteneur du tab bar doit aussi se rétracter, sinon React
+      // Navigation réserve 58 px vides sous le média.
+      tabBarStyle: hidden ? { display: 'none', height: 0 } : undefined,
+    } as never);
+    return () => {
+      navigation.setOptions({
+        tabBarHidden: false,
+        tabBarStyle: undefined,
+      } as never);
+    };
+  }, [navigation, viewerIndex]);
 
   useEffect(() => {
     if (!token) {
@@ -112,6 +167,16 @@ export default function DiscoverScreen() {
     setReloadKey((value) => value + 1);
   };
 
+  const closeViewer = () => {
+    // Retour à la vignette ouverte, comme un retour d'écran publication.
+    setViewerIndex((current) => {
+      if (current !== null) {
+        gridRef.current?.scrollToIndex(current);
+      }
+      return null;
+    });
+  };
+
   if (loading) {
     return <ThemedView style={{ flex: 1 }} />;
   }
@@ -150,6 +215,14 @@ export default function DiscoverScreen() {
       {offline ? (
         <View style={[styles.offlineBanner, { backgroundColor: theme.backgroundSelected }]}>
           <ThemedText type="small" themeColor="textSecondary">{discoverFr.offline}</ThemedText>
+        </View>
+      ) : null}
+
+      {notice ? (
+        <View style={[styles.notice, { backgroundColor: theme.backgroundSelected }]}>
+          <ThemedText type="small" style={{ color: theme.text }}>
+            {notice}
+          </ThemedText>
         </View>
       ) : null}
 
@@ -260,12 +333,31 @@ export default function DiscoverScreen() {
         </ScrollView>
       ) : (
         <DiscoverExploreGrid
-          token={token}
-          userId={user?.id ?? null}
-          initialPage={initialPage}
+          ref={gridRef}
+          items={feed.items}
+          status={feed.status}
+          refreshing={feed.refreshing}
+          loadingMore={feed.loadingMore}
+          moreError={feed.moreError}
           bottomInset={TabBarHeight + insets.bottom + Spacing.three}
+          onTilePress={(post: FeedPost, index: number) => setViewerIndex(index)}
+          onRefresh={feed.refresh}
+          onLoadMore={feed.loadMore}
+          onRetryFirst={feed.retryFirst}
         />
       )}
+
+      {viewerIndex !== null ? (
+        <DiscoverViewer
+          items={feed.items}
+          initialIndex={viewerIndex}
+          hasMore={feed.cursor !== null}
+          onLoadMore={feed.loadMore}
+          onRefresh={feed.refresh}
+          actions={feed.actions}
+          onClose={closeViewer}
+        />
+      ) : null}
     </ThemedView>
   );
 }
@@ -295,6 +387,13 @@ const styles = StyleSheet.create({
     padding: Spacing.one,
   },
   offlineBanner: {
+    marginHorizontal: Spacing.three,
+    marginBottom: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radii.sm,
+  },
+  notice: {
     marginHorizontal: Spacing.three,
     marginBottom: Spacing.two,
     paddingHorizontal: Spacing.three,

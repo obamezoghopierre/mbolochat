@@ -903,6 +903,10 @@ export const fr = {
     muteAuthorDone: 'Auteur masqué dans ton fil',
     endOfFeed: 'Tu es à jour',
     reelsClose: 'Fermer les Reels',
+    /** Visionneuse plein écran de la grille Découvrir. */
+    viewerClose: 'Fermer la publication',
+    viewerEmpty: 'Aucune publication à afficher.',
+    viewerLoadingMore: 'Chargement des publications suivantes…',
     reactionPickerTitle: 'Réagir',
     offlineNotice: 'Hors ligne : le fil reprendra à la reconnexion',
     videoErrorTitle: 'Cette vidéo n’a pas pu être lue',

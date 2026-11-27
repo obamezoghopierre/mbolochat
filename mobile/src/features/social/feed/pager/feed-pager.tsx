@@ -987,9 +987,10 @@ const TOP_SCRIM_COLORS = Array.from({ length: TOP_SCRIM_BANDS }, (_, index) => {
 /**
  * Dégradé haut posé une seule fois au-dessus du pager : les onglets restent
  * lisibles sur n'importe quelle vidéo, sans bandeau opaque qui casserait le
- * plein écran.
+ * plein écran. Exporté pour les surcouches plein écran qui ajoutent une
+ * barre au-dessus du pager (visionneuse de la grille Découvrir).
  */
-function TopScrim() {
+export function TopScrim() {
   return (
     <View pointerEvents="none" style={styles.topScrim}>
       {TOP_SCRIM_COLORS.map((color) => (
