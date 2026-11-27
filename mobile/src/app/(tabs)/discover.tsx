@@ -1,6 +1,14 @@
 import { Redirect, router, useLocalSearchParams, useNavigation } from 'expo-router';
-import { Compass, Search, X } from 'lucide-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Bookmark,
+  Compass,
+  Flag,
+  EyeOff,
+  Repeat2,
+  Search,
+  X,
+} from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -12,6 +20,7 @@ import {
 import { useNetworkState } from 'expo-network';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ActionSheet } from '@/components/action-sheet';
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
@@ -35,6 +44,7 @@ import {
   saveSearchHistory,
 } from '@/features/social/discover/search-history';
 import { useDiscoverFeed } from '@/features/social/discover/use-discover-feed';
+import { useReportPublication } from '@/features/social/feed/use-report-publication';
 import { normalizeSearchQuery } from '@/features/social/discover/search-model';
 import { useTheme } from '@/hooks/use-theme';
 import { discoverFr } from '@/i18n/discover-fr';
@@ -136,6 +146,10 @@ export default function DiscoverScreen() {
     gridIndex?: number;
   } | null>(null);
   const navigation = useNavigation();
+  // Publication sur laquelle la longue-pression a ouvert le menu rapide de
+  // la grille (menu du écran publication d'Instagram).
+  const [menu, setMenu] = useState<{ post: FeedPost; index: number } | null>(null);
+  const report = useReportPublication((message) => setNotice(message));
 
   // Chargement de l'historique au changement de compte. La liste démarre
   // vide ; l'asynchrone remplit l'état, sans setState synchrone dans l'effet.
@@ -239,6 +253,31 @@ export default function DiscoverScreen() {
       }
       return null;
     });
+  };
+
+  // Ouvre le visionneuse sur la vignette : callback stable pour que les
+  // vignettes mémorisées de la grille ne se rerendent pas sans raison.
+  const openViewer = useCallback(
+    (post: FeedPost, index: number) => {
+      setViewer({ items: feed.items, index, gridIndex: index });
+    },
+    [feed.items],
+  );
+
+  // Double-tap sur une vignette : réaction optimiste, callback stable.
+  const handleDoubleTapLike = useCallback(
+    (post: FeedPost) => {
+      feed.actions.toggleLike(post);
+    },
+    [feed.actions],
+  );
+
+  const openTileMenu = (post: FeedPost, index: number) => {
+    setMenu({ post, index });
+  };
+
+  const closeTileMenu = () => {
+    setMenu(null);
   };
 
   if (loading) {
@@ -461,10 +500,9 @@ export default function DiscoverScreen() {
             loadingMore={feed.loadingMore}
             moreError={feed.moreError}
             bottomInset={TabBarHeight + insets.bottom + Spacing.three}
-            onTilePress={(post: FeedPost, index: number) =>
-              setViewer({ items: feed.items, index, gridIndex: index })
-            }
-            onTileDoubleTapLike={(post: FeedPost) => feed.actions.toggleLike(post)}
+            onTilePress={openViewer}
+            onTileDoubleTapLike={handleDoubleTapLike}
+            onTileLongPress={openTileMenu}
             onRefresh={feed.refresh}
             onLoadMore={feed.loadMore}
             onRetryFirst={feed.retryFirst}
@@ -481,6 +519,66 @@ export default function DiscoverScreen() {
           onRefresh={() => undefined}
           actions={feed.actions}
           onClose={closeViewer}
+        />
+      ) : null}
+
+      {menu ? (
+        <ActionSheet
+          visible
+          title={menu.post.author.displayName}
+          subtitle={fr.social.postTitle}
+          onClose={closeTileMenu}
+          actions={[
+            {
+              key: 'open',
+              label: fr.social.openPost,
+              onPress: () => {
+                closeTileMenu();
+                openViewer(menu.post, menu.index);
+              },
+            },
+            {
+              key: 'save',
+              label: menu.post.viewer.saved
+                ? fr.social.savedLabel
+                : fr.social.saveLabel,
+              icon: Bookmark,
+              selected: menu.post.viewer.saved,
+              onPress: () => {
+                feed.actions.toggleSave(menu.post);
+              },
+            },
+            {
+              key: 'repost',
+              label: menu.post.viewer.reposted
+                ? fr.social.unrepostLabel
+                : fr.social.repostLabel,
+              icon: Repeat2,
+              selected: menu.post.viewer.reposted,
+              onPress: () => {
+                feed.actions.toggleRepost(menu.post);
+              },
+            },
+            {
+              key: 'report',
+              label: fr.social.reportPublication,
+              icon: Flag,
+              destructive: true,
+              onPress: () => {
+                closeTileMenu();
+                report.open(menu.post);
+              },
+            },
+            {
+              key: 'dismiss',
+              label: fr.social.notInterested,
+              icon: EyeOff,
+              destructive: true,
+              onPress: () => {
+                feed.actions.dismiss(menu.post);
+              },
+            },
+          ]}
         />
       ) : null}
     </ThemedView>

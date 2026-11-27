@@ -700,6 +700,7 @@ export const fr = {
     privateBody: 'Abonne-toi pour voir ses publications.',
     followError: 'Action impossible. Réessaie.',
     postTitle: 'Publication',
+    openPost: 'Ouvrir la publication',
     back: 'Retour',
     postMissing: 'Cette publication n’est plus disponible.',
     postError: 'Impossible de charger la publication.',

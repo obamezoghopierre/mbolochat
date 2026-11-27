@@ -3,6 +3,7 @@ import { Compass, Images, Play } from 'lucide-react-native';
 import { Image } from 'expo-image';
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -21,6 +22,13 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { EmptyState } from '@/components/empty-state';
 import { Icon } from '@/components/icon';
@@ -68,6 +76,9 @@ interface DiscoverExploreGridProps {
   onTilePress: (post: FeedPost, index: number) => void;
   /** Double-tap sur une vignette : réagit sans ouvrir le visionneuse. */
   onTileDoubleTapLike?: (post: FeedPost) => void;
+  /** Longue-pression sur une vignette : menu rapide (menu du écran
+      publication d'Instagram). */
+  onTileLongPress?: (post: FeedPost, index: number, point: { x: number; y: number }) => void;
   onRefresh: () => void;
   onLoadMore: () => void;
   onRetryFirst: () => void;
@@ -91,6 +102,7 @@ export const DiscoverExploreGrid = forwardRef<
     bottomInset,
     onTilePress,
     onTileDoubleTapLike,
+    onTileLongPress,
     onRefresh,
     onLoadMore,
     onRetryFirst,
@@ -103,6 +115,22 @@ export const DiscoverExploreGrid = forwardRef<
   const tileWidth =
     (width - (COLUMNS - 1) * DiscoverMetrics.tileGutter) / COLUMNS;
   const rows = buildExploreRows(items, tileWidth);
+
+  // Callbacks stables pour que les vignettes mémorisées ne se recalculent
+  // pas à chaque rendu de la grille (défilement, « charger plus »).
+  const handleTilePress = useCallback(
+    (post: FeedPost, index: number) => onTilePress(post, index),
+    [onTilePress],
+  );
+  const handleDoubleTapLike = useCallback(
+    (post: FeedPost) => onTileDoubleTapLike?.(post),
+    [onTileDoubleTapLike],
+  );
+  const handleTileLongPress = useCallback(
+    (post: FeedPost, index: number, point: { x: number; y: number }) =>
+      onTileLongPress?.(post, index, point),
+    [onTileLongPress],
+  );
 
   // Marge de déclenchement du « charger plus » avant la fin du contenu.
   const END_REACH_MARGIN = 700;
@@ -210,8 +238,10 @@ export const DiscoverExploreGrid = forwardRef<
                 publication={post}
                 width={tileWidth}
                 height={row.height}
-                onPress={() => onTilePress(post, rowIndex * COLUMNS + position)}
-                onDoubleTapLike={onTileDoubleTapLike}
+                index={rowIndex * COLUMNS + position}
+                onPress={handleTilePress}
+                onDoubleTapLike={handleDoubleTapLike}
+                onLongPress={handleTileLongPress}
               />
             ))}
           </View>
@@ -252,21 +282,29 @@ export const DiscoverExploreGrid = forwardRef<
  * publication, comme sur la grille Explorer.
  *
  * Double-tap = réagir sans ouvrir (cœur posé sous le doigt, comme dans
- * le fil) ; appui simple = ouvrir le visionneuse. Le compteur d'album
- * indique le nombre de médias supplémentaires, comme Instagram.
+ * le fil) ; appui simple = ouvrir le visionneuse ; longue-pression =
+ * menu rapide. Le compteur d'album indique le nombre de médias
+ * supplémentaires, comme Instagram.
+ *
+ * Mémorisée : la grille se rend souvent à cause du défilement ou du
+ * « charger plus », et une vignette non modifiée ne doit pas re-rendre.
  */
-function PublicationTile({
+const PublicationTile = memo(function PublicationTile({
   publication,
   width,
   height,
+  index,
   onPress,
   onDoubleTapLike,
+  onLongPress,
 }: {
   publication: FeedPost;
   width: number;
   height: number;
-  onPress: () => void;
+  index: number;
+  onPress: (post: FeedPost, index: number) => void;
   onDoubleTapLike?: (post: FeedPost) => void;
+  onLongPress?: (post: FeedPost, index: number, point: { x: number; y: number }) => void;
 }) {
   const theme = useTheme();
   const cover = publication.media?.[0];
@@ -322,8 +360,15 @@ function PublicationTile({
     }
     openTimer.current = setTimeout(() => {
       openTimer.current = undefined;
-      onPress();
+      onPress(publication, index);
     }, DOUBLE_TAP_MS);
+  };
+
+  // Longue-pression : menu rapide sur la vignette, comme l'écran
+  // publication d'Instagram. Le point de l'appui sert d'ancre visuelle.
+  const handleLongPress = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    onLongPress?.(publication, index, pointRef.current ?? { x: 0, y: 0 });
   };
 
   return (
@@ -333,6 +378,7 @@ function PublicationTile({
       accessibilityHint={fr.social.tileDoubleTapHint}
       onPressIn={handlePressIn}
       onPress={handlePress}
+      onLongPress={handleLongPress}
       style={[
         styles.tile,
         {
@@ -392,7 +438,7 @@ function PublicationTile({
       ) : null}
     </Pressable>
   );
-}
+});
 
 /** Durée « m:ss » d'une vidéo, pour le badge de la vignette. */
 function formatTileDuration(durationMs: number): string {
@@ -402,21 +448,57 @@ function formatTileDuration(durationMs: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-/** Grille fantôme du premier chargement (pas d'instantané). */
-function GridSkeleton({ tileWidth }: { tileWidth: number }) {
+/** Vignette du squelette : balayage lumineux, comme Instagram. */
+function ShimmerTile({ width, height, delay }: { width: number; height: number; delay: number }) {
   const theme = useTheme();
+  const progress = useSharedValue(0);
+  useEffect(
+    () => {
+      progress.value = withRepeat(
+        withDelay(delay, withTiming(1, { duration: 1300 })),
+        -1,
+        false,
+        () => {
+          progress.value = withTiming(0, { duration: 0 });
+        },
+      );
+    },
+    [progress, delay],
+  );
+  const overlay = useAnimatedStyle(() => ({
+    opacity: progress.value,
+    transform: [{ translateX: progress.value * (width + 120) - 60 }],
+  }));
+  return (
+    <View
+      style={{
+        width,
+        height,
+        backgroundColor: theme.backgroundSelected,
+        borderRadius: Radii.sm,
+        overflow: 'hidden',
+      }}>
+      <Animated.View
+        pointerEvents="none"
+        style={[styles.shimmerOverlay, overlay]}
+      />
+    </View>
+  );
+}
+
+/** Grille fantôme du premier chargement (pas d'instantané), avec shimmer. */
+function GridSkeleton({ tileWidth }: { tileWidth: number }) {
+  const rows = 4;
   return (
     <View style={styles.skeleton}>
-      {[0, 1, 2].map((row) => (
+      {Array.from({ length: rows }, (_, row) => (
         <View key={row} style={styles.row}>
-          {[0, 1, 2].map((cell) => (
-            <View
+          {Array.from({ length: COLUMNS }, (_, cell) => (
+            <ShimmerTile
               key={cell}
-              style={{
-                width: tileWidth,
-                height: tileWidth,
-                backgroundColor: theme.backgroundSelected,
-              }}
+              width={tileWidth}
+              height={tileWidth}
+              delay={(row * COLUMNS + cell) * 90}
             />
           ))}
         </View>
@@ -426,8 +508,10 @@ function GridSkeleton({ tileWidth }: { tileWidth: number }) {
 }
 
 const styles = StyleSheet.create({
+  // Bord à bord comme la grille Explorer d'Instagram : pas de marge
+  // latérale, seule la gouttière sépare les vignettes.
   content: {
-    paddingHorizontal: Spacing.one,
+    paddingHorizontal: 0,
   },
   row: {
     flexDirection: 'row',
@@ -471,6 +555,11 @@ const styles = StyleSheet.create({
   skeleton: {
     gap: DiscoverMetrics.tileGutter,
     paddingVertical: Spacing.one,
+  },
+  shimmerOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(255, 255, 255, 0.10)',
+    borderRadius: Radii.sm,
   },
   centeredBlock: {
     flex: 1,

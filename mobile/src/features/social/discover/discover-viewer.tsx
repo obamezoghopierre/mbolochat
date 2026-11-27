@@ -1,12 +1,28 @@
 import { router, useFocusEffect } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { Volume2, VolumeX, X } from 'lucide-react-native';
 import { AppState, Pressable, StyleSheet, View } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
-import { FeedMetrics, FeedSurface, Radii, Spacing } from '@/constants/theme';
+import {
+  FeedMetrics,
+  FeedSurface,
+  Motion,
+  Radii,
+  Spacing,
+} from '@/constants/theme';
 import { CommentsSheet } from '../feed/pager/comments-sheet';
 import {
   FeedPager,
@@ -65,6 +81,66 @@ export function DiscoverViewer({
   const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Glisser vers le bas pour fermer, comme l'écran publication d'Instagram :
+  // la visionneuse suit le doigt depuis la bande du haut et se referme au
+  // seuil (ou au lancer rapide). Le geste est attaché à une bande au-dessus
+  // du pager, pour ne pas entrer en conflit avec son défilement vertical.
+  const reduced = useReducedMotion();
+  const translateY = useSharedValue(0);
+  /** Assombrissement du fond au glissement, proportionnel à la distance. */
+  const dim = useSharedValue(0);
+  /** Hauteur de la visionneuse, pour le déplacement hors écran au geste. */
+  const sheetHeight = useSharedValue(0);
+  const handleDismiss = useCallback(() => {
+    // Retour haptique léger, comme la fermeture par glissement des feuilles.
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onClose();
+  }, [onClose]);
+  const pan = useMemo(
+    () =>
+      Gesture.Pan()
+        .onUpdate((event) => {
+          'worklet';
+          // eslint-disable-next-line react-hooks/immutability
+          translateY.value = Math.max(0, event.translationY);
+          // eslint-disable-next-line react-hooks/immutability
+          dim.value = Math.min(1, translateY.value / 400);
+        })
+        .onEnd((event) => {
+          'worklet';
+          const willClose =
+            translateY.value > Motion.sheetDismissDistance ||
+            event.velocityY > 700;
+          const dismiss = () => {
+            // eslint-disable-next-line react-hooks/immutability
+            translateY.value = reduced
+              ? withTiming(Math.max(200, sheetHeight.value + 200), { duration: 150 }, (finished) => {
+                  if (finished) {
+                    runOnJS(handleDismiss)();
+                  }
+                })
+              : withSpring(
+                  Math.max(200, sheetHeight.value + 200),
+                  Motion.spring,
+                  (finished) => {
+                    if (finished) {
+                      runOnJS(handleDismiss)();
+                    }
+                  },
+                );
+          };
+          if (willClose) {
+            dismiss();
+          } else {
+            translateY.value = withSpring(0, Motion.spring);
+          }
+        }),
+    [handleDismiss, translateY, dim, sheetHeight, reduced],
+  );
+
+  const sheetStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
 
   // Le lecteur ne joue que quand la grille est l'écran visible et que
   // l'application est au premier plan : sans cela le son continue sous
@@ -197,104 +273,125 @@ export function DiscoverViewer({
   }
 
   return (
-    <View
-      style={styles.layer}
-      onLayout={(event) => setHeight(event.nativeEvent.layout.height)}>
-      <FeedPager
-        mode="pager"
-        items={items}
-        initialIndex={Math.min(initialIndex, items.length - 1)}
-        height={height}
-        barInset={insets.bottom + Spacing.four}
-        playbackActive={screenFocused && appActive}
-        refreshing={false}
-        hasMore={hasMore}
-        hideOverlays={commentsPost !== null}
-        onLoadMore={onLoadMore}
-        onRefresh={onRefresh}
-        actions={pagerActions}
-        muted={muted}
-        onMuteChange={setMuted}
-        onActiveIndexChange={setActiveIndex}
-      />
-
-      <TopScrim />
-
-      {/* Barre du haut : fermeture, comme l'écran publication d'Instagram. */}
       <View
-        pointerEvents="box-none"
-        style={[styles.topBar, { top: insets.top + Spacing.one }]}>
-        <View style={styles.topBarInner}>
-          {isVideoPost(items[activeIndex] ?? items[0]) ? (
+        style={styles.layer}
+        onLayout={(event) => {
+          // La hauteur est lue par le worklet de glissement (valeur partagée).
+          // eslint-disable-next-line react-hooks/immutability
+          sheetHeight.value = event.nativeEvent.layout.height;
+          setHeight(event.nativeEvent.layout.height);
+        }}>
+        {/* Assombrissement progressif pendant le glissement vers le bas. */}
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.dimOverlay, { opacity: dim }]} />
+
+        <Animated.View style={sheetStyle}>
+          <FeedPager
+          mode="pager"
+          items={items}
+          initialIndex={Math.min(initialIndex, items.length - 1)}
+          height={height}
+          barInset={insets.bottom + Spacing.four}
+          playbackActive={screenFocused && appActive}
+          refreshing={false}
+          hasMore={hasMore}
+          hideOverlays={commentsPost !== null}
+          onLoadMore={onLoadMore}
+          onRefresh={onRefresh}
+          actions={pagerActions}
+          muted={muted}
+          onMuteChange={setMuted}
+          onActiveIndexChange={setActiveIndex}
+        />
+
+        <TopScrim />
+
+        {/* Bande de glissement vers le bas pour fermer, avec poignée.
+            Rendue après le pager et le scrim : elle capte le geste au-dessus
+            du défilement vertical, sans bloquer la barre du haut. */}
+        <GestureDetector gesture={pan}>
+          <View style={[styles.dragZone, { top: insets.top + Spacing.six }]}>
+            <View style={styles.grabber} />
+          </View>
+        </GestureDetector>
+
+        {/* Barre du haut : fermeture, comme l'écran publication d'Instagram. */}
+        <View
+          pointerEvents="box-none"
+          style={[styles.topBar, { top: insets.top + Spacing.one }]}>
+          <View style={styles.topBarInner}>
+            {isVideoPost(items[activeIndex] ?? items[0]) ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  muted ? fr.social.unmuteReel : fr.social.muteReel
+                }
+                onPress={() => setMuted((value) => !value)}
+                hitSlop={12}
+                style={({ pressed }) => [
+                  styles.closeButton,
+                  { backgroundColor: FeedSurface.glass },
+                  pressed && styles.pressed,
+                ]}>
+                <Icon
+                  icon={muted ? VolumeX : Volume2}
+                  size={Spacing.four}
+                  color={FeedSurface.onMedia}
+                />
+              </Pressable>
+            ) : null}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={
-                muted ? fr.social.unmuteReel : fr.social.muteReel
-              }
-              onPress={() => setMuted((value) => !value)}
+              accessibilityLabel={fr.social.viewerClose}
+              onPress={onClose}
               hitSlop={12}
               style={({ pressed }) => [
                 styles.closeButton,
                 { backgroundColor: FeedSurface.glass },
                 pressed && styles.pressed,
               ]}>
-              <Icon
-                icon={muted ? VolumeX : Volume2}
-                size={Spacing.four}
-                color={FeedSurface.onMedia}
-              />
+              <Icon icon={X} size={Spacing.five} color={FeedSurface.onMedia} />
             </Pressable>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={fr.social.viewerClose}
-            onPress={onClose}
-            hitSlop={12}
-            style={({ pressed }) => [
-              styles.closeButton,
-              { backgroundColor: FeedSurface.glass },
-              pressed && styles.pressed,
+          </View>
+        </View>
+
+        {/* Chargement de la page suivante, au-dessus du tab bar. */}
+        {hasMore ? (
+          <View
+            pointerEvents="none"
+            style={[styles.loadingMore, { bottom: insets.bottom + Spacing.six }]}>
+            <ThemedText type="caption" style={[styles.loadingText, OnMediaShadow]}>
+              {fr.social.viewerLoadingMore}
+            </ThemedText>
+          </View>
+        ) : null}
+
+        {notice ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.notice,
+              {
+                top: insets.top + Spacing.six,
+                backgroundColor: FeedSurface.noticeError,
+              },
             ]}>
-            <Icon icon={X} size={Spacing.five} color={FeedSurface.onMedia} />
-          </Pressable>
-        </View>
-      </View>
+            <ThemedText type="caption" style={styles.noticeText}>
+              {notice}
+            </ThemedText>
+          </View>
+        ) : null}
 
-      {/* Chargement de la page suivante, au-dessus du tab bar. */}
-      {hasMore ? (
-        <View
-          pointerEvents="none"
-          style={[styles.loadingMore, { bottom: insets.bottom + Spacing.six }]}>
-          <ThemedText type="caption" style={[styles.loadingText, OnMediaShadow]}>
-            {fr.social.viewerLoadingMore}
-          </ThemedText>
-        </View>
-      ) : null}
+        {commentsPost ? (
+          <CommentsSheet
+            post={commentsPost}
+            onClose={() => setCommentsPost(null)}
+          />
+        ) : null}
 
-      {notice ? (
-        <View
-          pointerEvents="none"
-          style={[
-            styles.notice,
-            {
-              top: insets.top + Spacing.six,
-              backgroundColor: FeedSurface.noticeError,
-            },
-          ]}>
-          <ThemedText type="caption" style={styles.noticeText}>
-            {notice}
-          </ThemedText>
-        </View>
-      ) : null}
-
-      {commentsPost ? (
-        <CommentsSheet
-          post={commentsPost}
-          onClose={() => setCommentsPost(null)}
-        />
-      ) : null}
-
-      {report.sheet}
+        {report.sheet}
+      </Animated.View>
     </View>
   );
 }
@@ -303,6 +400,25 @@ const styles = StyleSheet.create({
   layer: {
     ...StyleSheet.absoluteFill,
     backgroundColor: FeedSurface.background,
+  },
+  dimOverlay: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#000000',
+  },
+  dragZone: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    // Hauteur de la bande de glissement, au-dessus du média.
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  grabber: {
+    width: 40,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: FeedSurface.onMediaFaint,
   },
   topBar: {
     position: 'absolute',
