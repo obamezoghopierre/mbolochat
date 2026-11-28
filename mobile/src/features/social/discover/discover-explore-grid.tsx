@@ -7,17 +7,15 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import {
   ActivityIndicator,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
+  FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
-  type ScrollViewInstance,
   StyleSheet,
   View,
   useWindowDimensions,
@@ -42,7 +40,12 @@ import { fr } from '@/i18n/fr';
 import { formatCompactCount } from '@/lib/format';
 import { resolveMediaUrl } from '@/lib/media-url';
 import type { FeedPost } from '@/lib/types';
-import { buildExploreRows } from './discover-feed-model';
+import {
+  buildExploreRows,
+  exploreRowLayouts,
+  exploreRowOffset,
+  type ExploreRow,
+} from './discover-feed-model';
 
 /** Colonnes de la mosaïque, comme la grille Explorer. */
 const COLUMNS = 3;
@@ -86,8 +89,9 @@ interface DiscoverExploreGridProps {
 
 /**
  * Mosaïque plein écran de Découvrir, comme la grille Explorer d'Instagram :
- * rangées de trois vignettes aux hauteurs variées (dont des rangées
- * doubles), défilement continu, pas de titre de section ni « Voir tout ».
+ * trois colonnes de largeur égale, où une publication portrait occupe deux
+ * hauteurs de rangée et où les colonnes voisines empilent deux vignettes.
+ * Défilement continu, pas de titre de section ni « Voir tout ».
  */
 export const DiscoverExploreGrid = forwardRef<
   DiscoverExploreGridHandle,
@@ -110,11 +114,20 @@ export const DiscoverExploreGrid = forwardRef<
   ref,
 ) {
   const theme = useTheme();
-  const { width, height: viewportHeight } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   // Largeur d'une vignette : largeur écran moins les gouttières, divisée par 3.
   const tileWidth =
     (width - (COLUMNS - 1) * DiscoverMetrics.tileGutter) / COLUMNS;
-  const rows = buildExploreRows(items, tileWidth);
+  const rows = useMemo(
+    () => buildExploreRows(items, tileWidth, DiscoverMetrics.tileGutter),
+    [items, tileWidth],
+  );
+  // Les hauteurs sont connues d'avance : la liste n'a rien à mesurer, et un
+  // retour à une vignette lointaine ne dépend d'aucun rendu préalable.
+  const layouts = useMemo(
+    () => exploreRowLayouts(rows, DiscoverMetrics.tileGutter),
+    [rows],
+  );
 
   // Callbacks stables pour que les vignettes mémorisées ne se recalculent
   // pas à chaque rendu de la grille (défilement, « charger plus »).
@@ -132,61 +145,48 @@ export const DiscoverExploreGrid = forwardRef<
     [onTileLongPress],
   );
 
-  // Marge de déclenchement du « charger plus » avant la fin du contenu.
-  const END_REACH_MARGIN = 700;
-  const scrollRef = useRef<ScrollViewInstance | null>(null);
-  // Hauteur du contenu, pour déclencher le « charger plus » avant la fin.
-  const [contentHeight, setContentHeight] = useState(0);
+  const listRef = useRef<FlatList<ExploreRow> | null>(null);
 
   useImperativeHandle(
     ref,
     () => ({
       scrollToIndex: (index: number) => {
-        const row = Math.floor(index / COLUMNS);
-        if (row <= 0) {
-          scrollRef.current?.scrollTo({ y: 0, animated: false });
-          return;
-        }
         // Hauteur cumulée des rangées précédentes + gouttières.
-        const offset =
-          rows
-            .slice(0, row)
-            .reduce((total, entry) => total + entry.height, 0) +
-          row * DiscoverMetrics.tileGutter;
-        scrollRef.current?.scrollTo({ y: Math.max(0, offset), animated: false });
+        const offset = exploreRowOffset(
+          rows,
+          index,
+          DiscoverMetrics.tileGutter,
+        );
+        listRef.current?.scrollToOffset({
+          offset: Math.max(0, offset),
+          animated: false,
+        });
       },
     }),
     [rows],
   );
 
-  const onScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const { contentOffset, layoutMeasurement } = event.nativeEvent;
-      if (contentHeight === 0) {
-        return;
-      }
-      if (
-        contentOffset.y + layoutMeasurement.height >=
-        contentHeight - END_REACH_MARGIN
-      ) {
-        onLoadMore();
-      }
-    },
-    [contentHeight, onLoadMore],
+  const renderRow = useCallback(
+    ({ item }: { item: ExploreRow }) => (
+      <ExploreRowView
+        row={item}
+        tileWidth={tileWidth}
+        onPress={handleTilePress}
+        onDoubleTapLike={handleDoubleTapLike}
+        onLongPress={handleTileLongPress}
+      />
+    ),
+    [tileWidth, handleTilePress, handleDoubleTapLike, handleTileLongPress],
   );
 
-  // Contenu plus court que l'écran : on charge la page suivante d'emblée,
-  // sinon la fin du défilement n'est jamais atteinte.
-  useEffect(() => {
-    if (
-      contentHeight > 0 &&
-      contentHeight <= viewportHeight &&
-      status === 'ready' &&
-      items.length > 0
-    ) {
-      onLoadMore();
-    }
-  }, [contentHeight, viewportHeight, status, items.length, onLoadMore]);
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<ExploreRow> | null | undefined, index: number) => ({
+      length: layouts[index]?.length ?? 0,
+      offset: layouts[index]?.offset ?? 0,
+      index,
+    }),
+    [layouts],
+  );
 
   if (status === 'error') {
     return (
@@ -208,17 +208,27 @@ export const DiscoverExploreGrid = forwardRef<
     );
   }
 
+  const skeleton = status === 'loading' && items.length === 0;
+
   return (
-    <ScrollView
-      ref={scrollRef}
-      contentContainerStyle={[
-        styles.content,
-        { paddingBottom: bottomInset, gap: DiscoverMetrics.tileGutter },
-      ]}
+    <FlatList
+      ref={listRef}
+      data={skeleton ? [] : rows}
+      keyExtractor={(row) => row.key}
+      renderItem={renderRow}
+      getItemLayout={getItemLayout}
+      contentContainerStyle={[styles.content, { paddingBottom: bottomInset }]}
       showsVerticalScrollIndicator={false}
-      onScroll={onScroll}
-      onContentSizeChange={(_width, nextHeight) => setContentHeight(nextHeight)}
-      scrollEventThrottle={32}
+      // Fenêtre de rendu : une poignée d'écrans autour de la zone visible,
+      // donc le coût d'une grille de centaines de vignettes reste constant.
+      initialNumToRender={DiscoverMetrics.initialRows}
+      windowSize={DiscoverMetrics.windowSize}
+      maxToRenderPerBatch={DiscoverMetrics.renderBatch}
+      removeClippedSubviews
+      // « Charger plus » avant la fin ; la liste le redemande aussi quand son
+      // contenu est plus court que l'écran, sans calcul de hauteur ici.
+      onEndReached={onLoadMore}
+      onEndReachedThreshold={DiscoverMetrics.endReachScreens}
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -226,53 +236,84 @@ export const DiscoverExploreGrid = forwardRef<
           tintColor={theme.accent}
           colors={[theme.accent]}
         />
-      }>
-      {status === 'loading' && items.length === 0 ? (
-        <GridSkeleton tileWidth={tileWidth} />
-      ) : (
-        rows.map((row, rowIndex) => (
-          <View key={row.key} style={styles.row}>
-            {row.items.map((post, position) => (
-              <PublicationTile
-                key={post.id}
-                publication={post}
-                width={tileWidth}
-                height={row.height}
-                index={rowIndex * COLUMNS + position}
-                onPress={handleTilePress}
-                onDoubleTapLike={handleDoubleTapLike}
-                onLongPress={handleTileLongPress}
-              />
-            ))}
-          </View>
-        ))
-      )}
+      }
+      ListHeaderComponent={
+        skeleton ? <GridSkeleton tileWidth={tileWidth} /> : null
+      }
+      ListEmptyComponent={
+        status === 'ready' ? (
+          <EmptyState
+            icon={Compass}
+            title={discoverFr.emptyAllTitle}
+            description={discoverFr.emptyAllBody}
+          />
+        ) : null
+      }
+      ListFooterComponent={
+        <View style={styles.sentinel}>
+          {loadingMore ? (
+            <View style={styles.footer}>
+              <ActivityIndicator color={theme.accent} />
+            </View>
+          ) : moreError ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onLoadMore}
+              style={styles.footer}>
+              <ThemedText type="smallBold" style={{ color: theme.accent }}>
+                {discoverFr.sectionError}
+              </ThemedText>
+            </Pressable>
+          ) : null}
+        </View>
+      }
+    />
+  );
+});
 
-      {status === 'ready' && items.length === 0 ? (
-        <EmptyState
-          icon={Compass}
-          title={discoverFr.emptyAllTitle}
-          description={discoverFr.emptyAllBody}
-        />
-      ) : null}
-
-      <View style={styles.sentinel}>
-        {loadingMore ? (
-          <View style={styles.footer}>
-            <ActivityIndicator color={theme.accent} />
-          </View>
-        ) : moreError ? (
-          <Pressable
-            accessibilityRole="button"
-            onPress={onLoadMore}
-            style={styles.footer}>
-            <ThemedText type="smallBold" style={{ color: theme.accent }}>
-              {discoverFr.sectionError}
-            </ThemedText>
-          </Pressable>
-        ) : null}
-      </View>
-    </ScrollView>
+/**
+ * Rangée de la mosaïque : trois colonnes de largeur égale, une vignette ou
+ * deux empilées. Mémorisée par rangée : seule la rangée dont une publication
+ * a changé (réaction, signet) se rend à nouveau.
+ */
+const ExploreRowView = memo(function ExploreRowView({
+  row,
+  tileWidth,
+  onPress,
+  onDoubleTapLike,
+  onLongPress,
+}: {
+  row: ExploreRow;
+  tileWidth: number;
+  onPress: (post: FeedPost, index: number) => void;
+  onDoubleTapLike: (post: FeedPost) => void;
+  onLongPress: (
+    post: FeedPost,
+    index: number,
+    point: { x: number; y: number },
+  ) => void;
+}) {
+  return (
+    <View style={[styles.row, { height: row.height }]}>
+      {row.columns.map((column, columnIndex) => (
+        <View
+          key={`${row.key}-column-${columnIndex}`}
+          style={[styles.column, { width: tileWidth }]}>
+          {column.map((tile) => (
+            <PublicationTile
+              key={tile.post.id}
+              publication={tile.post}
+              width={tileWidth}
+              height={tile.height}
+              index={tile.index}
+              onPress={onPress}
+              onDoubleTapLike={onDoubleTapLike}
+              onLongPress={onLongPress}
+            />
+          ))}
+        </View>
+      ))}
+    </View>
   );
 });
 
@@ -289,7 +330,7 @@ export const DiscoverExploreGrid = forwardRef<
  * Mémorisée : la grille se rend souvent à cause du défilement ou du
  * « charger plus », et une vignette non modifiée ne doit pas re-rendre.
  */
-const PublicationTile = memo(function PublicationTile({
+export const PublicationTile = memo(function PublicationTile({
   publication,
   width,
   height,
@@ -516,6 +557,13 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: DiscoverMetrics.tileGutter,
+    // La gouttière sous la rangée fait partie de sa hauteur dans `getItemLayout`.
+    marginBottom: DiscoverMetrics.tileGutter,
+  },
+  // Colonne de la mosaïque : une vignette, ou deux empilées quand la rangée
+  // contient une vignette haute.
+  column: {
+    gap: DiscoverMetrics.tileGutter,
   },
   tile: {
     borderRadius: Radii.sm,
@@ -553,12 +601,11 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.half,
   },
   skeleton: {
-    gap: DiscoverMetrics.tileGutter,
     paddingVertical: Spacing.one,
   },
   shimmerOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(255, 255, 255, 0.10)',
+    backgroundColor: MediaSurface.shimmer,
     borderRadius: Radii.sm,
   },
   centeredBlock: {

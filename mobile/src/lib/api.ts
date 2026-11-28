@@ -532,9 +532,24 @@ export const api = {
     });
   },
 
-  /** Recherche unifiée : comptes, publications et hashtags. */
-  search(token: string, query: string, type: 'all' | 'users' | 'publications' | 'hashtags' = 'all') {
-    const params = new URLSearchParams({ q: query, type, limit: '10' });
+  /**
+   * Recherche unifiée : comptes, publications et hashtags. `type: 'all'` rend
+   * un aperçu de chaque bloc ; un type précis se pagine avec `cursor`.
+   */
+  search(
+    token: string,
+    query: string,
+    type: 'all' | 'users' | 'publications' | 'hashtags' = 'all',
+    options: { cursor?: string; limit?: number } = {},
+  ) {
+    const params = new URLSearchParams({
+      q: query,
+      type,
+      limit: String(options.limit ?? 10),
+    });
+    if (options.cursor) {
+      params.set('cursor', options.cursor);
+    }
     return request<SearchResult>(`/search?${params.toString()}`, { token });
   },
 

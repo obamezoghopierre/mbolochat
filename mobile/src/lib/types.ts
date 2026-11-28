@@ -733,14 +733,29 @@ export interface SearchUser {
   avatarUrl: string | null;
   verified: boolean;
   privateAccount: boolean;
+  /** Abonnement du visiteur : le bouton « Suivre » part de l'état réel. */
+  followStatus: 'none' | 'pending' | 'accepted';
 }
 
+/**
+ * Carte d'une publication trouvée : même forme que les vignettes de
+ * Découvrir (médias et compteurs inclus), pour une grille et une visionneuse
+ * sans requête de détail préalable.
+ */
 export interface SearchPublication {
   id: string;
   kind: 'post' | 'reel';
+  format: 'text' | 'image' | 'carousel' | 'video';
   caption: string | null;
   createdAt: string;
   author: SocialAuthor;
+  media: PublicationMedia[];
+  counters: {
+    likes: number;
+    comments: number;
+    reposts: number;
+    views: number;
+  };
 }
 
 export interface SearchHashtag {

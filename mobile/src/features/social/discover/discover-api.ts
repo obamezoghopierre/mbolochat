@@ -1,3 +1,4 @@
+import { discoverFr } from '@/i18n/discover-fr';
 import { ApiError, refreshAccessToken } from '@/lib/api';
 import { API_URL } from '@/lib/config';
 import type { PublicationMedia, SocialAuthor } from '@/lib/types';
@@ -46,7 +47,7 @@ async function requestSection(
       signal: controller.signal,
     });
   } catch {
-    throw new ApiError(0, 'Impossible de charger la section. Vérifie ta connexion.');
+    throw new ApiError(0, discoverFr.sectionLoadFailed);
   } finally {
     clearTimeout(timeout);
   }
@@ -80,7 +81,7 @@ async function requestSection(
   try {
     return (await response.json()) as DiscoverSectionPage;
   } catch {
-    throw new ApiError(0, 'Réponse de section invalide. Réessaie.');
+    throw new ApiError(0, discoverFr.sectionInvalid);
   }
 }
 
