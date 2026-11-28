@@ -19,6 +19,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import { extractHashtags, extractMentions } from '../common/social-tags.js';
+import { syncPublicationTopics } from './publication-topics.js';
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
@@ -640,6 +641,14 @@ export class PublicationsService {
           row.visibility,
         );
       }
+      // Sujets de la publication (hashtags + mots-clés) pour le classement. Un
+      // post signalé ou non public est rattaché mais ne compte pas dans les
+      // tendances visibles de tous.
+      if (moderationText.length > 0) {
+        await syncPublicationTopics(tx, row.id, moderationText, {
+          isPublic: row.visibility === 'public' && !flagged,
+        });
+      }
       return row;
     });
 
@@ -1105,6 +1114,13 @@ export class PublicationsService {
           result.id,
           result.visibility,
         );
+      }
+      // Le texte a changé : les sujets sont recalculés (liens remplacés, pas
+      // empilés). Une légende vidée retire tous les sujets.
+      if (result && textChanged) {
+        await syncPublicationTopics(tx, result.id, moderationText, {
+          isPublic: result.visibility === 'public' && visible === true,
+        });
       }
       return result;
     });

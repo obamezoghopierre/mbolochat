@@ -1840,6 +1840,29 @@ export const publicationHashtags = pgTable(
 );
 
 /**
+ * Sujets **implicites** d'une publication : mots porteurs de sens tirés de la
+ * légende, quand l'auteur n'a pas (ou pas assez) de hashtags.
+ *
+ * Volontairement hors de `hashtags` : cette table alimente la recherche et les
+ * tendances de Découvrir, et un mot banal comme « football » ne doit pas y
+ * apparaître comme un hashtag. Elle ne sert qu'au classement.
+ */
+export const publicationTopics = pgTable(
+  'publication_topics',
+  {
+    publicationId: text('publication_id')
+      .notNull()
+      .references(() => publications.id, { onDelete: 'cascade' }),
+    /** Mot normalisé : minuscules, sans accent (même règle que les hashtags). */
+    topic: text('topic').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.topic] }),
+    index('publication_topics_topic_idx').on(table.topic),
+  ],
+);
+
+/**
  * Story 24 h. L'audience et les exclusions sont vérifiées en SQL ; les vues
  * uniques vivent dans `story_views`.
  */
@@ -2114,6 +2137,7 @@ export type PublicationSave = typeof publicationSaves.$inferSelect;
 export type PublicationRepost = typeof publicationReposts.$inferSelect;
 export type PublicationView = typeof publicationViews.$inferSelect;
 export type Hashtag = typeof hashtags.$inferSelect;
+export type PublicationTopic = typeof publicationTopics.$inferSelect;
 export type Story = typeof stories.$inferSelect;
 export type StoryView = typeof storyViews.$inferSelect;
 export type Highlight = typeof highlights.$inferSelect;

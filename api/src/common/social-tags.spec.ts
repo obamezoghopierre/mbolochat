@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractHashtags, extractMentions } from './social-tags.js';
+import {
+  extractHashtags,
+  extractMentions,
+  extractTopics,
+  MAX_TOPICS_PER_PUBLICATION,
+} from './social-tags.js';
 
 describe('extractMentions', () => {
   it('retourne les pseudos en minuscules, sans doublon', () => {
@@ -26,5 +31,47 @@ describe('extractHashtags', () => {
 
   it('ignore un # isolé ou collé à un mot', () => {
     expect(extractHashtags('# et abc#def')).toEqual([]);
+  });
+});
+
+describe('extractTopics', () => {
+  it('garde les mots porteurs de sens, sans accent ni doublon', () => {
+    expect(extractTopics('Un super match de football à Libreville, quel football !')).toEqual([
+      'football',
+      'super',
+      'match',
+      'libreville',
+    ]);
+  });
+
+  it('ignore les mots vides et les mots trop courts', () => {
+    // « il », « a », « dit », « que », « le », « est », « sur », « un » : vides ou trop courts.
+    expect(extractTopics('Il a dit que le chat est sur un toit')).toEqual(['chat', 'toit']);
+  });
+
+  it('ignore les hashtags, les mentions, les liens et les nombres', () => {
+    expect(
+      extractTopics('Voyage #Mbolo avec @kim.test https://exemple.com/page 2026 plage'),
+    ).toEqual(['voyage', 'plage']);
+  });
+
+  it('classe par fréquence puis par ordre d’apparition', () => {
+    expect(extractTopics('cuisine voyage cuisine plage voyage cuisine')).toEqual([
+      'cuisine',
+      'voyage',
+      'plage',
+    ]);
+  });
+
+  it('borne le nombre de sujets', () => {
+    const text = 'alpha bravo charlie delta echos foxtrot golfe hotel india juliet kilos';
+    expect(extractTopics(text)).toHaveLength(MAX_TOPICS_PER_PUBLICATION);
+    expect(extractTopics(text, 3)).toEqual(['alpha', 'bravo', 'charlie']);
+    expect(extractTopics(text, 0)).toEqual([]);
+  });
+
+  it('rend une liste vide pour un texte vide ou sans sujet', () => {
+    expect(extractTopics('')).toEqual([]);
+    expect(extractTopics('Il est la et on va y')).toEqual([]);
   });
 });
