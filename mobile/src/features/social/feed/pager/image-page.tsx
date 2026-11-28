@@ -80,7 +80,6 @@ export function ImagePage({
   muted,
   onToggleMuted,
   onOpenReels,
-  onOpenGallery,
 }: {
   post: FeedPost;
   chrome: FeedPageChrome;
@@ -96,14 +95,6 @@ export function ImagePage({
    * Reels, comme Instagram. Sans ce rappel, le tap coupe ou remet le son.
    */
   onOpenReels?: () => void;
-  /**
-   * Photo, carrousel ou vidéo non verticale dans le fil d'accueil : un tap
-   * ouvre le plein écran (rail vertical, légende superposée), comme l'écran
-   * Explorer d'Instagram depuis sa grille. L'appelant ne le fournit que dans
-   * le fil (`chrome.flow`) : la visionneuse plein écran elle-même l'omet,
-   * puisqu'elle l'est déjà (`chrome.fullScreen`).
-   */
-  onOpenGallery?: () => void;
 }) {
   const tones = useTextPostTones();
   const { width: windowWidth } = useWindowDimensions();
@@ -180,19 +171,15 @@ export function ImagePage({
   // long (pause), comme les Reels.
   const currentIsVideo = media[index]?.kind === 'video';
   const [held, setHeld] = useState(false);
-  // Tap simple sur le média : son d'une vidéo du carrousel, ou plein écran
-  // sinon — Reels pour une vidéo verticale seule, visionneuse galerie pour
-  // tout le reste (photo, carrousel, vidéo non verticale), comme Instagram.
-  const onTapMedia = () => {
-    if (currentIsVideo) {
-      if (onOpenReels) {
-        onOpenReels();
-      } else {
-        onToggleMuted();
-      }
+  const onToggleSound = () => {
+    if (!currentIsVideo) {
       return;
     }
-    onOpenGallery?.();
+    if (onOpenReels) {
+      onOpenReels();
+    } else {
+      onToggleMuted();
+    }
   };
 
   // --- Carrousel : glisser horizontal, comme la carte texte multi-pages ---
@@ -261,14 +248,13 @@ export function ImagePage({
       }
     });
 
-  // Vidéo du carrousel : un tap coupe ou remet le son ; l'appui long met en
-  // pause, comme les Reels. Sur une photo (ou toute vidéo hors carrousel
-  // actif), le tap simple ouvre le plein écran via `onTapMedia`.
+  // Vidéo du carrousel : un tap coupe ou remet le son, l'appui long met en
+  // pause, comme les Reels. Sur une photo, le tap simple ne fait rien.
   const singleTap = Gesture.Tap()
     .maxDuration(250)
     .onEnd((_event, success) => {
       if (success) {
-        runOnJS(onTapMedia)();
+        runOnJS(onToggleSound)();
       }
     });
   const hold = Gesture.LongPress()
