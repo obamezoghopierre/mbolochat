@@ -1,6 +1,5 @@
 import { useEventListener } from 'expo';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
-import * as Haptics from 'expo-haptics';
 import { Expand, Play, Volume2, VolumeX } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -9,7 +8,6 @@ import {
   Image,
   Pressable,
   StyleSheet,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -57,10 +55,6 @@ export interface FeedPageChrome {
 const TIME_UPDATE_INTERVAL_S = 0.25;
 /** Cadence pendant un glissement sur la barre : le doigt veut du précis. */
 const SCRUB_TIME_UPDATE_INTERVAL_S = 0.05;
-/** Saut du double-tap latéral, en secondes (repère des fils vidéo courts). */
-const DOUBLE_TAP_SKIP_SECONDS = 10;
-/** Le centre de l'écran (fraction) reste réservé au like : ±Seek sur les bords. */
-const DOUBLE_TAP_CENTER_RATIO = 0.3;
 /** Vitesses proposées par la pastille, dans l'ordre du cycle. */
 const PLAYBACK_RATES = [1, 1.5, 2] as const;
 /** Reprises automatiques avant d'afficher l'état d'erreur. */
@@ -125,7 +119,6 @@ export function VideoPage({
   const url = videoSourceUrl(post, preferLowQuality || rateIndex > 0);
   const posterUrl = videoPosterUrl(post);
   const insets = useSafeAreaInsets();
-  const { width: pageWidth } = useWindowDimensions();
   // Cadrage façon Reels / TikTok : une vidéo verticale (jusqu'à ~3:4) remplit
   // l'écran (`cover`), rognée légèrement sur les bords — un 9:16 n'a donc
   // jamais de bandes noires sur un téléphone plus allongé. Une vidéo carrée
@@ -154,9 +147,6 @@ export function VideoPage({
     const timer = setTimeout(() => setSoundFlash(0), 650);
     return () => clearTimeout(timer);
   }, [soundFlash]);
-  // Flash « +10 s / −10 s » du double-tap latéral.
-  const [skipFlash, setSkipFlash] = useState<{ dir: 1 | -1; key: number } | null>(null);
-  const skipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Reprises automatiques déjà tentées sur cette source en erreur.
   const [autoRetries, setAutoRetries] = useState(0);
   // Numéro de la tentative de chargement en cours : reprise manuelle comprise.
@@ -297,6 +287,9 @@ export function VideoPage({
   const isPaused = userPaused && chrome.isActive;
   const pauseForLongPress = useCallback(() => setUserPaused(true), []);
   const resumeAfterLongPress = useCallback(() => setUserPaused(false), []);
+  // Un tap met en pause ou reprend, comme sur Instagram et TikTok. Le son vit
+  // sur sa pastille : le tap ne doit pas couper le son de toute la page.
+  const togglePause = useCallback(() => setUserPaused((value) => !value), []);
 
   // Le lecteur est figé pendant le glissement et ne repart qu'au relâchement,
   // et seulement s'il jouait avant : une pause volontaire reste une pause.
@@ -328,10 +321,6 @@ export function VideoPage({
       if (resumeTimer.current) {
         clearTimeout(resumeTimer.current);
         resumeTimer.current = null;
-      }
-      if (skipTimer.current) {
-        clearTimeout(skipTimer.current);
-        skipTimer.current = null;
       }
     },
     [],
@@ -379,38 +368,6 @@ export function VideoPage({
   }, [failed, url, autoRetries, player]);
 
   const exhausted = failed && autoRetries >= AUTO_RETRY_DELAYS_MS.length;
-
-  /**
-   * Double-tap : le centre like, les bords sautent de ±10 s. La fraction
-   * `DOUBLE_TAP_CENTER_RATIO` de chaque bord est la zone de seek ; sans point
-   * mesurable (accessibilité), on like comme avant.
-   */
-  const handleDoubleTap = useCallback(
-    (point: { x: number; y: number } | null) => {
-      if (point && pageWidth > 0) {
-        const edge = pageWidth * DOUBLE_TAP_CENTER_RATIO;
-        if (point.x < edge || point.x > pageWidth - edge) {
-          const dir = point.x < edge ? -1 : 1;
-          const duration = player.duration;
-          const current = player.currentTime;
-          const target =
-            Number.isFinite(duration) && duration > 0
-              ? Math.min(Math.max(current + dir * DOUBLE_TAP_SKIP_SECONDS, 0), duration)
-              : Math.max(current + dir * DOUBLE_TAP_SKIP_SECONDS, 0);
-          seekExactly(player, target);
-          void Haptics.selectionAsync().catch(() => undefined);
-          setSkipFlash((flash) => ({ dir, key: (flash?.key ?? 0) + 1 }));
-          if (skipTimer.current) {
-            clearTimeout(skipTimer.current);
-          }
-          skipTimer.current = setTimeout(() => setSkipFlash(null), 700);
-          return;
-        }
-      }
-      onDoubleTapLike(point);
-    },
-    [onDoubleTapLike, pageWidth, player],
-  );
 
   // Le poster reste affiché tant que la première image n'est pas décodée :
   // sans lui, chaque changement de vidéo laisserait voir un flash noir le
@@ -504,12 +461,13 @@ export function VideoPage({
           </View>
         </View>
       ) : (
-        // Reels : un tap coupe ou remet le son, l'appui long met en pause
-        // tant que le doigt reste posé, le double-tap aime.
+        // Un tap met en pause ou reprend ; le double-tap aime, où qu'il tombe
+        // (comme sur Instagram, aucune zone de saut sur les bords) ; l'appui
+        // long suspend tant que le doigt reste posé.
         <FeedGestureLayer
           accessibilityLabel={fr.social.reelGestureA11y}
-          onDoubleTap={handleDoubleTap}
-          onTap={onToggleSound}
+          onDoubleTap={onDoubleTapLike}
+          onTap={togglePause}
           onLongPressStart={pauseForLongPress}
           onLongPressEnd={resumeAfterLongPress}
         />
@@ -517,15 +475,6 @@ export function VideoPage({
 
       {/* Le poster couvre le chargement ; le témoin au-dessus dit qu'il
           progresse, et le rebuffering s'anime sur la barre de progression. */}
-
-      {/* Flash « +10 s / −10 s » du double-tap sur les bords. */}
-      {skipFlash ? (
-        <View key={skipFlash.key} pointerEvents="none" style={styles.skipFlash}>
-          <ThemedText style={styles.skipFlashText}>
-            {skipFlash.dir > 0 ? '» 10' : '« 10'}
-          </ThemedText>
-        </View>
-      ) : null}
 
       <HeartBurstOverlay burstKey={chrome.burstKey} point={chrome.burstPoint} />
 
@@ -717,20 +666,6 @@ const styles = StyleSheet.create({
     color: FeedSurface.onMedia,
     fontSize: 12,
     fontWeight: '700',
-  },
-  skipFlash: {
-    position: 'absolute',
-    alignSelf: 'center',
-    top: '40%',
-    paddingHorizontal: Spacing.four,
-    paddingVertical: Spacing.two,
-    borderRadius: Radii.full,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  skipFlashText: {
-    color: FeedSurface.onMedia,
-    fontSize: 20,
-    fontWeight: '800',
   },
   soundButton: {
     position: 'absolute',

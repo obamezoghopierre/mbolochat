@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compactCount,
   extraMediaCount,
+  isPlayableVideo,
   isVideoPost,
   primaryMedia,
 } from './feed-media';
@@ -97,6 +98,34 @@ describe('isVideoPost', () => {
       isVideoPost(
         post({ media: [media({ kind: 'video' }), media({ assetId: 'b', kind: 'video' })] }),
       ),
+    ).toBe(false);
+  });
+});
+
+describe('isPlayableVideo', () => {
+  it('accepte une vidéo unique, quelle que soit son orientation', () => {
+    expect(
+      isPlayableVideo(post({ media: [media({ kind: 'video', width: 1080, height: 1920 })] })),
+    ).toBe(true);
+    // Lettrage en plein écran : une vidéo paysage reste une vidéo de Reels.
+    expect(
+      isPlayableVideo(post({ media: [media({ kind: 'video', width: 1920, height: 1080 })] })),
+    ).toBe(true);
+    expect(
+      isPlayableVideo(post({ media: [media({ kind: 'video', width: null, height: null })] })),
+    ).toBe(true);
+  });
+
+  it('refuse un carrousel, une photo, un post texte, ou un média sans URL', () => {
+    expect(
+      isPlayableVideo(
+        post({ media: [media({ kind: 'video' }), media({ assetId: 'b', kind: 'video' })] }),
+      ),
+    ).toBe(false);
+    expect(isPlayableVideo(post({ media: [media({ kind: 'image' })] }))).toBe(false);
+    expect(isPlayableVideo(post())).toBe(false);
+    expect(
+      isPlayableVideo(post({ media: [media({ kind: 'video', url: null })] })),
     ).toBe(false);
   });
 });

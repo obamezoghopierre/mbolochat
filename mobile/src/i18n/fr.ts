@@ -1125,7 +1125,7 @@ export const fr = {
     photoHint: 'Deux taps pour aimer, pincer pour zoomer, glisser pour changer de photo',
     /** Vidéo façon Reels (accessibilité). */
     reelGestureA11y:
-      'Vidéo : un tap coupe ou remet le son, deux taps pour aimer, appui long pour mettre en pause',
+      'Vidéo : un tap pour mettre en pause ou reprendre, deux taps pour aimer',
     soundOn: 'Activer le son',
     soundOff: 'Couper le son',
     textPageA11y: (index: number, total: number) => `Page ${index} sur ${total}`,
