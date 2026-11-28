@@ -478,8 +478,8 @@ function FeedTopBar({
       pointerEvents="box-none"
       style={[
         styles.fixedTop,
-        { height: barHeight, backgroundColor: tab === 'reels' ? 'transparent' : tones.surface },
-        tab === 'reels' ? null : slideStyle,
+        { height: barHeight, backgroundColor: tones.surface },
+        slideStyle,
       ]}>
       <View
         style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
@@ -518,9 +518,8 @@ function FeedTopBar({
                     numberOfLines={1}
                     style={[
                       styles.tabLabel,
-                      { color: tab === 'reels' ? FeedSurface.onMediaFaint : tones.textFaint },
+                      { color: tones.textFaint },
                       active && styles.tabLabelActive,
-                      tab === 'reels' && OnMediaShadow,
                     ]}>
                     {entry.label}
                   </ThemedText>
@@ -573,7 +572,7 @@ function FeedTopBar({
       pointerEvents="none"
       style={[
         styles.fixedTop,
-        { height: topInset, backgroundColor: tab === 'reels' ? 'transparent' : tones.surface },
+        { height: topInset, backgroundColor: tones.surface },
       ]}
     />
     </>
