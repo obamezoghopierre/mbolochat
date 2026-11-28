@@ -1,7 +1,7 @@
 import { router, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Volume2, VolumeX, X } from 'lucide-react-native';
-import { AppState, Pressable, StyleSheet, View } from 'react-native';
+import { AppState, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -72,8 +72,13 @@ export function DiscoverViewer({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const viewport = useWindowDimensions();
   const { token } = useAuth();
-  const [height, setHeight] = useState(0);
+  // Hauteur du calque plein écran, mesurée. La fenêtre sert de repli : le
+  // calque occupe tout l'écran, donc les deux valeurs coïncident, et un
+  // `onLayout` en retard ne laisse jamais le pager à zéro (écran noir).
+  const [measuredHeight, setMeasuredHeight] = useState(0);
+  const height = measuredHeight > 0 ? measuredHeight : viewport.height;
   // Son des reels : le pager le pilote, la barre du haut affiche l'état
   // et permet de le basculer, comme Instagram.
   const [muted, setMuted] = useState(false);
@@ -268,7 +273,7 @@ export function DiscoverViewer({
           <Pressable
             accessibilityRole="button"
             onPress={onClose}
-            style={({ pressed }) => [styles.closeButton, styles.closeFloating, pressed && styles.pressed]}>
+            style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
             <Icon icon={X} size={Spacing.five} color={FeedSurface.onMedia} />
           </Pressable>
         </View>
@@ -283,14 +288,17 @@ export function DiscoverViewer({
           // La hauteur est lue par le worklet de glissement (valeur partagée).
           // eslint-disable-next-line react-hooks/immutability
           sheetHeight.value = event.nativeEvent.layout.height;
-          setHeight(event.nativeEvent.layout.height);
+          setMeasuredHeight(event.nativeEvent.layout.height);
         }}>
         {/* Assombrissement progressif pendant le glissement vers le bas. */}
         <Animated.View
           pointerEvents="none"
           style={[styles.dimOverlay, { opacity: dim }]} />
 
-        <Animated.View style={sheetStyle}>
+        {/* Hauteur explicite : le pager et sa liste sont des enfants `flex: 1`,
+            et un parent en hauteur automatique les réduisait à zéro — le média
+            et les surcouches de la page n'étaient alors jamais dessinés. */}
+        <Animated.View style={[sheetStyle, { height }]}>
           <FeedPager
           mode="pager"
           items={items}
@@ -311,13 +319,14 @@ export function DiscoverViewer({
 
         <TopScrim />
 
-        {/* Bande de glissement vers le bas pour fermer, avec poignée.
-            Rendue après le pager et le scrim : elle capte le geste au-dessus
-            du défilement vertical, sans bloquer la barre du haut. */}
+        {/* Bande de glissement vers le bas pour fermer. Aucune poignée
+            visible, comme la visionneuse d'Instagram ; elle est rendue après le
+            pager pour capter le geste au-dessus de son défilement vertical, et
+            sous les boutons du haut, qui restent cliquables. */}
         <GestureDetector gesture={pan}>
-          <View style={[styles.dragZone, { top: insets.top + Spacing.six }]}>
-            <View style={styles.grabber} />
-          </View>
+          <View
+            style={[styles.dragZone, { top: insets.top + FeedMetrics.touchTarget }]}
+          />
         </GestureDetector>
 
         {/* Barre du haut : fermeture, comme l'écran publication d'Instagram. */}
@@ -333,11 +342,7 @@ export function DiscoverViewer({
                 }
                 onPress={() => setMuted((value) => !value)}
                 hitSlop={12}
-                style={({ pressed }) => [
-                  styles.closeButton,
-                  { backgroundColor: FeedSurface.glass },
-                  pressed && styles.pressed,
-                ]}>
+                style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
                 <Icon
                   icon={muted ? VolumeX : Volume2}
                   size={Spacing.four}
@@ -350,11 +355,7 @@ export function DiscoverViewer({
               accessibilityLabel={fr.social.viewerClose}
               onPress={onClose}
               hitSlop={12}
-              style={({ pressed }) => [
-                styles.closeButton,
-                { backgroundColor: FeedSurface.glass },
-                pressed && styles.pressed,
-              ]}>
+              style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}>
               <Icon icon={X} size={Spacing.five} color={FeedSurface.onMedia} />
             </Pressable>
           </View>
@@ -413,16 +414,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    // Hauteur de la bande de glissement, au-dessus du média.
-    height: 52,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  grabber: {
-    width: 40,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: FeedSurface.onMediaFaint,
+    // Hauteur de la bande de glissement, sous les boutons du haut. Invisible :
+    // aucun repère de feuille, la visionneuse couvre tout l'écran.
+    height: Spacing.six,
   },
   topBar: {
     position: 'absolute',
@@ -442,9 +436,6 @@ const styles = StyleSheet.create({
     borderRadius: Radii.full,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  closeFloating: {
-    backgroundColor: FeedSurface.glassStrong,
   },
   pressed: {
     opacity: 0.7,
