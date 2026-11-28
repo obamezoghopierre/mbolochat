@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import { DRIZZLE, type Database } from '../db/db.module.js';
@@ -59,6 +59,13 @@ export const FEED_EXPLORATION_SIZE = 30;
 export const FEED_SESSION_TTL_MS = 30 * 60 * 1000;
 /** Fenêtre pendant laquelle une publication déjà vue ne revient pas. */
 const SEEN_WINDOW_HOURS = 24;
+/**
+ * Même fenêtre pour le fil vidéo (Reels), plus courte : une session qui ne
+ * dure que quelques swipes ne doit pas se vider, mais une vidéo ne doit pas
+ * revenir dans la foulée. Sans exclusion du tout, le pager répétait les mêmes
+ * premières vidéos à chaque ouverture.
+ */
+const REELS_SEEN_WINDOW_MINUTES = 30;
 
 /** Élément de feed : la vue de publication, plus l'état de la relation. */
 export interface FeedItem extends PublicationView {
@@ -241,7 +248,7 @@ export class FeedService {
       [
         ...visiblePublicationConditions(viewerId),
         this.feedbackCondition(viewerId),
-        ...(format ? [sql`${publications.format} = ${format}`] : []),
+        ...(format ? this.formatConditions(format) : []),
       ],
       sql` and `,
     );
@@ -827,17 +834,24 @@ export class FeedService {
       conditions.push(eq(users.city, city!));
     } else {
       // « Pour toi » ne resert pas ce qui vient d'être vu : le fil doit avancer.
+      // Les Reels gardent une fenêtre bien plus courte : une session ne doit
+      // pas se vider en quelques swipes, mais une vidéo ne doit pas revenir
+      // dans la foulée.
+      const seenInterval =
+        format === 'video'
+          ? sql`${REELS_SEEN_WINDOW_MINUTES} * interval '1 minute'`
+          : sql`${SEEN_WINDOW_HOURS} * interval '1 hour'`;
       conditions.push(
         sql`not exists (
           select 1 from publication_views v
           where v.publication_id = ${publications.id}
             and v.user_id = ${viewerId}
-            and v.viewed_at > now() - (${SEEN_WINDOW_HOURS} * interval '1 hour')
+            and v.viewed_at > now() - (${seenInterval})
         )`,
       );
     }
     if (format) {
-      conditions.push(eq(publications.format, format));
+      conditions.push(...this.formatConditions(format));
     }
 
     // Graine stable par construction : deux sessions ne mélangent pas les mêmes
@@ -914,7 +928,7 @@ export class FeedService {
     }
     const conditions = [...this.baseConditions(viewerId)];
     if (scope?.format) {
-      conditions.push(eq(publications.format, scope.format));
+      conditions.push(...this.formatConditions(scope.format));
     }
     if (scope?.tab === 'local') {
       conditions.push(eq(users.city, scope.city!));
@@ -1023,6 +1037,47 @@ export class FeedService {
       ...visiblePublicationConditions(viewerId),
       this.feedbackCondition(viewerId),
     ];
+  }
+
+  /**
+   * Filtre de format du fil (`?format=`), plus la règle des Reels.
+   *
+   * Le pager plein écran ne sait monter qu'une vidéo unique : il écarte un
+   * carrousel, et il attend une vidéo verticale. Quand le serveur lui envoyait
+   * des carrousels et des vidéos paysage, ses pages se vidaient — ce qui
+   * relançait le chargement en boucle et pouvait laisser l'onglet vide.
+   *
+   * Une publication dont les dimensions sont inconnues reste servie : le
+   * client la traite comme verticale (même règle que `isVideoPost`).
+   */
+  private formatConditions(format: FeedFormat): SQL[] {
+    const conditions: SQL[] = [eq(publications.format, format)];
+    if (format !== 'video') {
+      return conditions;
+    }
+    conditions.push(sql`(
+      (
+        select count(*)
+        from publication_media pm
+        join media_assets ma on ma.id = pm.asset_id
+        where pm.publication_id = ${publications.id}
+          and ma.deleted_at is null
+      ) = 1
+      and exists (
+        select 1
+        from publication_media pm
+        join media_assets ma on ma.id = pm.asset_id
+        where pm.publication_id = ${publications.id}
+          and ma.kind = 'video'
+          and ma.deleted_at is null
+          and (
+            ma.width is null
+            or ma.height is null
+            or ma.width < ma.height
+          )
+      )
+    )`);
+    return conditions;
   }
 
   /**

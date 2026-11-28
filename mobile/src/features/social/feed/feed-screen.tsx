@@ -45,7 +45,7 @@ import { feedChromeHidden, resetFeedChromeTracking, showFeedChrome } from '@/lib
 import { markLaunchReady } from '@/lib/launch-gate';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { Image } from 'expo-image';
-import { isVideoPost, primaryMedia } from './pager/feed-media';
+import { isPlayableVideo, isVideoPost, primaryMedia } from './pager/feed-media';
 import { useReportPublication } from './use-report-publication';
 import { useAuth } from '@/lib/auth-context';
 import { SuggestedAccountsCard } from './suggested-accounts-card';
@@ -761,12 +761,17 @@ function FeedSurfaceView({
 /**
  * Reels plein écran ouverts depuis une vidéo du fil, comme Instagram : la vidéo
  * touchée et celles qui la suivent dans le fil, puis le fil vidéo dédié de
- * l'onglet (`?format=video`), chargé au fur et à mesure. Seules les vidéos
- * verticales y figurent ; les doublons avec le fil d'accueil sont écartés.
+ * l'onglet (`?format=video`), chargé au fur et à mesure. Les doublons avec le
+ * fil d'accueil sont écartés.
  */
 /**
- * Onglet « Reels » : le fil vidéo dédié (vidéos verticales seules) en plein
- * écran, page par page, comme l'onglet Reels d'Instagram ou le fil TikTok.
+ * Onglet « Reels » : le fil vidéo dédié en plein écran, page par page, comme
+ * l'onglet Reels d'Instagram ou le fil TikTok.
+ *
+ * Toutes les vidéos y entrent (`isPlayableVideo`) : une vidéo carrée ou paysage
+ * est affichée en entier, lettrée, plutôt que d'être écartée — l'écarter
+ * pouvait vider l'onglet alors que le serveur n'envoyait que du paysage, et
+ * relancer le chargement en boucle.
  */
 function ReelsTabView({
   deferNetwork,
@@ -783,7 +788,7 @@ function ReelsTabView({
   const [height, setHeight] = useState(0);
   const videos = useFeed('for-you', { format: 'video', deferNetwork });
   const report = useReportPublication(videos.notifyError);
-  const items = useMemo(() => videos.items.filter(isVideoPost), [videos.items]);
+  const items = useMemo(() => videos.items.filter(isPlayableVideo), [videos.items]);
   const loadMoreVideos = videos.loadMore;
   useEffect(() => {
     if (items.length === 0 && videos.status === 'ready' && videos.hasMore && !videos.loadingMore) {
@@ -890,7 +895,7 @@ function ReelsLayer({
       .map((id) => homeById.get(id))
       .filter((post): post is FeedPost => Boolean(post));
     const taken = new Set(head.map((post) => post.id));
-    const more = videos.items.filter((post) => isVideoPost(post) && !taken.has(post.id));
+    const more = videos.items.filter((post) => isPlayableVideo(post) && !taken.has(post.id));
     return [...head, ...more];
   }, [homeById, seedIds, videos.items]);
   const loadMoreVideos = videos.loadMore;

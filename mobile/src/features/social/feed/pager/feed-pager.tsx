@@ -70,6 +70,7 @@ import { SuggestedAccountsCard } from '../suggested-accounts-card';
 import { AboutAccountSheet } from '../about-account-sheet';
 import { SaveCollectionSheet } from '../save-collection-sheet';
 import { ShareTargetsRow, type ShareSheetAction } from './share-targets';
+import { readFeedMuted, writeFeedMuted } from './sound-preference';
 import { TextPage } from './text-page';
 import { FeedViewTracker } from './view-tracker';
 import { VideoPage } from './video-page';
@@ -217,12 +218,15 @@ export function FeedPager({
   const [activeIndex, setActiveIndex] = useState(initialIndex);
 
   // Le son peut être contrôlé par la surcouche (bouton son du visionneuse
-  // Découvrir) ; sans contrôle, le pager garde son état interne.
-  const [internalMuted, setInternalMuted] = useState(false);
+  // Découvrir) ; sans contrôle, le pager garde son état. Cet état part de la
+  // préférence partagée : couper le son dans les Reels le garde coupé quand on
+  // ouvre un Reel depuis une carte, et après un remontage.
+  const [internalMuted, setInternalMuted] = useState(readFeedMuted);
   const muted = mutedProp ?? internalMuted;
   const toggleMuted = useCallback(() => {
     const next = !muted;
     if (mutedProp === undefined) {
+      writeFeedMuted(next);
       setInternalMuted(next);
     }
     onMuteChange?.(next);
@@ -338,6 +342,19 @@ export function FeedPager({
     },
     [onActiveIndexChange],
   );
+
+  // Liste qui rétrécit (« Pas intéressé », publication supprimée, auteur
+  // masqué) : sans recalage, l'index actif dépasse la fin et plus aucune page
+  // n'est active — le pager reste figé, sans lecture ni issue visible. On
+  // revient sur la dernière page existante.
+  useEffect(() => {
+    if (flow || items.length === 0 || activeIndex <= items.length - 1) {
+      return;
+    }
+    const target = items.length - 1;
+    setActiveIndex(target);
+    listRef.current?.scrollToIndex({ index: target, animated: false });
+  }, [activeIndex, flow, items.length]);
 
   /** Double-tap : réagit sans jamais retirer une réaction déjà posée. */
   const handleDoubleTap = useCallback(
