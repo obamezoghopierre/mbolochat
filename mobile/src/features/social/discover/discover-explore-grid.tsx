@@ -238,7 +238,7 @@ export const DiscoverExploreGrid = forwardRef<
         />
       }
       ListHeaderComponent={
-        skeleton ? <GridSkeleton tileWidth={tileWidth} /> : null
+        skeleton ? <GridSkeleton tileWidth={tileWidth} /> : undefined
       }
       ListEmptyComponent={
         status === 'ready' ? (
@@ -247,7 +247,7 @@ export const DiscoverExploreGrid = forwardRef<
             title={discoverFr.emptyAllTitle}
             description={discoverFr.emptyAllBody}
           />
-        ) : null
+        ) : undefined
       }
       ListFooterComponent={
         <View style={styles.sentinel}>
@@ -408,6 +408,12 @@ export const PublicationTile = memo(function PublicationTile({
   // Longue-pression : menu rapide sur la vignette, comme l'écran
   // publication d'Instagram. Le point de l'appui sert d'ancre visuelle.
   const handleLongPress = () => {
+    // Un appui précédent a pu programmer l'ouverture du visionneuse :
+    // sans annulation, il s'ouvrirait sous le menu rapide.
+    if (openTimer.current) {
+      clearTimeout(openTimer.current);
+      openTimer.current = undefined;
+    }
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
     onLongPress?.(publication, index, pointRef.current ?? { x: 0, y: 0 });
   };

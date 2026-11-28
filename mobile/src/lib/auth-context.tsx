@@ -14,6 +14,7 @@ import {
   clearDiscoverSnapshot,
   hydrateDiscoverSnapshot,
 } from '@/features/social/discover/discover-snapshot';
+import { clearSearchHistoryFor } from '@/features/social/discover/search-history';
 import { sweepSecureMedia } from '@/features/e2ee/mediaStore';
 import { resetE2eeInitState } from '@/features/e2ee/initState';
 import { getActiveE2eeUser, setActiveE2eeUser } from '@/features/e2ee/activeUser';
@@ -323,6 +324,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           void purgeTextDrafts(user.id);
           void clearFeedSnapshots(user.id);
           void clearDiscoverSnapshot(user.id);
+          void clearSearchHistoryFor(user.id);
         }
       },
     }),

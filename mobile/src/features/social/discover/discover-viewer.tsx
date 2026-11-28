@@ -133,6 +133,10 @@ export function DiscoverViewer({
             dismiss();
           } else {
             translateY.value = withSpring(0, Motion.spring);
+            // L'assombrissement suit le doigt : il doit se lever avec la
+            // feuille, sinon l'écran reste voilé après un geste annulé.
+            // eslint-disable-next-line react-hooks/immutability
+            dim.value = withTiming(0, { duration: Motion.base });
           }
         }),
     [handleDismiss, translateY, dim, sheetHeight, reduced],
@@ -403,7 +407,7 @@ const styles = StyleSheet.create({
   },
   dimOverlay: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#000000',
+    backgroundColor: FeedSurface.background,
   },
   dragZone: {
     position: 'absolute',

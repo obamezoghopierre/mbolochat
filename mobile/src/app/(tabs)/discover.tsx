@@ -16,6 +16,7 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
+  type TextInputInstance,
   View,
 } from 'react-native';
 import { useNetworkState } from 'expo-network';
@@ -86,7 +87,7 @@ export default function DiscoverScreen() {
 
   const [query, setQuery] = useState(typeof params.q === 'string' ? params.q : '');
   // Champ de recherche : « Annuler » et la touche Entrée rendent le clavier.
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   // Un hashtag touché dans le fil ouvre cet onglet avec `?q=#tag` : l'onglet
   // peut déjà être monté, donc on suit le paramètre et pas seulement sa
   // valeur initiale (ajustement d'état au render, sans effet en cascade).
@@ -659,6 +660,8 @@ const styles = StyleSheet.create({
     flex: 1,
     ...Type.body,
     height: '100%',
+    paddingVertical: 0,
+    textAlignVertical: 'center',
   },
   iconButton: {
     padding: Spacing.one,
