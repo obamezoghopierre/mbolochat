@@ -46,7 +46,7 @@ describe('Intérêts du spectateur (e2e)', () => {
         firstName,
         lastName: 'Interets',
         email: `${firstName.toLowerCase()}_interets_${suffix}_${counter}@e2e.dev`,
-        password=[REDACTED_PASSWORD]
+        password: 'password123',
         birthday: '1995-06-15',
         gender: 'FEMALE',
       })
