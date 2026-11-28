@@ -867,6 +867,8 @@ export const fr = {
     shareToHint: 'Choisis un ami à qui envoyer cette publication.',
     shareSending: 'Envoi en cours…',
     shareSearchPlaceholder: 'Rechercher un ami',
+    shareFilterPlaceholder: 'Rechercher…',
+    shareFilterEmpty: 'Aucune discussion ne correspond.',
     qrCodeLabel: 'QR code',
     qrCodeHint: 'Fais scanner ce code pour ouvrir la publication.',
     deletePublication: 'Supprimer',
