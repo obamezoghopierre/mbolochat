@@ -42,4 +42,39 @@ describe('computeHotScore', () => {
       computeHotScore({ ...counts, likes: 10 }, NOW, NOW),
     );
   });
+
+  it('fait du partage le signal le plus fort', () => {
+    const shared = computeHotScore({ ...counts, shares: 10 }, NOW, NOW);
+    const liked = computeHotScore({ ...counts, likes: 10 }, NOW, NOW);
+    expect(shared).toBeGreaterThan(liked);
+  });
+
+  it('classe un Reel regardé jusqu’au bout devant un Reel zappé', () => {
+    const watched = computeHotScore(
+      { ...counts, views: 100, completions: 60, watchSeconds: 100 * 12 },
+      NOW,
+      NOW,
+    );
+    const skipped = computeHotScore(
+      { ...counts, views: 100, quickSkips: 80, watchSeconds: 100 * 1.5 },
+      NOW,
+      NOW,
+    );
+    expect(watched).toBeGreaterThan(skipped);
+  });
+
+  it('ne rend jamais l’engagement négatif à cause des swipes rapides', () => {
+    const zapped = computeHotScore({ ...counts, quickSkips: 10_000 }, NOW, NOW);
+    expect(zapped).toBe(computeHotScore(counts, NOW, NOW));
+    expect(zapped).toBeGreaterThan(0);
+  });
+
+  it('compte le temps de visionnage sans écraser les likes', () => {
+    const base = computeHotScore(counts, NOW, NOW);
+    const watched = computeHotScore({ ...counts, watchSeconds: 30 }, NOW, NOW);
+    const liked = computeHotScore({ ...counts, likes: 1 }, NOW, NOW);
+    expect(watched).toBeGreaterThan(base);
+    // 30 s regardées valent un like : 0,1 × 30 = 3.
+    expect(watched).toBe(liked);
+  });
 });
