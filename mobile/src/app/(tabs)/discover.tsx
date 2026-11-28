@@ -83,19 +83,28 @@ export default function DiscoverScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const network = useNetworkState();
-  const params = useLocalSearchParams<{ q?: string }>();
+  const params = useLocalSearchParams<{ q?: string | string[] }>();
+  // `params.q` peut arriver en tableau quand le paramètre est dupliqué à la
+  // navigation : une référence instable casserait la comparaison ci-dessous
+  // et bouclerait le render. On le normalise en chaîne, stable par valeur.
+  const paramQuery =
+    typeof params.q === 'string'
+      ? params.q
+      : Array.isArray(params.q)
+        ? params.q[0]
+        : undefined;
 
-  const [query, setQuery] = useState(typeof params.q === 'string' ? params.q : '');
+  const [query, setQuery] = useState(paramQuery ?? '');
   // Champ de recherche : « Annuler » et la touche Entrée rendent le clavier.
   const inputRef = useRef<TextInputInstance>(null);
   // Un hashtag touché dans le fil ouvre cet onglet avec `?q=#tag` : l'onglet
   // peut déjà être monté, donc on suit le paramètre et pas seulement sa
   // valeur initiale (ajustement d'état au render, sans effet en cascade).
-  const [seenQuery, setSeenQuery] = useState(params.q);
-  if (params.q !== seenQuery) {
-    setSeenQuery(params.q);
-    if (typeof params.q === 'string') {
-      setQuery(params.q);
+  const [seenQuery, setSeenQuery] = useState(paramQuery);
+  if (paramQuery !== seenQuery) {
+    setSeenQuery(paramQuery);
+    if (paramQuery !== undefined) {
+      setQuery(paramQuery);
     }
   }
   // Focus du champ : l'historique et les suggestions s'affichent à ce moment.
