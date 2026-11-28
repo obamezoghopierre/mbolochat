@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import { commentSessions, feedSessions } from '../db/schema.js';
 import { hotScoreSql } from '../feed/hot-score.js';
+import { purgeStaleInterests } from '../publications/user-interests.js';
 
 /** Nombre de lignes réécrites par passe, pour lisser la charge. */
 export const RANKING_BATCH_SIZE = 2_000;
@@ -36,6 +37,17 @@ export class RankingService {
         .returning({ id: commentSessions.id });
       return { feedSessions: feed.length, commentSessions: comments.length };
     });
+  }
+
+  /**
+   * Supprime les intérêts dont la valeur décroissée est négligeable.
+   *
+   * La décroissance n'est appliquée qu'à l'écriture ; sans cette purge, les
+   * sujets d'un utilisateur inactif garderaient indéfiniment un score périmé et
+   * la table grossirait sans fin.
+   */
+  async purgeStaleInterests(): Promise<number> {
+    return purgeStaleInterests(this.db);
   }
 
   /**

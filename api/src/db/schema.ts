@@ -1863,6 +1863,48 @@ export const publicationTopics = pgTable(
 );
 
 /**
+ * Intérêts d'un utilisateur par sujet, nourris par ce qu'il regarde, aime,
+ * enregistre et partage (signal n° 1 du classement d'Instagram : l'activité du
+ * spectateur).
+ *
+ * `score` est **décroissant dans le temps** : la valeur stockée est celle à
+ * `updated_at`, la décroissance est appliquée à chaque nouvelle écriture et par
+ * la purge du worker. Il peut être négatif (zaps répétés) sans jamais effacer un
+ * sujet sur un seul swipe. Jamais fourni par le client : seul le serveur écrit
+ * cette table.
+ */
+export const userInterests = pgTable(
+  'user_interests',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** `hashtag` (explicite) ou `topic` (mot-clé implicite de la légende). */
+    kind: text('kind').notNull(),
+    /** Hashtag ou mot normalisé, même règle que `hashtags.tag`. */
+    subject: text('subject').notNull(),
+    score: doublePrecision('score').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('user_interests_user_subject_uidx').on(
+      table.userId,
+      table.kind,
+      table.subject,
+    ),
+    // Lecture au classement : les intérêts les plus forts d'un utilisateur.
+    index('user_interests_user_score_idx').on(table.userId, table.score),
+    // Purge périodique des intérêts périmés.
+    index('user_interests_updated_idx').on(table.updatedAt),
+  ],
+);
+
+/**
  * Story 24 h. L'audience et les exclusions sont vérifiées en SQL ; les vues
  * uniques vivent dans `story_views`.
  */
@@ -2138,6 +2180,7 @@ export type PublicationRepost = typeof publicationReposts.$inferSelect;
 export type PublicationView = typeof publicationViews.$inferSelect;
 export type Hashtag = typeof hashtags.$inferSelect;
 export type PublicationTopic = typeof publicationTopics.$inferSelect;
+export type UserInterest = typeof userInterests.$inferSelect;
 export type Story = typeof stories.$inferSelect;
 export type StoryView = typeof storyViews.$inferSelect;
 export type Highlight = typeof highlights.$inferSelect;

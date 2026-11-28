@@ -20,6 +20,11 @@ import {
 } from 'drizzle-orm';
 import { extractHashtags, extractMentions } from '../common/social-tags.js';
 import { syncPublicationTopics } from './publication-topics.js';
+import {
+  actionForView,
+  recordInterest,
+  type InterestAction,
+} from './user-interests.js';
 import { computeHotScore, hotScoreSql } from '../feed/hot-score.js';
 import { DRIZZLE, type Database } from '../db/db.module.js';
 import {
@@ -1154,7 +1159,7 @@ export class PublicationsService {
     completed: boolean;
     firstView: boolean;
   }> {
-    await this.assertVisible(publicationId, viewerId);
+    const { row: viewed } = await this.assertVisible(publicationId, viewerId);
     const watchedMs = Math.min(
       Math.max(0, Math.trunc(input.watchedMs ?? 0)),
       MAX_WATCH_MS,
@@ -1162,6 +1167,18 @@ export class PublicationsService {
     const completed = input.completed === true;
 
     const result = await this.db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({
+          completed: publicationViews.completed,
+          watchMs: publicationViews.watchMs,
+        })
+        .from(publicationViews)
+        .where(
+          and(
+            eq(publicationViews.publicationId, publicationId),
+            eq(publicationViews.userId, viewerId),
+          ),
+        );
       const [upserted] = await tx
         .insert(publicationViews)
         .values({
@@ -1193,13 +1210,30 @@ export class PublicationsService {
           .set({ viewCount: sql`${publications.viewCount} + 1` })
           .where(eq(publications.id, publicationId));
       }
-      return upserted;
+      return {
+        ...upserted,
+        wasCompleted: before?.completed === true,
+        previousWatchMs: before?.watchMs ?? null,
+      };
     });
 
     // Une vue n'incrémente le compteur qu'à la première consultation :
     // on ne notifie les pairs que dans ce cas pour limiter le bruit.
     if (result.inserted) {
       void this.broadcastStats(publicationId);
+    }
+    // Intérêts du spectateur : on compte le **changement de palier** de la vue
+    // (zap, vue, terminée), jamais chaque requête. Un palier ne se compte donc
+    // qu'une fois, même si le client renvoie la même vue ; et une vue d'abord
+    // zappée puis regardée longtemps compte bien comme un intérêt. Le palier est
+    // calculé sur le temps **cumulé retenu** par le serveur (`greatest`), pas sur
+    // la valeur brute envoyée.
+    const tier = (watchMs: number | null, done: boolean) =>
+      watchMs === null ? null : actionForView(watchMs, done);
+    const tierBefore = tier(result.previousWatchMs, result.wasCompleted);
+    const tierAfter = actionForView(result.watchMs, result.completed);
+    if (tierAfter !== null && tierAfter !== tierBefore) {
+      this.rememberInterest(viewerId, viewed.authorId, publicationId, tierAfter);
     }
     return {
       viewCount: await this.viewCount(publicationId),
@@ -1219,7 +1253,7 @@ export class PublicationsService {
     publicationId: string,
     viewerId: string,
   ): Promise<{ shareCount: number }> {
-    await this.assertVisible(publicationId, viewerId);
+    const { row: shared } = await this.assertVisible(publicationId, viewerId);
 
     // Le partage entre dans le score : compteur et score dans la même
     // transaction, comme les autres interactions.
@@ -1237,6 +1271,10 @@ export class PublicationsService {
     if (!row) {
       throw new NotFoundException('Publication introuvable.');
     }
+    // Un envoi est le signal le plus fort : recommander à quelqu'un d'autre. Pas
+    // d'idempotence ici (voir plus haut) : chaque partage est un événement, et le
+    // score est borné, donc des envois répétés ne le font pas exploser.
+    this.rememberInterest(viewerId, shared.authorId, publicationId, 'share');
     void this.broadcastStats(publicationId);
     return { shareCount: row.shareCount };
   }
@@ -1309,6 +1347,8 @@ export class PublicationsService {
     let notification: Awaited<
       ReturnType<SocialNotificationsService['create']>
     > = null;
+    // Vrai seulement à la **première** réaction : changer de type ne compte pas.
+    let firstReaction = false;
 
     await this.db.transaction(async (tx) => {
       const inserted = await tx
@@ -1329,6 +1369,7 @@ export class PublicationsService {
           );
         return;
       }
+      firstReaction = true;
       await tx
         .update(publications)
         .set({ likeCount: sql`${publications.likeCount} + 1` })
@@ -1350,6 +1391,9 @@ export class PublicationsService {
     // Effet push hors transaction : un échec réseau ne défait pas la réaction.
     await this.notifications.deliver(notification);
 
+    if (firstReaction) {
+      this.rememberInterest(viewerId, row.authorId, publicationId, 'like');
+    }
     void this.broadcastStats(publicationId);
     return {
       reaction: kind,
@@ -1362,7 +1406,8 @@ export class PublicationsService {
    * pas le compteur, l'enregistrement reste privé et n'émet aucune notification.
    */
   async save(publicationId: string, viewerId: string) {
-    await this.assertVisible(publicationId, viewerId);
+    const { row: target } = await this.assertVisible(publicationId, viewerId);
+    let newlySaved = false;
 
     await this.db.transaction(async (tx) => {
       const inserted = await tx
@@ -1373,6 +1418,7 @@ export class PublicationsService {
       if (inserted.length === 0) {
         return;
       }
+      newlySaved = true;
       await tx
         .update(publications)
         .set({ saveCount: sql`${publications.saveCount} + 1` })
@@ -1380,6 +1426,9 @@ export class PublicationsService {
       await this.refreshHotScore(tx, publicationId);
     });
 
+    if (newlySaved) {
+      this.rememberInterest(viewerId, target.authorId, publicationId, 'save');
+    }
     void this.broadcastStats(publicationId);
     return { saved: true, saveCount: await this.saveCount(publicationId) };
   }
@@ -1430,6 +1479,7 @@ export class PublicationsService {
     let notification: Awaited<
       ReturnType<SocialNotificationsService['create']>
     > = null;
+    let newlyReposted = false;
 
     await this.db.transaction(async (tx) => {
       const inserted = await tx
@@ -1440,6 +1490,7 @@ export class PublicationsService {
       if (inserted.length === 0) {
         return;
       }
+      newlyReposted = true;
       await tx
         .update(publications)
         .set({ repostCount: sql`${publications.repostCount} + 1` })
@@ -1457,6 +1508,9 @@ export class PublicationsService {
     // Effet push hors transaction : un échec réseau ne défait pas le repost.
     await this.notifications.deliver(notification);
 
+    if (newlyReposted) {
+      this.rememberInterest(viewerId, row.authorId, publicationId, 'repost');
+    }
     void this.broadcastStats(publicationId);
     return {
       reposted: true,
@@ -1748,6 +1802,11 @@ export class PublicationsService {
 
     for (const notification of created) {
       await this.notifications.deliver(notification);
+    }
+    // Un commentaire rejoué (même `clientId`) ne recrée rien : on ne compte
+    // l'intérêt que pour un commentaire réellement créé.
+    if (inserted) {
+      this.rememberInterest(viewerId, row.authorId, publicationId, 'comment');
     }
 
     const view = inserted
@@ -3021,6 +3080,26 @@ export class PublicationsService {
     const view = await this.loadCommentView(commentId, viewerId);
     this.events.emitCommentUpdated(view);
     return view;
+  }
+
+  /**
+   * Retient l'intérêt du spectateur pour les sujets d'une publication.
+   *
+   * Un auteur n'apprend rien de ses propres publications : ses goûts se lisent
+   * dans ce qu'il regarde chez les autres, pas dans ce qu'il poste. Sans cette
+   * garde, un compte qui publie beaucoup sur un sujet se verrait recommander
+   * encore plus de ce même sujet.
+   */
+  private rememberInterest(
+    viewerId: string,
+    authorId: string,
+    publicationId: string,
+    action: InterestAction,
+  ): void {
+    if (viewerId === authorId) {
+      return;
+    }
+    void recordInterest(this.db, viewerId, publicationId, action);
   }
 
   /**

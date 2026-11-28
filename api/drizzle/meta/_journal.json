@@ -442,6 +442,13 @@
       "when": 1795591760690,
       "tag": "0062_backfill_publication_hashtags",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1795591820690,
+      "tag": "0063_user_interests",
+      "breakpoints": true
     }
   ]
 }
