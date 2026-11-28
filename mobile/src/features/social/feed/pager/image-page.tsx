@@ -537,20 +537,8 @@ export function ImagePage({
             onLayout={(event) =>
               measure(setFooterHeight, footerHeight)(event.nativeEvent.layout.height)
             }>
-            <PostActionBar
-              post={post}
-              reacted={state.reacted}
-              saved={state.saved}
-              reposted={state.reposted}
-              likeScale={likeScale}
-              onToggleLike={actions.onToggleLike}
-              onPickReaction={actions.onPickReaction}
-              onOpenComments={actions.onOpenComments}
-              onToggleSave={actions.onToggleSave}
-                onPickCollection={actions.onPickCollection}
-              onToggleRepost={actions.onToggleRepost}
-              onShare={actions.onShare}
-            />
+            {/* Points du carrousel entre la photo et la barre d'actions,
+                comme Instagram — pas après la barre. */}
             {total > 1 ? (
               <View
                 style={styles.dots}
@@ -572,6 +560,20 @@ export function ImagePage({
                 ))}
               </View>
             ) : null}
+            <PostActionBar
+              post={post}
+              reacted={state.reacted}
+              saved={state.saved}
+              reposted={state.reposted}
+              likeScale={likeScale}
+              onToggleLike={actions.onToggleLike}
+              onPickReaction={actions.onPickReaction}
+              onOpenComments={actions.onOpenComments}
+              onToggleSave={actions.onToggleSave}
+              onPickCollection={actions.onPickCollection}
+              onToggleRepost={actions.onToggleRepost}
+              onShare={actions.onShare}
+            />
             <LikedByLine post={post} color={tones.text} />
             {post.counters.comments > 0 ? (
               <Pressable
@@ -749,7 +751,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: Spacing.one,
-    marginTop: -Spacing.one,
   },
   dot: {
     width: 6,
