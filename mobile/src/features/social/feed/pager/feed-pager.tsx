@@ -59,11 +59,11 @@ import { shareToNetwork } from '@/lib/share-to-network';
 import { useThemePreference } from '@/lib/theme-preference';
 import type { ConversationSummary, FeedPost, SocialReaction } from '@/lib/types';
 import { FeedActionRail, type FeedActions, type FeedActionState } from './action-rail';
-import { isVideoPost, primaryMedia } from './feed-media';
+import { isPlayableVideo, isVideoPost, primaryMedia } from './feed-media';
 import { useTextPostTones } from './feed-tokens';
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { ImagePage } from './image-page';
-import { isPageActive, videoPageMode } from './preload';
+import { isPageActive, planPrefetch, videoPageMode } from './preload';
 import { PostInfoBlock } from './post-info';
 import { PostQrSheet } from './post-qr-sheet';
 import { SuggestedAccountsCard } from '../suggested-accounts-card';
@@ -214,10 +214,12 @@ export function FeedPager({
   const flow = mode === 'flow';
   const progressBottom = progressInset ?? barInset;
   const insets = useSafeAreaInsets();
-  // Sur réseau mobile, on ne précharge pas la vidéo voisine : le lecteur de la
-  // page active suffit, et deux flux simultanés coûtent cher en données.
+  // Sur réseau mobile, une seule vidéo d'avance est préchargée, en variante
+  // basse qualité (voir `planPrefetch`) : deux flux simultanés coûteraient trop
+  // cher en données. Sur Wi-Fi : deux vidéos d'avance et la précédente.
   const network = useNetworkState();
   const preloadNeighbors = network.type !== NetworkStateType.CELLULAR;
+  const prefetchNetwork = network.type === NetworkStateType.CELLULAR ? 'cellular' : 'unmetered';
   // En 3G/4G on préfère la variante basse qualité : moins de buffering, moins
   // de données. Le Wi-Fi et l'Ethernet prennent le flux principal.
   const preferLowQuality = network.type === NetworkStateType.CELLULAR;
@@ -335,6 +337,35 @@ export function FeedPager({
     () => ({ itemVisiblePercentThreshold: flow ? 50 : 60 }),
     [flow],
   );
+
+  // Préchargement autour de la page active, hors de la liste : `windowSize` ne
+  // monte que les voisines directes, alors qu'on veut deux vidéos d'avance sur
+  // Wi-Fi et des posters plus loin. Des lecteurs détachés (jamais de `VideoView`)
+  // remplissent le cache disque ; les posters passent par `Image.prefetch`.
+  const prefetchPlan = useMemo(
+    () =>
+      flow
+        ? { videos: [], posters: [] }
+        : planPrefetch(
+            activeIndex,
+            items.length,
+            prefetchNetwork,
+            (index) => {
+              const post = items[index];
+              return post !== undefined && isPlayableVideo(post);
+            },
+            playbackActive,
+          ),
+    [activeIndex, flow, items, playbackActive, prefetchNetwork],
+  );
+  useEffect(() => {
+    for (const index of prefetchPlan.posters) {
+      const poster = items[index] ? videoPosterUrl(items[index]) : null;
+      if (poster) {
+        void Image.prefetch(poster).catch(() => undefined);
+      }
+    }
+  }, [items, prefetchPlan.posters]);
 
   const lastActiveNotified = useRef(initialIndex);
   const onViewableItemsChanged = useCallback(
@@ -636,8 +667,9 @@ export function FeedPager({
           const doubleTap = (point?: { x: number; y: number } | null) =>
             handleDoubleTap(item, point ?? null);
           const videoMode = videoPageMode(distance, preloadNeighbors);
+          // Fil libre uniquement : le plein écran est préchargé par la couche commune.
           const sourceUrl =
-            videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
+            flow && videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
           // Publication texte ou photo : carte au format Instagram avec son
           // propre pied (barre d'actions horizontale), sans rail vertical ni
           // bloc infos. Seules les vidéos verticales seules restent en plein écran (Reels).
@@ -704,22 +736,17 @@ export function FeedPager({
                     onToggleSound={toggleMuted}
                     onScrubStateChange={setScrubbing}
                   />
-                ) : videoMode === 'prefetch' ? (
-                  // Voisine : lecteur détaché (aucune vue) pour remplir le
-                  // cache, plus son poster affiché en attendant.
-                  <>
-                    {sourceUrl ? <VideoPrefetch url={sourceUrl} /> : null}
-                    <VideoPoster post={item} height={height} />
-                  </>
                 ) : (
-                  // Réseau mobile : la voisine affiche son poster, sans lecteur.
+                  // Voisine : son poster seul. Le cache vidéo est rempli par la
+                  // couche de préchargement en bas du pager, hors de la liste,
+                  // pour qu'une même vidéo n'ait jamais deux lecteurs détachés.
                   <VideoPoster post={item} height={height} />
                 )
               ) : primaryMedia(item) ? (
                 <>
-                {/* Vidéo seule affichée en carte (carrée ou paysage) : même
-                    préchargement détaché que les Reels voisins. */}
-                {sourceUrl && primaryMedia(item)?.kind === 'video' ? (
+                {/* Vidéo seule affichée en carte (carrée ou paysage) : préchargée
+                    dans le fil libre ; en plein écran, par la couche commune. */}
+                {flow && sourceUrl && primaryMedia(item)?.kind === 'video' ? (
                   <VideoPrefetch url={sourceUrl} />
                 ) : null}
                 <ImagePage
@@ -805,6 +832,13 @@ export function FeedPager({
           </ThemedText>
         </View>
       ) : null}
+
+      {/* Préchauffe le cache disque des vidéos voisines (aucune vue native). */}
+      {prefetchPlan.videos.map((target) => {
+        const post = items[target.index];
+        const url = post ? videoSourceUrl(post, target.low) : null;
+        return url ? <VideoPrefetch key={`${post.id}:${target.low ? 'low' : 'main'}`} url={url} /> : null;
+      })}
 
       {/* « Nouvelles publications » : pile d'avatars d'auteurs en haut du
           fil libre, façon X — le survol des photos suffit, le compte reste
