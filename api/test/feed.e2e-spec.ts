@@ -1,6 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -541,6 +541,50 @@ describe('Feed (e2e)', () => {
       .from(publications)
       .where(eq(publications.id, post.id));
     expect(row.hotScore).toBeGreaterThan(0);
+  });
+
+  it('classe un contenu regardé jusqu’au bout devant un contenu zappé', async () => {
+    const ranking = app.get(RankingService);
+    const author = await register('Watchtime');
+    const watched = await publish(author);
+    const zapped = await publish(author);
+    // Même âge et mêmes compteurs : seul le visionnage les distingue.
+    const createdAt = new Date(Date.now() - 60 * 60 * 1000);
+    for (const post of [watched, zapped]) {
+      await db
+        .update(publications)
+        .set({ createdAt, hotScore: 0 })
+        .where(eq(publications.id, post.id));
+    }
+    const viewers = [
+      await register('Spectatrice'),
+      await register('Spectateur'),
+      await register('Curieuse'),
+    ];
+    await db.insert(publicationViews).values([
+      ...viewers.map((viewer) => ({
+        publicationId: watched.id,
+        userId: viewer.id,
+        watchMs: 20_000,
+        completed: true,
+      })),
+      ...viewers.map((viewer) => ({
+        publicationId: zapped.id,
+        userId: viewer.id,
+        watchMs: 1_200,
+        completed: false,
+      })),
+    ]);
+
+    await ranking.recomputeHotScores({ batchSize: 10_000 });
+    const rows = await db
+      .select({ id: publications.id, hotScore: publications.hotScore })
+      .from(publications)
+      .where(inArray(publications.id, [watched.id, zapped.id]));
+    const score = (id: string) => rows.find((row) => row.id === id)!.hotScore;
+    expect(score(watched.id)).toBeGreaterThan(score(zapped.id));
+    // Les swipes rapides pénalisent sans jamais annuler le score.
+    expect(score(zapped.id)).toBeGreaterThan(0);
   });
 
   it('purge les sessions de fil et de commentaires expirées', async () => {

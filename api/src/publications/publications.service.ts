@@ -1205,11 +1205,19 @@ export class PublicationsService {
   ): Promise<{ shareCount: number }> {
     await this.assertVisible(publicationId, viewerId);
 
-    const [row] = await this.db
-      .update(publications)
-      .set({ shareCount: sql`${publications.shareCount} + 1` })
-      .where(eq(publications.id, publicationId))
-      .returning({ shareCount: publications.shareCount });
+    // Le partage entre dans le score : compteur et score dans la même
+    // transaction, comme les autres interactions.
+    const row = await this.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(publications)
+        .set({ shareCount: sql`${publications.shareCount} + 1` })
+        .where(eq(publications.id, publicationId))
+        .returning({ shareCount: publications.shareCount });
+      if (updated) {
+        await this.refreshHotScore(tx, publicationId);
+      }
+      return updated;
+    });
     if (!row) {
       throw new NotFoundException('Publication introuvable.');
     }
