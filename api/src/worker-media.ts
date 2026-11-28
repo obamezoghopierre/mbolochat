@@ -70,6 +70,16 @@ async function bootstrap(): Promise<void> {
         );
       }
       try {
+        const staleInterests = await ranking.purgeStaleInterests();
+        if (staleInterests > 0) {
+          logger.log(`Intérêts périmés supprimés : ${staleInterests}.`);
+        }
+      } catch (error) {
+        logger.error(
+          `Purge des intérêts interrompue : ${(error as Error).message}`,
+        );
+      }
+      try {
         const pruned = await ranking.pruneExpiredSessions();
         if (pruned.feedSessions + pruned.commentSessions > 0) {
           logger.log(
