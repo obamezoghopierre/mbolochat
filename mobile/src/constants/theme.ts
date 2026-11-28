@@ -253,6 +253,14 @@ export const DiscoverMetrics = {
   topicBadgeSize: 56,
   /** Gouttière entre deux vignettes de la mosaïque Découvrir (bord à bord). */
   tileGutter: 2,
+  /** Épaisseur de l'indicateur de l'onglet actif des filtres de recherche. */
+  filterIndicator: 2,
+  /** Fenêtre de rendu de la mosaïque : rangées montées d'emblée, écrans autour, lot de rendu. */
+  initialRows: 6,
+  windowSize: 7,
+  renderBatch: 4,
+  /** « Charger plus » quand il reste moins de N écrans de contenu. */
+  endReachScreens: 1.5,
 } as const;
 
 /**
@@ -341,6 +349,8 @@ export const MediaSurface = {
   background: '#080A0D', onSurface: '#FFFFFF', onSurfaceSoft: 'rgba(255,255,255,0.76)',
   overlay: 'rgba(8,10,13,0.52)', glass: 'rgba(255,255,255,0.14)',
   glassStrong: 'rgba(255,255,255,0.22)', border: 'rgba(255,255,255,0.22)', recording: '#FF453A',
+  /** Balayage lumineux du squelette de chargement des grilles de contenu. */
+  shimmer: 'rgba(255,255,255,0.10)',
 } as const;
 
 /**

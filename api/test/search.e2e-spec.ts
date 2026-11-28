@@ -87,12 +87,49 @@ describe('Recherche (e2e)', () => {
       avatarUrl: null,
       verified: false,
       privateAccount: false,
+      followStatus: 'none',
     });
     expect(JSON.stringify(response.body)).not.toContain('@e2e.dev');
 
     // Le compte qui cherche ne se trouve pas lui-même.
     const self = await search(viewer, { q: viewer.username, type: 'users' }).expect(200);
     expect(self.body.users.items.map((item: { id: string }) => item.id)).not.toContain(viewer.id);
+  });
+
+  it("expose l'état d'abonnement du lecteur et la forme des publications", async () => {
+    const viewer = await register('Suiveur');
+    const target = await register(`Suivi${letters}`);
+    const statusOf = async () => {
+      const response = await search(viewer, { q: `Suivi${letters}`, type: 'users' }).expect(200);
+      return response.body.users.items.find(
+        (item: { id: string }) => item.id === target.id,
+      )?.followStatus;
+    };
+
+    expect(await statusOf()).toBe('none');
+    await request(app.getHttpServer())
+      .post(`/users/${target.id}/follow`)
+      .set('Authorization', `Bearer ${viewer.token}`)
+      .expect(201);
+    expect(await statusOf()).toBe('accepted');
+
+    const post = await publish(target, `Legende grille ${suffix}`);
+    const found = await search(viewer, {
+      q: `grille ${suffix}`,
+      type: 'publications',
+    }).expect(200);
+    const item = found.body.publications.items.find(
+      (entry: { id: string }) => entry.id === post.id,
+    );
+    expect(item).toBeDefined();
+    expect(['text', 'image', 'carousel', 'video']).toContain(item?.format);
+    expect(item?.media).toEqual([]);
+    expect(item?.counters).toEqual({
+      likes: 0,
+      comments: 0,
+      reposts: 0,
+      views: 0,
+    });
   });
 
   it('exclut les comptes bloqués de la recherche', async () => {

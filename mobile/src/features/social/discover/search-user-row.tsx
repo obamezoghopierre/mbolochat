@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
@@ -9,13 +9,16 @@ import { fr } from '@/i18n/fr';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import type { SearchUser } from '@/lib/types';
-
-type FollowState = 'idle' | 'following' | 'pending';
+import { followUiState, type SearchFollowUi } from './search-model';
 
 /**
  * Compte dans les résultats de recherche, avec un bouton « Suivre » en
- * ligne comme Instagram : l'appui suit/déssuit de façon optimiste (avec
- * retour en arrière), le reste de la ligne ouvre le profil.
+ * ligne comme Instagram : le bouton part de l'abonnement réel renvoyé par
+ * l'API (suivi, demande en attente), l'appui suit ou se désabonne de façon
+ * optimiste avec retour en arrière, le reste de la ligne ouvre le profil.
+ *
+ * Une demande en attente se retire comme un abonnement : le serveur supprime
+ * la ligne `pending`.
  */
 export function SearchUserRow({
   account,
@@ -26,10 +29,12 @@ export function SearchUserRow({
 }) {
   const theme = useTheme();
   const { token } = useAuth();
-  const [state, setState] = useState<FollowState>('idle');
+  const [state, setState] = useState<SearchFollowUi>(() =>
+    followUiState(account.followStatus),
+  );
   const [busy, setBusy] = useState(false);
 
-  const follow = useCallback(async () => {
+  const follow = async () => {
     if (!token || busy || state !== 'idle') {
       return;
     }
@@ -38,28 +43,29 @@ export function SearchUserRow({
     try {
       const result = await api.followUser(token, account.id);
       // Compte privé : le serveur attend l'accord de l'auteur.
-      setState(result.status === 'pending' ? 'pending' : 'following');
+      setState(followUiState(result.status));
     } catch {
       setState('idle');
     } finally {
       setBusy(false);
     }
-  }, [account.id, busy, state, token]);
+  };
 
-  const unfollow = useCallback(async () => {
-    if (!token || busy || state !== 'following') {
+  const release = async () => {
+    if (!token || busy || state === 'idle') {
       return;
     }
+    const previous = state;
     setBusy(true);
     setState('idle');
     try {
       await api.unfollowUser(token, account.id);
     } catch {
-      setState('following');
+      setState(previous);
     } finally {
       setBusy(false);
     }
-  }, [account.id, busy, state, token]);
+  };
 
   const label =
     state === 'following'
@@ -99,23 +105,21 @@ export function SearchUserRow({
         accessibilityLabel={label}
         accessibilityState={{ selected: state !== 'idle' }}
         disabled={busy}
-        onPress={state === 'following' ? () => void unfollow() : () => void follow()}
+        onPress={state === 'idle' ? () => void follow() : () => void release()}
         style={({ pressed }) => [
           styles.followButton,
-          state === 'following'
-            ? {
-                borderWidth: 1,
+          state === 'idle'
+            ? { backgroundColor: theme.accent }
+            : {
+                borderWidth: StyleSheet.hairlineWidth,
                 borderColor: theme.accent,
                 backgroundColor: theme.background,
-              }
-            : { backgroundColor: theme.accent },
-          pressed && { opacity: 0.7 },
+              },
+          pressed && styles.pressed,
         ]}>
         <ThemedText
           type="smallBold"
-          style={{
-            color: state === 'following' ? theme.accent : theme.onAccent,
-          }}>
+          style={{ color: state === 'idle' ? theme.onAccent : theme.accent }}>
           {label}
         </ThemedText>
       </Pressable>
@@ -150,5 +154,8 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two,
     borderRadius: Radii.full,
     marginRight: Spacing.three,
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });

@@ -1,16 +1,22 @@
-import { useEffect } from 'react';
-import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import ReAnimated, { useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
-import { Radii, Spacing } from '@/constants/theme';
+import { DiscoverMetrics, Radii, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
-export type SearchFilter = 'all' | 'users' | 'publications' | 'hashtags';
+import type { SearchFilter } from './search-model';
+
+const TABS: SearchFilter[] = ['all', 'users', 'publications', 'hashtags'];
 
 /**
  * Onglets de filtre des résultats de recherche, comme Instagram : un
  * indicateur glissant sous l'onglet actif, les autres en teinte secondaire.
+ *
+ * La largeur d'un onglet est mesurée sur la rangée elle-même : l'écran est en
+ * retrait de ses marges latérales, donc la largeur de la fenêtre ne donnerait
+ * pas des onglets alignés sur l'indicateur.
  */
 export function SearchFilterTabs({
   value,
@@ -22,25 +28,22 @@ export function SearchFilterTabs({
   labels: Record<SearchFilter, string>;
 }) {
   const theme = useTheme();
-  const { width } = useWindowDimensions();
-  const tabWidth = width / 4;
-  const index = Math.max(
-    0,
-    (['all', 'users', 'publications', 'hashtags'] as SearchFilter[]).indexOf(value),
-  );
-  const indicatorLeft = useSharedValue(index * tabWidth);
+  // Largeur mesurée de la rangée ; 0 tant que le premier rendu n'a pas eu lieu.
+  const [rowWidth, setRowWidth] = useState(0);
+  const tabWidth = rowWidth / TABS.length;
+  const index = Math.max(0, TABS.indexOf(value));
+  const indicatorLeft = useSharedValue(0);
 
-  // L'indicateur glisse vers l'onglet actif au changement.
+  // L'indicateur glisse vers l'onglet actif au changement, et se replace
+  // quand la largeur mesurée arrive.
   useEffect(() => {
     indicatorLeft.value = withSpring(index * tabWidth, { damping: 22 });
   }, [index, indicatorLeft, tabWidth]);
 
-  const tabs: SearchFilter[] = ['all', 'users', 'publications', 'hashtags'];
-
   return (
-    <View>
+    <View onLayout={(event) => setRowWidth(event.nativeEvent.layout.width)}>
       <View style={styles.row}>
-        {tabs.map((tab) => {
+        {TABS.map((tab) => {
           const active = tab === value;
           return (
             <Pressable
@@ -59,17 +62,19 @@ export function SearchFilterTabs({
           );
         })}
       </View>
-      <ReAnimated.View
-        pointerEvents="none"
-        style={[
-          styles.indicator,
-          {
-            left: indicatorLeft,
-            width: tabWidth,
-            backgroundColor: theme.accent,
-          },
-        ]}
-      />
+      {tabWidth > 0 ? (
+        <ReAnimated.View
+          pointerEvents="none"
+          style={[
+            styles.indicator,
+            {
+              left: indicatorLeft,
+              width: tabWidth,
+              backgroundColor: theme.accent,
+            },
+          ]}
+        />
+      ) : null}
     </View>
   );
 }
@@ -88,7 +93,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   indicator: {
-    height: 3,
+    // Posé sous la rangée sans lui prendre de hauteur.
+    position: 'absolute',
+    bottom: 0,
+    height: DiscoverMetrics.filterIndicator,
     borderRadius: Radii.full,
   },
 });
