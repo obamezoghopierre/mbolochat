@@ -869,6 +869,7 @@ export const fr = {
     shareSearchPlaceholder: 'Rechercher un ami',
     shareFilterPlaceholder: 'Rechercher…',
     shareFilterEmpty: 'Aucune discussion ne correspond.',
+    shareConversationsLoadError: 'Impossible de charger les discussions.',
     qrCodeLabel: 'QR code',
     qrCodeHint: 'Fais scanner ce code pour ouvrir la publication.',
     deletePublication: 'Supprimer',

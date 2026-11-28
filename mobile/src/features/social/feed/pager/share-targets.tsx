@@ -190,7 +190,7 @@ export function ShareTargetsRow({
       {loadError ? (
         <View style={styles.loadError}>
           <ThemedText type="caption" themeColor="textSecondary">
-            {fr.social.conversationsLoadError}
+            {fr.social.shareConversationsLoadError}
           </ThemedText>
           <Pressable onPress={loadConversations} accessibilityRole="button" hitSlop={8}>
             <ThemedText type="caption" style={{ color: theme.accent, fontWeight: '600' }}>
