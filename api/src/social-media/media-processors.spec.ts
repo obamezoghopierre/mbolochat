@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildVideoArgs,
   computePosterSeekSeconds,
   displayedImageSize,
+  VIDEO_PROFILE_LOW,
+  VIDEO_PROFILE_MAIN,
   videoRotation,
 } from './media-processors.js';
 
@@ -76,5 +79,59 @@ describe('videoRotation', () => {
     expect(videoRotation({ tags: { rotate: '90' } })).toBe(90);
     expect(videoRotation({ tags: { rotate: '180' } })).toBe(180);
     expect(videoRotation({})).toBe(0);
+  });
+});
+
+/**
+ * Arguments d'encodage : le plafond de débit protège la lecture en 4G (le CRF
+ * seul ne borne pas les pics), et les deux variantes partagent le même GOP et
+ * les mêmes options de compatibilité, pour que le seek et le décodage Android
+ * se comportent pareil quelle que soit la qualité servie.
+ */
+describe('buildVideoArgs', () => {
+  const valueOf = (args: string[], flag: string) => args[args.indexOf(flag) + 1];
+
+  it('plafonne le débit du rendu principal avec un tampon de deux secondes', () => {
+    const args = buildVideoArgs('in', 'out.mp4', VIDEO_PROFILE_MAIN);
+    expect(valueOf(args, '-maxrate')).toBe('3500k');
+    expect(valueOf(args, '-bufsize')).toBe('7000k');
+    expect(valueOf(args, '-crf')).toBe('23');
+    expect(valueOf(args, '-b:a')).toBe('128k');
+    expect(valueOf(args, '-vf')).toBe("scale='min(1080,iw)':-2");
+  });
+
+  it('plafonne bien plus bas la variante basse qualité', () => {
+    const args = buildVideoArgs('in', 'out-low.mp4', VIDEO_PROFILE_LOW);
+    expect(valueOf(args, '-maxrate')).toBe('900k');
+    expect(valueOf(args, '-bufsize')).toBe('1800k');
+    expect(valueOf(args, '-crf')).toBe('30');
+    expect(valueOf(args, '-b:a')).toBe('96k');
+    expect(valueOf(args, '-vf')).toBe("scale='min(540,iw)':-2");
+  });
+
+  it('garde un tampon égal à deux fois le débit maximal sur chaque profil', () => {
+    for (const profile of [VIDEO_PROFILE_MAIN, VIDEO_PROFILE_LOW]) {
+      expect(profile.bufsizeKbps).toBe(profile.maxrateKbps * 2);
+    }
+  });
+
+  it('garde la variante basse plus légère que le rendu principal', () => {
+    expect(VIDEO_PROFILE_LOW.maxrateKbps).toBeLessThan(VIDEO_PROFILE_MAIN.maxrateKbps);
+    expect(VIDEO_PROFILE_LOW.maxWidth).toBeLessThan(VIDEO_PROFILE_MAIN.maxWidth);
+  });
+
+  it('utilise le preset medium et conserve les options de compatibilité', () => {
+    const args = buildVideoArgs('in', 'out.mp4', VIDEO_PROFILE_MAIN);
+    expect(valueOf(args, '-preset')).toBe('medium');
+    expect(valueOf(args, '-pix_fmt')).toBe('yuv420p');
+    expect(valueOf(args, '-movflags')).toBe('+faststart');
+    expect(valueOf(args, '-g')).toBe(valueOf(args, '-keyint_min'));
+    expect(valueOf(args, '-sc_threshold')).toBe('0');
+  });
+
+  it('lit l’entrée et écrit la sortie aux bons endroits', () => {
+    const args = buildVideoArgs('/tmp/in', '/tmp/out.mp4', VIDEO_PROFILE_MAIN);
+    expect(valueOf(args, '-i')).toBe('/tmp/in');
+    expect(args.at(-1)).toBe('/tmp/out.mp4');
   });
 });
