@@ -135,6 +135,7 @@ export function FeedPager({
   items,
   height,
   barInset,
+  progressInset,
   playbackActive,
   refreshing,
   hasMore,
@@ -165,6 +166,13 @@ export function FeedPager({
    * overlays remontent d'autant pour ne jamais passer dessous.
    */
   barInset: number;
+  /**
+   * Distance au bord bas où se pose la ligne de progression des vidéos : juste
+   * au-dessus de la barre d'onglets quand il y en a une, au ras de la zone
+   * système sinon. Le bloc infos et le rail s'ancrent juste au-dessus.
+   * Par défaut, `barInset`.
+   */
+  progressInset?: number;
   /**
    * L'écran est au premier plan (onglet actif et application ouverte).
    * Une page ne joue que si elle est visible **et** que cet indicateur est vrai :
@@ -204,6 +212,7 @@ export function FeedPager({
 }) {
   const listRef = useRef<FlatList<FeedPost> | null>(null);
   const flow = mode === 'flow';
+  const progressBottom = progressInset ?? barInset;
   const insets = useSafeAreaInsets();
   // Sur réseau mobile, on ne précharge pas la vidéo voisine : le lecteur de la
   // page active suffit, et deux flux simultanés coûtent cher en données.
@@ -615,6 +624,7 @@ export function FeedPager({
           const chrome = {
             height,
             barInset,
+            progressInset: progressBottom,
             isActive,
             // 0 sur les autres pages : seule celle du post touché rejoue.
             burstKey: burst.id === item.id ? burst.key : 0,
@@ -674,12 +684,10 @@ export function FeedPager({
               ? null
               : () => void actions.follow(item),
           };
-          // Le bloc infos et le rail partagent la même ancre basse : ils
-          // se posent ~35 px au-dessus du cluster icônes+libellés de la
-          // barre d'onglets — la position basse d'un fil vidéo, sans jamais
-          // passer dessous. La ligne de progression vit dans la bande basse
-          // de la barre : pas d'espace à réserver ici.
-          const paddingBottom = barInset - Spacing.two;
+          // Le bloc infos et le rail partagent la même ancre basse : juste
+          // au-dessus de la ligne de progression, elle-même plaquée sur la
+          // barre d'onglets. Rien ne passe donc jamais dessous la barre.
+          const paddingBottom = progressBottom + Spacing.three;
 
           return (
             <>
@@ -747,8 +755,6 @@ export function FeedPager({
                 durationMs={primaryMedia(item)?.durationMs ?? null}
               />
 
-              {!isCardPost ? <OverlayScrim /> : null}
-
               {/* Le média réduit s'affiche seul quand la feuille
                   est ouverte : ni rail d'actions, ni infos auteur/son.
                   Les cartes texte et photo portent leurs actions. */}
@@ -788,7 +794,7 @@ export function FeedPager({
 
       {/* Dégradé haut fixe : les onglets restent lisibles sur les Reels. Le
           fil libre a son propre bandeau opaque (barre du haut). */}
-      {flow ? null : <TopScrim />}
+      {flow ? null : <TopScrim inset={insets.top} />}
 
       {/* Fin du fil : posée en overlay, jamais en pied de liste — un élément
           supplémentaire casserait le snap plein écran. */}
@@ -991,37 +997,6 @@ export function FeedPager({
   );
 }
 
-/** Dégradé de lisibilité en bas de chaque page (équivalent du LinearGradient Mbolo). */
-/**
- * Dégradé de lisibilité en bas de la vidéo.
- *
- * Construit en bandes empilées plutôt qu'avec `expo-linear-gradient` : ce module
- * est natif, et l'APK de développement installé ne l'embarque pas
- * (`Can't find ViewManager 'ViewManagerAdapter_ExpoLinearGradient'`). Des bandes
- * fines produisent un dégradé continu à l'œil, sans dépendance native.
- *
- * L'opacité suit une progression quadratique : quasi nulle en haut, elle
- * n'atteint ~25 % qu'au tout dernier pixel, donc la vidéo reste claire.
- */
-const SCRIM_BANDS = 24;
-const SCRIM_HEIGHT = 190;
-const SCRIM_MAX_OPACITY = 0.55;
-
-const SCRIM_COLORS = Array.from(
-  { length: SCRIM_BANDS },
-  (_, index) => `rgba(0,0,0,${(((index + 1) / SCRIM_BANDS) ** 2 * SCRIM_MAX_OPACITY).toFixed(4)})`,
-);
-
-function OverlayScrim() {
-  return (
-    <View pointerEvents="none" style={styles.scrimContainer}>
-      {SCRIM_COLORS.map((color) => (
-        <View key={color} style={[styles.scrimBand, { backgroundColor: color }]} />
-      ))}
-    </View>
-  );
-}
-
 /** Nombre de bandes du dégradé sous les onglets. */
 const TOP_SCRIM_BANDS = 12;
 /** Hauteur du dégradé haut : laisse respirer les onglets sans voiler le média. */
@@ -1038,9 +1013,9 @@ const TOP_SCRIM_COLORS = Array.from({ length: TOP_SCRIM_BANDS }, (_, index) => {
  * plein écran. Exporté pour les surcouches plein écran qui ajoutent une
  * barre au-dessus du pager (visionneuse de la grille Découvrir).
  */
-export function TopScrim() {
+export function TopScrim({ inset = 0 }: { inset?: number }) {
   return (
-    <View pointerEvents="none" style={styles.topScrim}>
+    <View pointerEvents="none" style={[styles.topScrim, { height: TOP_SCRIM_HEIGHT + inset }]}>
       {TOP_SCRIM_COLORS.map((color) => (
         <View key={color} style={[styles.topScrimBand, { backgroundColor: color }]} />
       ))}
@@ -1341,18 +1316,6 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
   },
-  // 150 px découpés en bandes égales : aucun bord visible, la vidéo reste
-  // claire en haut de la zone.
-  scrimContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: SCRIM_HEIGHT,
-  },
-  scrimBand: {
-    flex: 1,
-  },
   topScrim: {
     position: 'absolute',
     top: 0,
@@ -1372,13 +1335,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'space-between',
     paddingLeft: Spacing.three,
-  },
-  scrim: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 300,
+    paddingRight: Spacing.two,
   },
   infoColumn: {
     flex: 1,

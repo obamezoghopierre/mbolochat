@@ -1,5 +1,6 @@
 import {
   Bookmark,
+  Ellipsis,
   Forward,
   Heart,
   MessageCircle,
@@ -126,6 +127,21 @@ export const FeedActionRail = memo(function FeedActionRail({
         onPress={actions.onOpenComments}
       />
 
+      {/* Partager, comme TikTok : la feuille porte aussi Republier, Copier le
+          lien et les options (signaler, pas intéressé…). */}
+      <RailAction
+        icon={Forward}
+        label={
+          (post.counters.shares ?? 0) + post.counters.reposts > 0
+            ? compactCount((post.counters.shares ?? 0) + post.counters.reposts)
+            : fr.social.shareShort
+        }
+        accessibilityLabel={fr.social.shareLabel}
+        selected={state.reposted}
+        color={state.reposted ? FeedSurface.reposted : FeedSurface.onMedia}
+        onPress={actions.onShare}
+      />
+
       {/* Libellé = compteur : un mot complet (« Enregistrer »)
           ne tient pas dans 64 px dès que la police système est agrandie. */}
       <RailAction
@@ -142,20 +158,16 @@ export const FeedActionRail = memo(function FeedActionRail({
         onLongPress={actions.onPickCollection ?? undefined}
       />
 
-      {/* Partager, comme TikTok : la feuille porte aussi Republier, Copier le
-          lien et les options (signaler, pas intéressé…). */}
-      <RailAction
-        icon={Forward}
-        label={
-          (post.counters.shares ?? 0) + post.counters.reposts > 0
-            ? compactCount((post.counters.shares ?? 0) + post.counters.reposts)
-            : fr.social.shareShort
-        }
-        accessibilityLabel={fr.social.shareLabel}
-        selected={state.reposted}
-        color={state.reposted ? FeedSurface.reposted : FeedSurface.onMedia}
-        onPress={actions.onShare}
-      />
+      {/* « ⋯ » en fin de rail, comme Instagram : options de la publication
+          (enregistrer dans une collection, lien, QR, modération…). */}
+      {actions.onMore ? (
+        <RailAction
+          icon={Ellipsis}
+          label=""
+          accessibilityLabel={fr.social.shareMoreOptions}
+          onPress={actions.onMore}
+        />
+      ) : null}
     </View>
   );
 });

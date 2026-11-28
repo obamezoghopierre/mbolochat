@@ -305,6 +305,7 @@ export function DiscoverViewer({
           initialIndex={Math.min(initialIndex, items.length - 1)}
           height={height}
           barInset={insets.bottom + Spacing.four}
+          progressInset={insets.bottom}
           playbackActive={screenFocused && appActive}
           refreshing={false}
           hasMore={hasMore}
@@ -317,7 +318,7 @@ export function DiscoverViewer({
           onActiveIndexChange={setActiveIndex}
         />
 
-        <TopScrim />
+        <TopScrim inset={insets.top} />
 
         {/* Bande de glissement vers le bas pour fermer. Aucune poignée
             visible, comme la visionneuse d'Instagram ; elle est rendue après le

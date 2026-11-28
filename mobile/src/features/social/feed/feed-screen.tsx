@@ -1,4 +1,4 @@
-import { ChevronLeft, Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
+import { Camera, ChevronLeft, Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -27,6 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import {
+  FeedMetrics,
   FeedSurface,
   Motion,
   Radii,
@@ -79,6 +80,13 @@ export function FeedScreen() {
   const insets = useSafeAreaInsets();
   const { width, height: screenHeight } = useWindowDimensions();
   const [tab, setTab] = useState<TopTab>(DEFAULT_TAB);
+  /**
+   * Onglet Reels posé : le pager horizontal ne répond plus au glissement, un
+   * lecteur plein écran ne tournant pas les pages du fil. Verrou posé
+   * **après** le calage (et retiré avant un `scrollTo` programmatique) : couper
+   * le défilement pendant l'animation l'annulerait sur Android.
+   */
+  const [pagerLocked, setPagerLocked] = useState(false);
   const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
   // Plein écran Reels ouvert depuis une carte : la barre d'onglets du haut
   // s'efface, comme sur Instagram.
@@ -200,6 +208,11 @@ export function FeedScreen() {
     (next: TopTab) => {
       const index = TABS.findIndex((entry) => entry.id === next);
       if (index >= 0) {
+        // Le verrou tombe AVANT le glissement : sinon Android annule le
+        // `scrollTo` animé en cours.
+        if (next !== 'reels') {
+          setPagerLocked(false);
+        }
         pager.current?.scrollTo({ x: index * width, animated: true });
       }
       setTab(next);
@@ -213,10 +226,24 @@ export function FeedScreen() {
       const next = TABS[index]?.id;
       if (next) {
         setTab(next);
+        setPagerLocked(next === 'reels');
       }
     },
     [width],
   );
+
+  // Retour Android sur l'onglet Reels : revient au fil, comme la flèche de
+  // l'en-tête — un lecteur plein écran n'est pas la racine de l'onglet.
+  useEffect(() => {
+    if (tab !== 'reels') {
+      return;
+    }
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      changeTab(DEFAULT_TAB);
+      return true;
+    });
+    return () => subscription.remove();
+  }, [changeTab, tab]);
 
   return (
     <View style={styles.screen}>
@@ -228,6 +255,9 @@ export function FeedScreen() {
         pagingEnabled
         showsHorizontalScrollIndicator={false}
         bounces={false}
+        // Sur l'onglet Reels, un glissement horizontal ne change pas de page :
+        // le lecteur plein écran garde le geste (le retour passe par la flèche).
+        scrollEnabled={!pagerLocked}
         directionalLockEnabled
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { x: pagerScrollX } } }],
@@ -406,6 +436,41 @@ function FeedTopBar({
       extrapolate: 'clamp',
     });
   }, [pageWidth, scrollX, tabCenters]);
+
+  // Onglet Reels : un lecteur plein écran, pas un fil. Ni onglets, ni « + », ni
+  // loupe — seulement un retour au fil, le titre et l'appareil photo, comme
+  // l'en-tête de Reels sur Instagram. Posé sur la vidéo, sans bandeau opaque.
+  if (tab === 'reels') {
+    return (
+      <View
+        pointerEvents="box-none"
+        style={[styles.fixedTop, { height: barHeight }]}>
+        <View
+          style={[styles.topBar, { paddingTop: topInset + Spacing.two }]}
+          pointerEvents="box-none">
+          <Pressable
+            onPress={() => onTabChange(DEFAULT_TAB)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={fr.social.reelsBackToFeed}
+            style={({ pressed }) => [styles.reelsHeaderButton, pressed && styles.pressed]}>
+            <Icon icon={ChevronLeft} size={28} color={FeedSurface.onMedia} />
+          </Pressable>
+          <ThemedText accessibilityRole="header" style={[styles.reelsTitle, OnMediaShadow]}>
+            {fr.social.feedTabs.reels}
+          </ThemedText>
+          <Pressable
+            onPress={openCreate}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={fr.social.createTitle}
+            style={({ pressed }) => [styles.reelsHeaderButton, pressed && styles.pressed]}>
+            <Icon icon={Camera} size={24} color={FeedSurface.onMedia} />
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <>
@@ -714,8 +779,10 @@ function FeedSurfaceView({
           onOpenComments={onOpenComments}
           height={height}
           // Barre du bas masquée en Reels : les infos et le rail descendent
-          // au-dessus de la seule zone système.
+          // au-dessus de la seule zone système, et la ligne de progression s'y
+          // plaque.
           barInset={insets.bottom + Spacing.four}
+          progressInset={insets.bottom}
           topInset={topInset}
           playbackActive={playbackActive}
           hideOverlays={hideOverlays}
@@ -869,6 +936,7 @@ function ReelsLayer({
   onOpenComments,
   height,
   barInset,
+  progressInset,
   topInset,
   playbackActive,
   hideOverlays,
@@ -880,6 +948,8 @@ function ReelsLayer({
   onOpenComments: (post: FeedPost) => void;
   height: number;
   barInset: number;
+  /** Distance au bord bas de la ligne de progression (sans barre : l'inset système). */
+  progressInset: number;
   topInset: number;
   playbackActive: boolean;
   hideOverlays: boolean;
@@ -938,6 +1008,7 @@ function ReelsLayer({
         initialIndex={0}
         height={height}
         barInset={barInset}
+        progressInset={progressInset}
         playbackActive={playbackActive}
         refreshing={false}
         hasMore={videos.hasMore || videos.status === 'loading'}
@@ -1136,6 +1207,19 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // En-tête de l'onglet Reels : retour, titre et appareil photo, sur la vidéo.
+  reelsHeaderButton: {
+    width: FeedMetrics.touchTarget,
+    height: FeedMetrics.touchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reelsTitle: {
+    ...Type.screenTitle,
+    flex: 1,
+    color: FeedSurface.onMedia,
+    fontWeight: '700',
   },
   fixedTop: {
     position: 'absolute',
