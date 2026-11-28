@@ -100,6 +100,11 @@ export function ImagePage({
   const { width: windowWidth } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const interactive = !chrome.hideOverlays;
+  // Plein écran (Découvrir, écran de publication) : `FeedPager` superpose déjà
+  // `PostInfoBlock` et `FeedActionRail` sur le média, comme pour les vidéos.
+  // L'en-tête et le pied de la carte classique ne s'affichent donc pas :
+  // sinon la légende et les actions apparaîtraient deux fois.
+  const fullScreen = Boolean(chrome.fullScreen);
   const author = post.author;
 
   // L'API renvoie des chemins signés relatifs : `<Image>` exige une URL absolue.
@@ -138,16 +143,21 @@ export function ImagePage({
   // Fil libre : la liste réserve déjà la place des barres, la carte n'a
   // qu'un petit écart et prend sa hauteur naturelle.
   const flow = Boolean(chrome.flow);
-  const topReserved = flow ? Spacing.two : insets.top + TOP_BAR_HEIGHT;
-  const bottomReserved = flow ? Spacing.four : chrome.barInset + Spacing.two;
-  const available = flow
-    ? Number.POSITIVE_INFINITY
-    : chrome.height -
-    topReserved -
-    bottomReserved -
-    (topHeight ?? TOP_ESTIMATE) -
-    (interactive ? (footerHeight ?? FOOTER_ESTIMATE) : 0) -
-    COLUMN_GAP * 2;
+  const topReserved = flow || fullScreen ? Spacing.two : insets.top + TOP_BAR_HEIGHT;
+  const bottomReserved = flow || fullScreen ? Spacing.four : chrome.barInset + Spacing.two;
+  const available =
+    flow
+      ? Number.POSITIVE_INFINITY
+      : fullScreen
+        // Plein écran : pas d'en-tête ni de pied à réserver, la photo peut
+        // occuper tout l'espace utile (comme une vidéo).
+        ? chrome.height - topReserved - bottomReserved
+        : chrome.height -
+          topReserved -
+          bottomReserved -
+          (topHeight ?? TOP_ESTIMATE) -
+          (interactive ? (footerHeight ?? FOOTER_ESTIMATE) : 0) -
+          COLUMN_GAP * 2;
   // Le cadre garde toujours le ratio du média (borné 4:5 – 1.91:1), comme
   // Instagram : quand la hauteur manque, il rétrécit en largeur et se centre,
   // au lieu de rogner la photo dans un cadre plus plat.
@@ -324,7 +334,9 @@ export function ImagePage({
       ]}>
       <View style={styles.column}>
         {/* En-tête : republication, avatar rond, nom + badge + date, lieu,
-            « Suivre » en texte et menu ⋯. */}
+            « Suivre » en texte et menu ⋯. Absent en plein écran : le pager
+            superpose `PostInfoBlock` à la place. */}
+        {fullScreen ? null : (
         <View
           style={styles.top}
           onLayout={(event) => measure(setTopHeight, topHeight)(event.nativeEvent.layout.height)}>
@@ -420,6 +432,7 @@ export function ImagePage({
             </Pressable>
           ) : null}
         </View>
+        )}
 
         {/* Photo pleine largeur au ratio d'origine (borné). */}
         <GestureDetector gesture={gestures}>
@@ -500,8 +513,11 @@ export function ImagePage({
         </GestureDetector>
 
         {/* Pied : actions, points du carrousel au centre, « Aimé par »,
-            commentaires. Masqué sous la feuille de commentaires. */}
-        {interactive ? (
+            commentaires. Masqué sous la feuille de commentaires, et absent en
+            plein écran : le pager superpose `FeedActionRail` à la place — les
+            points du carrousel restent affichés par le badge « 2/5 » du média
+            (voir plus bas), comme sur les Reels. */}
+        {interactive && !fullScreen ? (
           <View
             style={styles.footer}
             onLayout={(event) =>

@@ -306,6 +306,10 @@ export function DiscoverViewer({
           height={height}
           barInset={insets.bottom + Spacing.four}
           progressInset={insets.bottom}
+          // Grille Découvrir, comme l'écran Explorer d'Instagram : toute
+          // publication garde le rail vertical et la légende superposée,
+          // photo ou vidéo — pas la carte empilée du fil.
+          forceFullScreen
           playbackActive={screenFocused && appActive}
           refreshing={false}
           hasMore={hasMore}

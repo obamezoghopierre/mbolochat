@@ -146,6 +146,16 @@ export function FeedPager({
   mode = 'pager',
   initialIndex = 0,
   onOpenReels,
+  /**
+   * Visionneuse plein écran (grille Découvrir, écran de publication) : chaque
+   * page garde le rail vertical et la légende superposée façon Reels, même
+   * pour une photo. Dans le fil normal, seule une vidéo verticale seule a ce
+   * traitement (`isVideoPost`) ; une photo s'y affiche en carte, avec son
+   * pied horizontal. Instagram applique la même distinction : sa grille
+   * Explorer ouvre toute publication en plein écran avec rail vertical,
+   * photo ou vidéo, alors que son fil garde les cartes pour les photos.
+   */
+  forceFullScreen = false,
   freshPosts = [],
   onShowFresh,
   /**
@@ -199,6 +209,8 @@ export function FeedPager({
   initialIndex?: number;
   /** Fil libre : ouvre le plein écran Reels sur cette vidéo. */
   onOpenReels?: (post: FeedPost) => void;
+  /** Voir le commentaire de `forceFullScreen` au-dessus des props. */
+  forceFullScreen?: boolean;
   /** Publications arrivées depuis le chargement (pastille d'avatars). */
   freshPosts?: FeedPost[];
   /** Tap sur la pastille : remonter en haut et recharger. */
@@ -652,18 +664,6 @@ export function FeedPager({
         renderItem={({ item, index }) => {
           const distance = index - activeIndex;
           const isActive = isPageActive(index, activeIndex, playbackActive);
-          const chrome = {
-            height,
-            barInset,
-            progressInset: progressBottom,
-            isActive,
-            // 0 sur les autres pages : seule celle du post touché rejoue.
-            burstKey: burst.id === item.id ? burst.key : 0,
-            burstPoint: burst.id === item.id ? burst.point : null,
-            likeScale,
-            hideOverlays,
-            flow,
-          };
           const doubleTap = (point?: { x: number; y: number } | null) =>
             handleDoubleTap(item, point ?? null);
           const videoMode = videoPageMode(distance, preloadNeighbors);
@@ -672,8 +672,29 @@ export function FeedPager({
             flow && videoMode === 'prefetch' ? videoSourceUrl(item, preferLowQuality) : null;
           // Publication texte ou photo : carte au format Instagram avec son
           // propre pied (barre d'actions horizontale), sans rail vertical ni
-          // bloc infos. Seules les vidéos verticales seules restent en plein écran (Reels).
-          const isCardPost = flow || !isVideoPost(item);
+          // bloc infos. Seules les vidéos verticales seules restent en plein écran
+          // (Reels) — sauf dans une visionneuse plein écran (`forceFullScreen`,
+          // grille Découvrir ou écran de publication) : là, comme sur l'écran
+          // Explorer d'Instagram, toute publication garde le rail vertical et la
+          // légende superposée, photo ou vidéo.
+          const isCardPost = flow || (!forceFullScreen && !isVideoPost(item));
+          const chrome = {
+            height,
+            barInset,
+            progressInset: progressBottom,
+            isActive,
+            // Vrai seulement si le post reste en plein écran malgré
+            // `forceFullScreen` (donc jamais pour une carte, cf. `isCardPost`
+            // ci-dessus) : `ImagePage` s'en sert pour masquer son en-tête et son
+            // pied, remplacés par `PostInfoBlock` et `FeedActionRail`.
+            fullScreen: forceFullScreen && !isCardPost,
+            // 0 sur les autres pages : seule celle du post touché rejoue.
+            burstKey: burst.id === item.id ? burst.key : 0,
+            burstPoint: burst.id === item.id ? burst.point : null,
+            likeScale,
+            hideOverlays,
+            flow,
+          };
           const railState: FeedActionState = {
             reacted: item.viewer.reaction !== null,
             saved: Boolean(item.viewer.saved),
