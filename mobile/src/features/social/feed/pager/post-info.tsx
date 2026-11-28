@@ -8,11 +8,9 @@ import { Icon } from '@/components/icon';
 import { ThemedText } from '@/components/themed-text';
 import { FeedMetrics, FeedSurface, Radii, Spacing, Type } from '@/constants/theme';
 import { fr } from '@/i18n/fr';
-import { formatCompactCount } from '@/lib/format';
 import { resolveMediaUrl } from '@/lib/media-url';
 import { OnMediaShadow, feedText } from './feed-tokens';
 import { renderTokens } from './rich-text';
-import { LikedByLine } from '../liked-by-line';
 import type { FeedPost } from '@/lib/types';
 
 /** Longueur de légende affichée avant « voir plus ». */
@@ -106,10 +104,6 @@ export const PostInfoBlock = memo(function PostInfoBlock({
         )}
       </View>
 
-      {/* « Aimé par X » : seulement si un compte suivi a aimé (le nombre de
-          J'aime est déjà sur le rail d'actions). */}
-      <LikedByLine post={post} color={FeedSurface.onMedia} onMedia requireLikedBy />
-
       {/* Republication dans le fil Abonnements : « X a republié »,
           comme Instagram — le tap mène au profil du reposter. */}
       {post.repostedBy ? (
@@ -163,11 +157,6 @@ export const PostInfoBlock = memo(function PostInfoBlock({
         <ThemedText numberOfLines={1} style={[feedText.sound, OnMediaShadow, styles.soundText]}>
           {fr.social.originalSound} · {post.author.displayName}
         </ThemedText>
-        {post.counters.views > 0 ? (
-          <ThemedText style={[feedText.sound, OnMediaShadow, styles.viewsText]}>
-            {formatCompactCount(post.counters.views)} {fr.social.viewsUnit}
-          </ThemedText>
-        ) : null}
       </View>
     </View>
   );
@@ -262,10 +251,6 @@ const styles = StyleSheet.create({
   },
   soundText: {
     flexShrink: 1,
-  },
-  viewsText: {
-    flexShrink: 0,
-    opacity: 0.85,
   },
   pressed: {
     opacity: 0.75,

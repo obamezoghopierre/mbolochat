@@ -11,10 +11,12 @@ export function primaryMedia(post: FeedPost): PublicationMedia | null {
 }
 
 /**
- * Au-delà de ce ratio (largeur / hauteur), une vidéo n'est plus « verticale » :
- * même seuil que le cadrage des Reels (`video-page.tsx`).
+ * Au-delà de ce ratio (largeur / hauteur), une vidéo est paysage : elle est
+ * montrée entière, lettrée. Jusqu'à 1, elle remplit l'écran (`cover`), comme les
+ * Reels d'Instagram : un 9:16, un 3:4 ou un carré sont rognés légèrement sur les
+ * bords plutôt qu'entourés de bandes noires.
  */
-export const REELS_MAX_ASPECT = 3 / 4;
+export const REELS_MAX_ASPECT = 1;
 
 /**
  * La publication se lit-elle en plein écran vidéo (Reels) ? Seulement une

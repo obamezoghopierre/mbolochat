@@ -429,9 +429,10 @@ function formatDuration(total: number): string {
 const styles = StyleSheet.create({
   // Zone tactile généreuse mais visuellement fine.
   track: {
+    // Bord à bord, comme la ligne des Reels d'Instagram.
     position: 'absolute',
-    left: Spacing.two,
-    right: Spacing.two,
+    left: 0,
+    right: 0,
     height: FeedMetrics.progressTrackHeight + Spacing.two,
     justifyContent: 'center',
   },

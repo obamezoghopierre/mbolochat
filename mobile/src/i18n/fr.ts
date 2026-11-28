@@ -918,6 +918,7 @@ export const fr = {
     muteAuthorDone: 'Auteur masqué dans ton fil',
     endOfFeed: 'Tu es à jour',
     reelsClose: 'Fermer les Reels',
+    reelsBackToFeed: 'Retour au fil',
     /** Visionneuse plein écran de la grille Découvrir. */
     viewerClose: 'Fermer la publication',
     viewerEmpty: 'Aucune publication à afficher.',

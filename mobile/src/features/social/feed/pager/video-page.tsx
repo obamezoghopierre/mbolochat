@@ -1,6 +1,6 @@
 import { useEventListener } from 'expo';
 import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
-import { Expand, Play, Volume2, VolumeX } from 'lucide-react-native';
+import { Play, Volume2, VolumeX } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -23,6 +23,7 @@ import { primaryMedia, REELS_MAX_ASPECT } from './feed-media';
 import { isLoadStalled, loadKeyFor, showsInitialSpinner, VIDEO_STALL_TIMEOUT_MS } from './load-guard';
 import { videoPosterUrl, videoSourceUrl } from './video-source';
 import { HeartBurstOverlay } from './heart-burst';
+import { OverlayScrim } from './overlay-scrim';
 import { ProgressBar } from './progress-bar';
 import { usePlayerStatus } from './use-player-status';
 
@@ -31,6 +32,12 @@ export interface FeedPageChrome {
   height: number;
   /** Hauteur de la barre du bas : les overlays remontent d'autant. */
   barInset: number;
+  /**
+   * Distance au bord bas de la ligne de progression : plaquée juste au-dessus
+   * de la barre d'onglets (ou de la zone système sans barre). Par défaut,
+   * `barInset`.
+   */
+  progressInset?: number;
   /**
    * La page est visible **et** l'écran est au premier plan : seule une page
    * active joue. Une page peut rester montée (préchargement) sans jouer.
@@ -55,8 +62,6 @@ export interface FeedPageChrome {
 const TIME_UPDATE_INTERVAL_S = 0.25;
 /** Cadence pendant un glissement sur la barre : le doigt veut du précis. */
 const SCRUB_TIME_UPDATE_INTERVAL_S = 0.05;
-/** Vitesses proposées par la pastille, dans l'ordre du cycle. */
-const PLAYBACK_RATES = [1, 1.5, 2] as const;
 /** Reprises automatiques avant d'afficher l'état d'erreur. */
 const AUTO_RETRY_DELAYS_MS = [1200, 4000, 10000] as const;
 /** Position en dessous de laquelle on ne « reprend » pas (début de vidéo). */
@@ -110,24 +115,16 @@ export function VideoPage({
 }) {
   // Même résolution que le préchargement détaché : sans cela, deux URL
   // différentes (donc deux entrées de cache) pour la même vidéo.
-  // Vitesse augmentée : la variante basse qualité prend le relais — elle
-  // divise la charge de décodage, ce qui évite les saccades à 1,5×/2× sur
-  // les machines sans décodeur matériel. Le retour à 1× restaure le flux
-  // principal, et l'absence de variante basse qualité ne change rien.
-  // Pastille de vitesse : index dans PLAYBACK_RATES, cyclé au tap.
-  const [rateIndex, setRateIndex] = useState(0);
-  const url = videoSourceUrl(post, preferLowQuality || rateIndex > 0);
+  const url = videoSourceUrl(post, preferLowQuality);
   const posterUrl = videoPosterUrl(post);
   const insets = useSafeAreaInsets();
-  // Cadrage façon Reels / TikTok : une vidéo verticale (jusqu'à ~3:4) remplit
-  // l'écran (`cover`), rognée légèrement sur les bords — un 9:16 n'a donc
-  // jamais de bandes noires sur un téléphone plus allongé. Une vidéo carrée
-  // ou paysage est montrée entière (`contain`), centrée sur fond noir.
+  // Cadrage façon Reels : une vidéo portrait (9:16, 3:4, 4:5) ou carrée remplit
+  // l'écran (`cover`), rognée sur les bords — c'est ce que fait Instagram. Seule
+  // une vidéo paysage est montrée entière (`contain`), centrée sur fond noir.
   const media = primaryMedia(post);
   const videoAspect =
     media?.width && media?.height ? media.width / media.height : null;
   const letterboxed = videoAspect !== null && videoAspect > REELS_MAX_ASPECT;
-  const viewRef = useRef<VideoView>(null);
   const [userPaused, setUserPaused] = useState(false);
   // Source dont la première image a été décodée : le poster reste affiché page
   // par page tant que ce n'est pas le cas, pour éviter le flash noir.
@@ -205,17 +202,6 @@ export function VideoPage({
     player.timeUpdateEventInterval = interval;
   }, [player, scrubbing]);
 
-  // Vitesse de lecture : propriété impérative du lecteur natif.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/immutability
-    player.playbackRate = PLAYBACK_RATES[rateIndex];
-  }, [player, rateIndex]);
-
-  const cycleRate = useCallback(
-    () => setRateIndex((index) => (index + 1) % PLAYBACK_RATES.length),
-    [],
-  );
-
   // Mémorise la position de lecture pour la reprise au retour sur la page.
   // `useEventListener` maintient le dernier listener : pas de closure périmée.
   useEventListener(player, 'timeUpdate', ({ currentTime }) => {
@@ -274,19 +260,35 @@ export function VideoPage({
 
   const failed = status === 'error';
   useEffect(() => {
-    if (!chrome.isActive || userPaused || failed) {
+    // La feuille de commentaires couvre la page : la vidéo se met en pause,
+    // comme sur Instagram, au lieu de continuer à jouer derrière elle.
+    if (!chrome.isActive || chrome.hideOverlays || userPaused || failed) {
       player.pause();
       return;
     }
     // `status` est dans les dépendances : un lecteur recyclé encore `loading`
     // ignore `play()` appelé trop tôt, il faut relancer quand il est prêt.
     player.play();
-  }, [chrome.isActive, userPaused, failed, player, status]);
+  }, [chrome.hideOverlays, chrome.isActive, userPaused, failed, player, status]);
 
   /** Source unique pour les deux icônes : pause volontaire sur la page active. */
   const isPaused = userPaused && chrome.isActive;
-  const pauseForLongPress = useCallback(() => setUserPaused(true), []);
-  const resumeAfterLongPress = useCallback(() => setUserPaused(false), []);
+  // L'appui long met en pause **pendant** le geste et rend ensuite la lecture
+  // dans l'état où elle était : relancer une vidéo que l'utilisateur avait mise
+  // en pause lui-même serait un contresens.
+  const pausedByLongPress = useRef(false);
+  const pauseForLongPress = useCallback(() => {
+    if (!userPaused) {
+      pausedByLongPress.current = true;
+      setUserPaused(true);
+    }
+  }, [userPaused]);
+  const resumeAfterLongPress = useCallback(() => {
+    if (pausedByLongPress.current) {
+      pausedByLongPress.current = false;
+      setUserPaused(false);
+    }
+  }, []);
   // Un tap met en pause ou reprend, comme sur Instagram et TikTok. Le son vit
   // sur sa pastille : le tap ne doit pas couper le son de toute la page.
   const togglePause = useCallback(() => setUserPaused((value) => !value), []);
@@ -385,13 +387,11 @@ export function VideoPage({
   return (
     <View style={[styles.page, { height: chrome.height }]}>
       <VideoView
-        ref={viewRef}
         // Une clé par (publication, lecteur) : la vue native n'est jamais
         // réutilisée pour un autre lecteur.
         key={`${post.id}-${viewEpoch}`}
         player={player}
         style={styles.surface}
-        fullscreenOptions={{ enable: true, orientation: 'default' }}
         // `surfaceType="textureView"` : sur Android, une `SurfaceView` est
         // composée dans une couche native séparée. Quand la liste recycle les
         // cellules pendant le scroll, cette couche garde l'ancienne position
@@ -482,32 +482,20 @@ export function VideoPage({
           seul le média réduit reste visible au-dessus de la feuille. */}
       {!chrome.hideOverlays ? (
         <>
-          {isPaused ? (
-            <View pointerEvents="none" style={styles.playBadge}>
-              <Icon icon={Play} size={34} color={FeedSurface.onMedia} fill={FeedSurface.onMedia} />
-            </View>
-          ) : null}
+          {/* Voile de lisibilité sous les infos : rendu AVANT la ligne de
+              progression, qui reste donc d'un blanc franc. */}
+          <OverlayScrim inset={chrome.progressInset ?? chrome.barInset} />
 
-          {/* Contrôles supérieurs réservés à la pause : vitesse, plein écran
-              et son ne couvrent la vidéo que quand elle est suspendue. */}
           {isPaused ? (
-            <View style={[styles.topRight, { top: insets.top + Spacing.six }]}>
-              <Pressable
-                onPress={cycleRate}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel={`Vitesse de lecture : ${PLAYBACK_RATES[rateIndex]}×`}
-                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-                <ThemedText style={styles.rateText}>{PLAYBACK_RATES[rateIndex]}×</ThemedText>
-              </Pressable>
-              <Pressable
-                onPress={() => void viewRef.current?.enterFullscreen().catch(() => undefined)}
-                hitSlop={10}
-                accessibilityRole="button"
-                accessibilityLabel="Plein écran"
-                style={({ pressed }) => [styles.roundButton, pressed && styles.pressed]}>
-                <Icon icon={Expand} size={18} color={FeedSurface.onMedia} />
-              </Pressable>
+            <View pointerEvents="none" style={styles.centerLayer}>
+              <View style={styles.playBadge}>
+                <Icon
+                  icon={Play}
+                  size={34}
+                  color={FeedSurface.onMedia}
+                  fill={FeedSurface.onMedia}
+                />
+              </View>
             </View>
           ) : null}
 
@@ -528,21 +516,19 @@ export function VideoPage({
             <Icon icon={muted ? VolumeX : Volume2} size={16} color={FeedSurface.onMedia} />
           </Pressable>
           {soundFlash ? (
-            <View key={soundFlash} pointerEvents="none" style={styles.playBadge}>
-              <Icon icon={muted ? VolumeX : Volume2} size={30} color={FeedSurface.onMedia} />
+            <View key={soundFlash} pointerEvents="none" style={styles.centerLayer}>
+              <View style={styles.playBadge}>
+                <Icon icon={muted ? VolumeX : Volume2} size={30} color={FeedSurface.onMedia} />
+              </View>
             </View>
           ) : null}
 
           <ProgressBar
             player={player}
-            // La bande `insets.bottom` sous les icônes de la barre d'onglets
-            // est vide (la barre la réserve via `paddingBottom`) : la ligne
-            // s'y plaque, juste sous les icônes, sans toucher la zone des
-            // gestes système tout en bas. Sans inset (navigation à 3 boutons),
-            // on reste au-dessus de la barre pour ne pas bloquer ses pressions.
-            bottomInset={
-              insets.bottom > 0 ? Math.max(4, insets.bottom - 10) : chrome.barInset
-            }
+            // Plaquée juste au-dessus de la barre d'onglets (opaque) : la
+            // zone tactile ne chevauche jamais la barre, et la ligne est
+            // toujours visible, avec ou sans inset système.
+            bottomInset={chrome.progressInset ?? chrome.barInset}
             active={chrome.isActive && !failed}
             buffering={buffering && chrome.isActive}
             onSeekStart={handleSeekStart}
@@ -644,10 +630,18 @@ const styles = StyleSheet.create({
     color: '#000000',
     fontWeight: '700',
   },
-  playBadge: {
+  // Calque plein écran qui centre son enfant : le badge de pause et le flash de
+  // son tombent ainsi exactement au milieu, quelle que soit la taille.
+  centerLayer: {
     position: 'absolute',
-    alignSelf: 'center',
-    top: '44%',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  playBadge: {
     width: 74,
     height: 74,
     borderRadius: Radii.full,
@@ -655,18 +649,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // À gauche de la pastille son, qui occupe toujours le coin droit.
-  topRight: {
-    position: 'absolute',
-    right: Spacing.three + 36 + Spacing.two,
-    flexDirection: 'row',
-    gap: Spacing.two,
-  },
-  rateText: {
-    color: FeedSurface.onMedia,
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  // Posée en absolu sur la page : la pastille son flotte au-dessus de la vidéo.
   soundButton: {
     position: 'absolute',
     right: Spacing.three,
