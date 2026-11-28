@@ -69,6 +69,51 @@ const VIDEO_MAX_WIDTH = 1080;
 const VIDEO_LOW_MAX_WIDTH = 540;
 /** Intervalle de keyframes : un seek au doigt doit trouver une image proche. */
 const VIDEO_GOP_FRAMES = 30;
+
+/**
+ * Profil d'encodage d'une variante vidéo.
+ *
+ * `crf` règle la qualité visée ; `maxrateKbps`/`bufsizeKbps` **plafonnent** le
+ * débit (CRF contraint). Sans plafond, une scène très chargée (confettis,
+ * herbe, mouvement de caméra) fait grimper le débit bien au-delà de la moyenne
+ * et bloque la lecture en 4G : le CRF seul ne borne que la qualité, pas le pic.
+ * `bufsize` vaut deux fois `maxrate` (≈ 2 s de tampon), valeur usuelle qui
+ * laisse l'encodeur lisser les pics sans visage pixellisé.
+ */
+export interface VideoProfile {
+  maxWidth: number;
+  crf: number;
+  maxrateKbps: number;
+  bufsizeKbps: number;
+  audioKbps: number;
+}
+
+/** Rendu principal servi au fil (1080 px de large au plus). */
+export const VIDEO_PROFILE_MAIN: VideoProfile = {
+  maxWidth: VIDEO_MAX_WIDTH,
+  crf: 23,
+  maxrateKbps: 3_500,
+  bufsizeKbps: 7_000,
+  audioKbps: 128,
+};
+
+/** Variante basse qualité pour le réseau mobile (540 px de large au plus). */
+export const VIDEO_PROFILE_LOW: VideoProfile = {
+  maxWidth: VIDEO_LOW_MAX_WIDTH,
+  crf: 30,
+  maxrateKbps: 900,
+  bufsizeKbps: 1_800,
+  audioKbps: 96,
+};
+
+/**
+ * Preset x264. `medium` compresse nettement mieux que `veryfast` à qualité
+ * égale (fichiers sensiblement plus légers) ; l'encodage tourne en tâche de
+ * fond dans le worker, jamais dans la requête de l'utilisateur. On évite
+ * `slow` : le délai ffmpeg est borné (`FFMPEG_MAX_TIMEOUT_MS`) et un preset
+ * trop lent le consommerait sur les longues vidéos.
+ */
+const VIDEO_PRESET = 'medium';
 /** Borne basse du délai accordé à ffmpeg, même pour un clip très court. */
 const FFMPEG_MIN_TIMEOUT_MS = 120_000;
 /** Multiplicateur appliqué à la durée source pour la borne haute. */
@@ -147,6 +192,52 @@ export async function processImageVariants(
     height: sourceHeight,
     durationMs: null,
   };
+}
+
+/**
+ * Arguments ffmpeg d'une variante MP4 H.264/AAC progressive.
+ *
+ * Fonction pure, testable sans ffmpeg. Même GOP fixe pour toutes les variantes
+ * (seek au doigt), `yuv420p` pour la compatibilité Android, `+faststart` pour
+ * lire avant la fin du téléchargement, et débit plafonné par le profil.
+ */
+export function buildVideoArgs(
+  inputPath: string,
+  outputPath: string,
+  profile: VideoProfile,
+): string[] {
+  return [
+    '-y',
+    '-i',
+    inputPath,
+    '-vf',
+    `scale='min(${profile.maxWidth},iw)':-2`,
+    '-c:v',
+    'libx264',
+    '-preset',
+    VIDEO_PRESET,
+    '-crf',
+    String(profile.crf),
+    '-maxrate',
+    `${profile.maxrateKbps}k`,
+    '-bufsize',
+    `${profile.bufsizeKbps}k`,
+    '-pix_fmt',
+    'yuv420p',
+    '-g',
+    String(VIDEO_GOP_FRAMES),
+    '-keyint_min',
+    String(VIDEO_GOP_FRAMES),
+    '-sc_threshold',
+    '0',
+    '-c:a',
+    'aac',
+    '-b:a',
+    `${profile.audioKbps}k`,
+    '-movflags',
+    '+faststart',
+    outputPath,
+  ];
 }
 
 /**
@@ -231,34 +322,7 @@ export async function processVideo(
       const outputPath = join(directory, 'output.mp4');
       await runFfmpeg(
         options.ffmpegPath,
-        [
-          '-y',
-          '-i',
-          inputPath,
-          '-vf',
-          `scale='min(${VIDEO_MAX_WIDTH},iw)':-2`,
-          '-c:v',
-          'libx264',
-          '-preset',
-          'veryfast',
-          '-crf',
-          '23',
-          '-pix_fmt',
-          'yuv420p',
-          '-g',
-          String(VIDEO_GOP_FRAMES),
-          '-keyint_min',
-          String(VIDEO_GOP_FRAMES),
-          '-sc_threshold',
-          '0',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          '-movflags',
-          '+faststart',
-          outputPath,
-        ],
+        buildVideoArgs(inputPath, outputPath, VIDEO_PROFILE_MAIN),
         timeoutMs,
       );
       const transcoded = await readFile(outputPath);
@@ -280,39 +344,11 @@ export async function processVideo(
 
       // Variante basse qualité : inutile si la source est déjà plus petite
       // que la cible — la variante principale suffit alors.
-      const sourceWidth = Math.min(VIDEO_MAX_WIDTH, probe.width ?? VIDEO_MAX_WIDTH);
       if (probe.width && probe.width > VIDEO_LOW_MAX_WIDTH) {
         const lowPath = join(directory, 'output-low.mp4');
         await runFfmpeg(
           options.ffmpegPath,
-          [
-            '-y',
-            '-i',
-            inputPath,
-            '-vf',
-            `scale='min(${VIDEO_LOW_MAX_WIDTH},iw)':-2`,
-            '-c:v',
-            'libx264',
-            '-preset',
-            'veryfast',
-            '-crf',
-            '30',
-            '-pix_fmt',
-            'yuv420p',
-            '-g',
-            String(VIDEO_GOP_FRAMES),
-            '-keyint_min',
-            String(VIDEO_GOP_FRAMES),
-            '-sc_threshold',
-            '0',
-            '-c:a',
-            'aac',
-            '-b:a',
-            '96k',
-            '-movflags',
-            '+faststart',
-            lowPath,
-          ],
+          buildVideoArgs(inputPath, lowPath, VIDEO_PROFILE_LOW),
           timeoutMs,
         );
         const low = await readFile(lowPath);
@@ -321,8 +357,10 @@ export async function processVideo(
         produced.push({
           label: TRANSCODED_LOW_LABEL,
           width: VIDEO_LOW_MAX_WIDTH,
+          // Hauteur à partir de la largeur **source** : la variante garde le
+          // même rapport que l'original (`probe.width` > 540 ici).
           height: probe.height
-            ? Math.round((probe.height * VIDEO_LOW_MAX_WIDTH) / sourceWidth)
+            ? Math.round((probe.height * VIDEO_LOW_MAX_WIDTH) / probe.width)
             : 0,
           url: options.storage.publicUrl(lowKey) ?? lowKey,
           key: lowKey,
