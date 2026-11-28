@@ -1,6 +1,6 @@
 import { AtSign, Check, Link2, Lock, Mail, MessageCircle as WhatsAppIcon, MessageSquare, QrCode, Send, UserPlus, X as XIcon } from 'lucide-react-native';
 import type { LucideIcon } from 'lucide-react-native';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import { Avatar } from '@/components/avatar';
@@ -30,8 +30,12 @@ const SOCIAL_NETWORKS: { key: SocialNetwork; label: string; icon: typeof Link2 }
   { key: 'email', label: 'E-mail', icon: Mail },
 ];
 
-/** Discussions proposées dans la feuille de partage, les plus récentes d'abord. */
-const MAX_TARGETS = 12;
+/**
+ * Discussions affichées sans recherche, les plus récentes d'abord. Au-delà,
+ * la recherche filtre sur toutes les conversations chargées plutôt que de
+ * couper silencieusement la liste.
+ */
+const VISIBLE_TARGETS = 12;
 
 /** Action complémentaire de la rangée (modération : signalements, etc.). */
 export interface ShareSheetAction {
@@ -90,6 +94,11 @@ export function ShareTargetsRow({
 }) {
   const theme = useTheme();
   const [conversations, setConversations] = useState<ConversationSummary[] | null>(null);
+  // `null` : chargement en cours. Une liste vide après erreur est distinguée
+  // de « aucune conversation » pour proposer de réessayer plutôt que de
+  // laisser croire qu'il n'y a personne à qui envoyer.
+  const [loadError, setLoadError] = useState(false);
+  const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
@@ -124,20 +133,43 @@ export function ShareTargetsRow({
     }
   };
 
-  useEffect(() => {
+  const loadConversations = useCallback(() => {
+    setLoadError(false);
     let active = true;
     api
       .listConversations(token)
       .then((list) => {
-        if (active) setConversations(list.slice(0, MAX_TARGETS));
+        if (active) setConversations(list);
       })
       .catch(() => {
-        if (active) setConversations([]);
+        if (!active) return;
+        setConversations([]);
+        setLoadError(true);
       });
     return () => {
       active = false;
     };
   }, [token]);
+
+  useEffect(() => loadConversations(), [loadConversations]);
+
+  const filtered = useMemo(() => {
+    if (!conversations) {
+      return null;
+    }
+    const trimmed = query.trim().toLowerCase();
+    const matching = trimmed
+      ? conversations.filter((conversation) =>
+          conversationTitle(conversation, currentUserId ?? '')
+            .toLowerCase()
+            .includes(trimmed),
+        )
+      : conversations;
+    // Au-delà de la limite d'affichage, la recherche reste le seul moyen
+    // d'atteindre les conversations plus anciennes : elle filtre la liste
+    // complète chargée, jamais seulement les 12 déjà visibles.
+    return trimmed ? matching : matching.slice(0, VISIBLE_TARGETS);
+  }, [conversations, currentUserId, query]);
 
   const hasActions =
     !!onCopyLink ||
@@ -146,17 +178,43 @@ export function ShareTargetsRow({
     !!onShowQr ||
     !!extraActions?.length ||
     !!moreActions?.length;
-  if ((!conversations || conversations.length === 0) && !hasActions) {
+  // `conversations === null` : chargement en cours, on ne masque rien encore
+  // pour ne pas disparaître puis réapparaître. Une fois chargé, un vrai vide
+  // (ni conversation ni erreur) peut masquer la rangée sans autre action.
+  if (conversations && conversations.length === 0 && !loadError && !hasActions) {
     return null;
   }
 
   return (
     <View style={styles.wrap}>
-      {conversations && conversations.length > 0 ? (
-        <>
+      {loadError ? (
+        <View style={styles.loadError}>
           <ThemedText type="caption" themeColor="textSecondary">
-            {fr.social.sendToLabel}
+            {fr.social.shareConversationsLoadError}
           </ThemedText>
+          <Pressable onPress={loadConversations} accessibilityRole="button" hitSlop={8}>
+            <ThemedText type="caption" style={{ color: theme.accent, fontWeight: '600' }}>
+              {fr.common.retry}
+            </ThemedText>
+          </Pressable>
+        </View>
+      ) : conversations && conversations.length > 0 ? (
+        <>
+          <View style={styles.sendToHeader}>
+            <ThemedText type="caption" themeColor="textSecondary">
+              {fr.social.sendToLabel}
+            </ThemedText>
+            {conversations.length > VISIBLE_TARGETS ? (
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder={fr.social.shareFilterPlaceholder}
+                placeholderTextColor={theme.textSecondary}
+                style={[styles.filterInput, { color: theme.text, backgroundColor: theme.backgroundSelected }]}
+                accessibilityLabel={fr.social.shareFilterPlaceholder}
+              />
+            ) : null}
+          </View>
           {/* Rangée scrollable horizontalement, comme les destinataires IG :
               les discussions dépassent la largeur au lieu d'être tronquées. */}
           <ScrollView
@@ -164,16 +222,22 @@ export function ShareTargetsRow({
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.row}
             keyboardShouldPersistTaps="handled">
-            {conversations.map((conversation) => (
-              <ShareTarget
-                key={conversation.id}
-                conversation={conversation}
-                currentUserId={currentUserId}
-                selected={selected.includes(conversation.id)}
-                encrypted={Boolean(conversation.e2eeSince)}
-                onPress={() => toggle(conversation)}
-              />
-            ))}
+            {(filtered ?? []).length === 0 ? (
+              <ThemedText type="caption" themeColor="textSecondary" style={styles.noMatch}>
+                {fr.social.shareFilterEmpty}
+              </ThemedText>
+            ) : (
+              (filtered ?? []).map((conversation) => (
+                <ShareTarget
+                  key={conversation.id}
+                  conversation={conversation}
+                  currentUserId={currentUserId}
+                  selected={selected.includes(conversation.id)}
+                  encrypted={Boolean(conversation.e2eeSince)}
+                  onPress={() => toggle(conversation)}
+                />
+              ))
+            )}
           </ScrollView>
           {selected.length > 0 ? (
             <View style={styles.sendRow}>
@@ -412,6 +476,29 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  sendToHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.two,
+  },
+  filterInput: {
+    flex: 1,
+    maxWidth: 160,
+    borderRadius: 999,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half,
+    fontSize: 13,
+  },
+  noMatch: {
+    paddingVertical: Spacing.three,
+  },
+  loadError: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: Spacing.one,
   },
   sendRow: {
     flexDirection: 'row',

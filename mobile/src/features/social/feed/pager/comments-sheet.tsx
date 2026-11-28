@@ -63,8 +63,13 @@ import type {
 /** Hauteur de la feuille : le post réduit reste lisible au-dessus. */
 export const COMMENTS_SHEET_SNAP_RATIO = 0.75;
 
-/** Marge minimale sous le composeur quand la barre système ne remonte pas `insets.bottom`. */
-const COMPOSER_SYSTEM_BAR_FALLBACK = 48;
+/**
+ * Marge minimale sous le composeur quand la barre système ne remonte pas
+ * `insets.bottom` (certains appareils à trois boutons rapportent 0). Même
+ * plancher que `useBottomInset`, pour que le composeur ne diffère pas d'un
+ * doigt entre les écrans.
+ */
+const COMPOSER_SYSTEM_BAR_FALLBACK = Spacing.threeHalf;
 
 const EMOJIS = ['👍', '❤️', '😂', '🎉', '🙏', '🔥', '😮', '👏'];
 /** Réactions rapides au-dessus de la saisie, comme Instagram : un tap les insère. */
@@ -111,6 +116,10 @@ export function CommentsSheet({
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const [current, setCurrent] = useState<FeedPost>(post);
+  // Hauteur réelle du composeur (varie avec le panneau d'expressions, le
+  // mode réponse) : la pastille se pose juste au-dessus, jamais à une valeur
+  // fixe qui suppose une hauteur constante.
+  const [composerHeight, setComposerHeight] = useState(0);
   const [comments, setComments] = useState<PublicationComment[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -1126,7 +1135,10 @@ export function CommentsSheet({
         <Pressable
           onPress={scrollToNewest}
           accessibilityRole="button"
-          style={[styles.newPill, { backgroundColor: theme.accent }]}
+          style={[
+            styles.newPill,
+            { backgroundColor: theme.accent, bottom: composerHeight + Spacing.two },
+          ]}
           hitSlop={6}>
           <ThemedText type="caption" style={{ color: theme.onAccent, fontWeight: '700' }}>
             {fr.social.newComments(newCount)}
@@ -1175,6 +1187,7 @@ export function CommentsSheet({
       {current.commentsDisabled && !isPublicationAuthor ? (
         /* L'auteur a coupé les commentaires : pas de barre de saisie. */
         <View
+          onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
           style={[
             styles.composerShell,
             styles.commentsOff,
@@ -1190,6 +1203,7 @@ export function CommentsSheet({
         </View>
       ) : (
       <View
+        onLayout={(event) => setComposerHeight(event.nativeEvent.layout.height)}
         style={[
           styles.composerShell,
           {
@@ -1477,7 +1491,6 @@ const styles = StyleSheet.create({
   newPill: {
     position: 'absolute',
     alignSelf: 'center',
-    bottom: 76,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     borderRadius: Radii.full,
