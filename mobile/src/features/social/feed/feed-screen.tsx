@@ -1,4 +1,4 @@
-import { Camera, ChevronLeft, Home, MapPin, Plus, Search, Users, X } from 'lucide-react-native';
+import { Camera, ChevronLeft, Home, MapPin, Plus, Search, Users } from 'lucide-react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -606,12 +606,6 @@ function FeedSurfaceView({
   // Reels ouverts depuis une vidéo verticale du fil : la vidéo touchée puis
   // les suivantes, page par page.
   const [reelsFrom, setReelsFrom] = useState<string | null>(null);
-  // Plein écran ouvert depuis une carte média (photo, carrousel, vidéo non
-  // verticale) : même disposition que la grille Découvrir (rail vertical,
-  // légende superposée), mais sur la séquence déjà chargée dans ce fil — pas
-  // de flux séparé comme pour les Reels, un carrousel ou une photo n'ayant
-  // pas de fil dédié à parcourir au-delà.
-  const [galleryFrom, setGalleryFrom] = useState<string | null>(null);
   const [screenHeight, setScreenHeight] = useState(0);
   const feed = useFeed(tab, { deferNetwork });
 
@@ -676,32 +670,20 @@ function FeedSurfaceView({
   }, [feed.items, reelsFrom]);
   const reelsVisible = reelSeed.length > 0;
   const closeReels = useCallback(() => setReelsFrom(null), []);
-  // Index d'ouverture dans la séquence du fil : toute la liste déjà chargée,
-  // pour pouvoir glisser vers les publications voisines comme Découvrir.
-  const galleryIndex = useMemo(
-    () => (galleryFrom ? feed.items.findIndex((item) => item.id === galleryFrom) : -1),
-    [feed.items, galleryFrom],
-  );
-  const galleryVisible = galleryIndex >= 0;
-  const closeGallery = useCallback(() => setGalleryFrom(null), []);
   useEffect(() => {
-    onReelsOpenChange?.(reelsVisible || galleryVisible);
-  }, [onReelsOpenChange, reelsVisible, galleryVisible]);
-  // Retour Android : ferme Reels ou la visionneuse photo avant de quitter le fil.
+    onReelsOpenChange?.(reelsVisible);
+  }, [onReelsOpenChange, reelsVisible]);
+  // Retour Android : ferme les Reels avant de quitter le fil.
   useEffect(() => {
-    if (!reelsVisible && !galleryVisible) {
+    if (!reelsVisible) {
       return;
     }
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (reelsVisible) {
-        closeReels();
-      } else {
-        closeGallery();
-      }
+      closeReels();
       return true;
     });
     return () => subscription.remove();
-  }, [closeGallery, closeReels, galleryVisible, reelsVisible]);
+  }, [closeReels, reelsVisible]);
   const pagerActions = {
     toggleLike: feed.toggleLike,
     setReaction: feed.setReaction,
@@ -773,14 +755,13 @@ function FeedSurfaceView({
           items={feed.items}
           height={height}
           barInset={barInset}
-          playbackActive={playbackActive && !reelsVisible && !galleryVisible}
+          playbackActive={playbackActive && !reelsVisible}
           refreshing={feed.refreshing}
           hasMore={feed.hasMore}
           hideOverlays={hideOverlays}
           onLoadMore={feed.loadMore}
           onRefresh={feed.refresh}
           onOpenReels={(post) => setReelsFrom(post.id)}
-          onOpenGallery={(post) => setGalleryFrom(post.id)}
           freshPosts={feed.freshPosts}
           onShowFresh={feed.refresh}
           actions={pagerActions}
@@ -805,22 +786,6 @@ function FeedSurfaceView({
           playbackActive={playbackActive}
           hideOverlays={hideOverlays}
           onClose={closeReels}
-        />
-      ) : null}
-
-      {galleryVisible ? (
-        <GalleryLayer
-          items={feed.items}
-          initialIndex={galleryIndex}
-          height={height}
-          barInset={insets.bottom + Spacing.four}
-          progressInset={insets.bottom}
-          hasMore={feed.hasMore}
-          onLoadMore={feed.loadMore}
-          onRefresh={feed.refresh}
-          actions={pagerActions}
-          playbackActive={playbackActive}
-          onClose={closeGallery}
         />
       ) : null}
 
@@ -1102,83 +1067,6 @@ function ReelsLayer({
  * cache d'`expo-image`, plafonné pour ne jamais retenir l'écran de lancement.
  */
 const FIRST_MEDIA_TIMEOUT_MS = 1500;
-/**
- * Visionneuse plein écran d'une publication du fil normal (photo, carrousel
- * ou texte), ouverte au tap sur sa carte — comme l'écran Explorer d'Instagram
- * depuis la grille Découvrir. Contrairement à `ReelsLayer`, pas de flux
- * séparé : la séquence est celle déjà chargée par ce fil, puisqu'une photo ou
- * un carrousel n'a pas de fil dédié à parcourir au-delà.
- */
-function GalleryLayer({
-  items,
-  initialIndex,
-  height,
-  barInset,
-  progressInset,
-  hasMore,
-  onLoadMore,
-  onRefresh,
-  actions,
-  playbackActive,
-  onClose,
-}: {
-  items: FeedPost[];
-  initialIndex: number;
-  height: number;
-  barInset: number;
-  progressInset: number;
-  hasMore: boolean;
-  onLoadMore: () => void;
-  onRefresh: () => void;
-  actions: FeedPagerActions;
-  playbackActive: boolean;
-  onClose: () => void;
-}) {
-  const insets = useSafeAreaInsets();
-  const [commentsPost, setCommentsPost] = useState<FeedPost | null>(null);
-  const galleryActions = useMemo<FeedPagerActions>(
-    () => ({ ...actions, onOpenComments: (post) => setCommentsPost(post) }),
-    [actions],
-  );
-  return (
-    <View style={StyleSheet.absoluteFill}>
-      <FeedPager
-        mode="pager"
-        items={items}
-        initialIndex={initialIndex}
-        height={height}
-        barInset={barInset}
-        progressInset={progressInset}
-        playbackActive={playbackActive}
-        refreshing={false}
-        hasMore={hasMore}
-        hideOverlays={commentsPost !== null}
-        onLoadMore={onLoadMore}
-        onRefresh={onRefresh}
-        actions={galleryActions}
-        forceFullScreen
-      />
-
-      {/* Fermeture, comme l'écran de publication d'Instagram. */}
-      <View pointerEvents="box-none" style={[styles.galleryTopBar, { top: insets.top + Spacing.one }]}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={fr.social.viewerClose}
-          onPress={onClose}
-          hitSlop={12}
-          style={({ pressed }) => [styles.galleryClose, pressed && styles.pressed]}>
-          <Icon icon={X} size={Spacing.five} color={FeedSurface.onMedia} />
-        </Pressable>
-      </View>
-
-      {commentsPost ? (
-        <CommentsSheet post={commentsPost} onClose={() => setCommentsPost(null)} />
-      ) : null}
-    </View>
-  );
-}
-
-
 function prefetchFirstMedia(post: FeedPost): Promise<void> {
   const media = primaryMedia(post);
   const url = resolveMediaUrl(media?.kind === 'video' ? media.posterUrl : media?.url ?? null);
@@ -1302,20 +1190,6 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-  },
-  galleryTopBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'flex-end',
-    paddingHorizontal: Spacing.three,
-  },
-  galleryClose: {
-    width: FeedMetrics.touchTarget,
-    height: FeedMetrics.touchTarget,
-    borderRadius: Radii.full,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   emptySuggestions: { alignSelf: 'stretch', marginTop: Spacing.four },
   emptyFill: {

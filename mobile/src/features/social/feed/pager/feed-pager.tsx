@@ -146,7 +146,6 @@ export function FeedPager({
   mode = 'pager',
   initialIndex = 0,
   onOpenReels,
-  onOpenGallery,
   /**
    * Visionneuse plein écran (grille Découvrir, écran de publication) : chaque
    * page garde le rail vertical et la légende superposée façon Reels, même
@@ -210,11 +209,6 @@ export function FeedPager({
   initialIndex?: number;
   /** Fil libre : ouvre le plein écran Reels sur cette vidéo. */
   onOpenReels?: (post: FeedPost) => void;
-  /**
-   * Photo, carrousel ou vidéo non verticale du fil : un tap ouvre le plein
-   * écran (visionneuse galerie), comme Reels pour une vidéo verticale.
-   */
-  onOpenGallery?: (post: FeedPost) => void;
   /** Voir le commentaire de `forceFullScreen` au-dessus des props. */
   forceFullScreen?: boolean;
   /** Publications arrivées depuis le chargement (pastille d'avatars). */
@@ -787,11 +781,6 @@ export function FeedPager({
                   onToggleMuted={toggleMuted}
                   onOpenReels={
                     flow && onOpenReels && isVideoPost(item) ? () => onOpenReels(item) : undefined
-                  }
-                  onOpenGallery={
-                    flow && onOpenGallery && !isVideoPost(item)
-                      ? () => onOpenGallery(item)
-                      : undefined
                   }
                 />
                 </>
