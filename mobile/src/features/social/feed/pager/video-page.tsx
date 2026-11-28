@@ -55,6 +55,16 @@ export interface FeedPageChrome {
    * une liste à défilement libre, au lieu d'occuper un écran entier.
    */
   flow?: boolean;
+  /**
+   * Visionneuse plein écran (grille Découvrir, écran de publication) : même
+   * une photo ou un carrousel garde le rail vertical et la légende superposée
+   * façon Reels, au lieu de la carte empilée du fil. `ImagePage` n'affiche
+   * alors ni son en-tête ni son pied : `FeedPager` les remplace par
+   * `PostInfoBlock` et `FeedActionRail`, comme il le fait déjà pour les
+   * vidéos. Comme l'écran Explorer d'Instagram, qui ouvre toute publication
+   * ainsi, photo ou vidéo, alors que son fil garde les cartes pour les photos.
+   */
+  fullScreen?: boolean;
 }
 
 
